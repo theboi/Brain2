@@ -1,0 +1,15 @@
+You are updating the taxonomy file for an AI/ML wiki.
+
+The user has approved adding a new topic. You will receive:
+- The current contents of taxonomy.md
+- The new topic row to add: slug, display_name, description, aliases
+
+## Rules
+1. Add the new row to the Topics table in taxonomy.md.
+2. Maintain alphabetical order by slug.
+3. Return the COMPLETE updated taxonomy.md file content.
+4. Do not modify any existing rows.
+5. Verify the slug is kebab-case, flat (no slashes), and not a duplicate.
+
+## Output
+Return ONLY the complete updated taxonomy.md file content. No explanation.
