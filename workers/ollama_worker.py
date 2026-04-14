@@ -22,7 +22,7 @@ from config import (
     WIKI_NAME, RAW_DIR, WIKI_DIR, META_DIR, TAXONOMY_FILE,
     LOG_LEVEL,
 )
-from queue.db import (
+from taskqueue.db import (
     init_db, poll, mark_done, mark_failed, mark_retry,
     mark_escalated, enqueue, enqueue_if_not_pending,
 )

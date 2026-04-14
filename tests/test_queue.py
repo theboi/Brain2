@@ -24,10 +24,10 @@ def make_fresh_db(tmp_path):
 
     # Force re-import so module picks up patched config
     for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith("queue."):
+        if mod_name.startswith("taskqueue."):
             del sys.modules[mod_name]
 
-    import queue.db as db
+    import taskqueue.db as db
     db.init_db()
     return db
 

@@ -1,5 +1,5 @@
 """
-queue/db.py — SQLite task queue for WikiBot.
+taskqueue/db.py — SQLite task queue for WikiBot.
 
 All daemons communicate through this queue exclusively.
 No direct cross-daemon calls allowed (see CLAUDE.md rule #1).
