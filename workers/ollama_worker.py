@@ -57,8 +57,11 @@ def call_ollama(prompt_file: str, user_content: str) -> str:
         },
         timeout=OLLAMA_TIMEOUT,
     )
-    response.raise_for_status()
-    return response.json()["message"]["content"]
+    try:
+        response.raise_for_status()
+        return response.json()["message"]["content"]
+    finally:
+        response.close()
 
 
 # ── Taxonomy helpers ──────────────────────────────────────────────────────────
@@ -303,6 +306,9 @@ def handle_classify(task: dict):
             priority=1,
         )
 
+    else:
+        raise ValueError(f"Ollama classify returned unexpected 'match' value: {result.get('match')!r}")
+
     mark_done(task["id"])
 
 
@@ -361,7 +367,6 @@ def handle_clean_summarise(task: dict):
     # Build frontmatter
     frontmatter = {
         "title": title,
-        "source_url": payload.get("source_url", ""),
         "source_type": source_type,
         "date_ingested": date.today().isoformat(),
         "wiki": WIKI_NAME,
@@ -370,6 +375,8 @@ def handle_clean_summarise(task: dict):
         "ingest_method": payload.get("ingest_method", source_type),
         "wiki_updated": False,
     }
+    if payload.get("source_url"):
+        frontmatter["source_url"] = payload["source_url"]
 
     # Source-type-specific fields
     if source_type in ("video", "audio"):
