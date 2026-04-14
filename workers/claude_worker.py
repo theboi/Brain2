@@ -145,7 +145,11 @@ def startup_scan_unprocessed():
         if not topic_dir.is_dir():
             continue
         for md_file in sorted(topic_dir.glob("*.md")):
-            content = md_file.read_text(encoding="utf-8")
+            try:
+                content = md_file.read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"Could not read {md_file}: {e}")
+                continue
             if "wiki_updated: false" in content:
                 dedup_key = f"wiki-update:{topic}"
                 task_id = enqueue_if_not_pending(
@@ -213,6 +217,8 @@ def handle_wiki_fix(task: dict):
     )
 
     fixed_content = call_claude("claude_wiki_fix.txt", user_content)
+    if not fixed_content or not fixed_content.strip():
+        raise ValueError("claude_wiki_fix returned empty response")
     page_path.write_text(fixed_content, encoding="utf-8")
 
     _update_index_md(topic, fixed_content)
@@ -272,33 +278,36 @@ def handle_rename(task: dict):
     raw_dst = Path(RAW_DIR) / new_slug
     if raw_src.exists() and not raw_dst.exists():
         shutil.move(str(raw_src), str(raw_dst))
+    elif raw_src.exists() and raw_dst.exists():
+        logger.warning(f"Move collision: both {raw_src} and {raw_dst} exist. Task will retry.")
+        raise RuntimeError(f"Rename collision: both {raw_src} and {raw_dst} exist")
+    # else: dst already exists and src is gone — move already completed, continue
 
     # 3. Move /wiki/old_slug/ → /wiki/new_slug/
     wiki_src = Path(WIKI_DIR) / old_slug
     wiki_dst = Path(WIKI_DIR) / new_slug
     if wiki_src.exists() and not wiki_dst.exists():
         shutil.move(str(wiki_src), str(wiki_dst))
+    elif wiki_src.exists() and wiki_dst.exists():
+        logger.warning(f"Move collision: both {wiki_src} and {wiki_dst} exist. Task will retry.")
+        raise RuntimeError(f"Rename collision: both {wiki_src} and {wiki_dst} exist")
+    # else: dst already exists and src is gone — move already completed, continue
 
     # 4. Update wikilinks in all /wiki/ .md files
     wiki_path = Path(WIKI_DIR)
     wikilink_count = 0
     for md_file in wiki_path.rglob("*.md"):
+        if "_meta" in str(md_file):
+            continue
         content = md_file.read_text(encoding="utf-8")
-        # Replace [[old_slug|display]] and [[old_slug]]
-        new_content = re.sub(
+        updated = re.sub(
             rf'\[\[{re.escape(old_slug)}(\|[^\]]+)?\]\]',
-            lambda m: f"[[{new_slug}{m.group(1) or ''}]]",
+            lambda m: m.group(0).replace(old_slug, new_slug),
             content,
         )
-        if new_content != content:
-            md_file.write_text(new_content, encoding="utf-8")
-            wikilink_count += new_content.count(f"[[{new_slug}") - content.count(f"[[{new_slug}")
-            # Count replacements more accurately
-            wikilink_count = sum(
-                1 for _ in re.finditer(
-                    rf'\[\[{re.escape(old_slug)}(\|[^\]]+)?\]\]', content
-                )
-            )
+        if updated != content:
+            md_file.write_text(updated, encoding="utf-8")
+            wikilink_count += len(re.findall(rf'\[\[{re.escape(new_slug)}(?:\|[^\]]*)?\]\]', updated))
 
     # 5. Update topic: field in all /raw/new_slug/ files
     raw_new = Path(RAW_DIR) / new_slug
@@ -364,7 +373,7 @@ def handle_failure(task: dict, error: Exception):
             "Task %s escalated after %d retries: %s", task["id"], retries, error
         )
     else:
-        backoff = QUEUE_RETRY_BACKOFFS[task["retries"]]
+        backoff = QUEUE_RETRY_BACKOFFS[min(task["retries"], len(QUEUE_RETRY_BACKOFFS) - 1)]
         mark_retry(task["id"], retries=retries + 1, backoff_seconds=backoff)
         logger.warning(
             "Task %s retry %d/%d in %ds: %s",
