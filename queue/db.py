@@ -10,17 +10,15 @@ All config imported from config.py — no hardcoded paths here.
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta
 from typing import Optional
 
 import config
 
 
 def get_conn() -> sqlite3.Connection:
-    """Open a connection with WAL mode and row_factory enabled."""
+    """Open a connection with row_factory enabled."""
     conn = sqlite3.connect(config.QUEUE_DB)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
@@ -31,7 +29,9 @@ def init_db():
     Safe to call multiple times (uses CREATE IF NOT EXISTS).
     Creates parent directories if they don't exist.
     """
-    os.makedirs(os.path.dirname(config.QUEUE_DB), exist_ok=True)
+    parent = os.path.dirname(config.QUEUE_DB)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
     schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
     with open(schema_path) as f:
@@ -39,6 +39,7 @@ def init_db():
 
     conn = get_conn()
     try:
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(schema)
         conn.commit()
     finally:
@@ -147,21 +148,16 @@ def poll(queue: str) -> Optional[dict]:
             conn.execute("ROLLBACK")
             return None
 
-        task_id = row["id"]
-        conn.execute(
-            "UPDATE tasks SET status = 'running' WHERE id = ?",
-            (task_id,),
-        )
-        conn.commit()
-
-        # Fetch the full row now that it's claimed
-        task_row = conn.execute(
-            "SELECT * FROM tasks WHERE id = ?", (task_id,)
-        ).fetchone()
-
-        task = dict(task_row)
-        task["payload"] = json.loads(task["payload"])
-        return task
+        rows = conn.execute(
+            "UPDATE tasks SET status='running' WHERE id=? RETURNING *",
+            (row["id"],),
+        ).fetchall()
+        conn.execute("COMMIT")
+        if not rows:
+            return None
+        result = dict(rows[0])
+        result["payload"] = json.loads(result["payload"])
+        return result
 
     except Exception:
         try:
@@ -206,18 +202,13 @@ def mark_retry(task_id: int, retries: int, backoff_seconds: int):
     Sets status='pending' and run_after = now + backoff_seconds.
     The poll() function will not return the task until run_after has passed.
     """
-    run_after = (datetime.utcnow() + timedelta(seconds=backoff_seconds)).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
     conn = get_conn()
     try:
         conn.execute(
-            """
-            UPDATE tasks
-            SET status = 'pending', retries = ?, run_after = ?
-            WHERE id = ?
-            """,
-            (retries, run_after, task_id),
+            """UPDATE tasks SET status='pending', retries=?,
+               run_after=datetime('now', ? || ' seconds')
+               WHERE id=?""",
+            (retries, str(backoff_seconds), task_id),
         )
         conn.commit()
     finally:
