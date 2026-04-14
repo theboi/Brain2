@@ -78,8 +78,8 @@ Claude API is called directly via the `anthropic` Python SDK — no agent harnes
 ### Folder Structure
 
 ```
-/wikis/
-  ai/
+~/Knowledge/                                ← WIKIS_ROOT
+  WikiBot-AI/                               ← VAULT_FOLDER (Obsidian vault)
     raw/                                    ← append-only source of truth
       retrieval-augmented-generation/
         2026-04-08_rag-explained-video.md
@@ -96,9 +96,11 @@ Claude API is called directly via the `anthropic` Python SDK — no agent harnes
       transformers/
         transformers.md
 
-/wikis/.queue/
+~/Knowledge/.queue/
   tasks.db                                  ← shared SQLite task queue
 ```
+
+`WIKI_NAME = "ai"` (logical name — used in Anki card IDs: `ai/<concept-slug>`). `VAULT_FOLDER = "WikiBot-AI"` (actual filesystem folder). These are distinct — do not conflate.
 
 ### taxonomy.md — Single Source of Truth for Topics
 
@@ -209,8 +211,10 @@ Video URL received
                 Retry 1: wait 1 minute
                 Retry 2: wait 1 hour
                 Retry 3: wait 1 day
-                  └── Still failing → enqueue telebot:notify
-                      Manual upload matched via session ID in .pending_sessions.json
+                  └── Still failing → enqueue telebot:manual-upload-required (priority=1)
+                      payload includes session_id (UUID) + original_url
+                      Session state lives in the queue — no .pending_sessions.json (no lockfiles)
+                      When user sends file: bot.py queries for most-recent 'escalated' manual-upload-required task
 ```
 
 yt-dlp backoff rationale: 1min = transient network error. 1h = platform rate limiting. 1d = extended outage (Instagram/TikTok).
@@ -278,19 +282,27 @@ All inter-daemon communication goes through a single SQLite task queue. No daemo
 ### Schema
 
 ```sql
-CREATE TABLE tasks (
+CREATE TABLE IF NOT EXISTS tasks (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     queue       TEXT     NOT NULL,   -- 'claude' | 'ollama' | 'telebot'
     task_type   TEXT     NOT NULL,
-    payload     JSON     NOT NULL,
+    payload     TEXT     NOT NULL DEFAULT '{}',
     priority    INTEGER  NOT NULL DEFAULT 2,
-    status      TEXT     NOT NULL DEFAULT 'pending',
+    status      TEXT     NOT NULL DEFAULT 'pending'
+                         CHECK(status IN ('pending','running','done','failed','escalated')),
     retries     INTEGER  NOT NULL DEFAULT 0,
-    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    run_after   DATETIME,
-    error_log   TEXT
+    created_at  TEXT     NOT NULL DEFAULT (datetime('now')),
+    run_after   TEXT,    -- ISO datetime; task is invisible to poll() until now() >= run_after
+    error_log   TEXT,
+    dedup_key   TEXT     -- used by enqueue_if_not_pending()
 );
+
+CREATE INDEX IF NOT EXISTS idx_tasks_poll
+ON tasks(queue, status, priority, created_at) WHERE status = 'pending';
 ```
+
+**PRAGMA:** Enable WAL mode on every connection: `conn.execute("PRAGMA journal_mode=WAL")`.
+This allows concurrent reads while a worker holds a write lock.
 
 ### Priority Levels
 
@@ -308,15 +320,18 @@ QUEUE_MAX_RETRIES = 3
 
 def handle_failure(task, error):
     if task["retries"] >= QUEUE_MAX_RETRIES:
+        mark_escalated(task["id"])
         enqueue("telebot", "user-decision-required", priority=1, payload={
+            "wiki": WIKI_NAME,
+            "source_file": task["payload"].get("source_file"),
+            "triggered_by": str(task["id"]),
             "original_task": task,
             "error": str(error),
-            "message": f"Task '{task['task_type']}' failed {QUEUE_MAX_RETRIES} times. Reply: retry / skip"
+            "message": f"Task '{task['task_type']}' failed {QUEUE_MAX_RETRIES} times.\nError: {str(error)[:200]}\nReply: retry / skip"
         })
-        mark_status(task, "escalated")
     else:
         backoff = QUEUE_RETRY_BACKOFFS[task["retries"]]
-        mark_retry(task, retries=task["retries"]+1, run_after=now()+backoff)
+        mark_retry(task["id"], retries=task["retries"]+1, backoff_seconds=backoff)
 ```
 
 ### Task Types
@@ -335,8 +350,11 @@ def handle_failure(task, error):
 | `claude` | `rebuild` | User `/rebuild` (full rewrite from /raw/) |
 | `claude` | `sanitise-writeback` | `/ask` response passes write-back threshold |
 | `claude` | `rename` | User `/rename <old> <new>` |
+| `claude` | `add-topic` | User approves new-topic-approval (writes taxonomy.md row) |
 | `telebot` | `notify` | Any daemon completion or failure |
-| `telebot` | `user-decision-required` | Task exceeds MAX_RETRIES or new topic proposed |
+| `telebot` | `user-decision-required` | Task exceeds MAX_RETRIES |
+| `telebot` | `new-topic-approval` | Ollama classify finds no matching topic |
+| `telebot` | `manual-upload-required` | yt-dlp exhausts all retries |
 
 ---
 
@@ -344,33 +362,56 @@ def handle_failure(task, error):
 
 ### Ollama Worker — Classify Flow
 
-1. Read taxonomy.md to get current topic table (slug + description + aliases)
-2. Classify content against existing topics
-3. If match found: assign topic slug, enqueue `ollama:clean-summarise`
-4. If no match: propose new topic row, enqueue `telebot:user-decision-required`
+1. Run ingestion module for the source type (video/article/pdf/audio/text) to get `raw_content`
+2. Read taxonomy.md to get current topic table
+3. Call Ollama with `ollama_classify.txt` prompt. **Output must be valid JSON — one of two shapes:**
+   ```json
+   // Known topic:
+   {"match": "transformers", "confidence": 0.87}
+
+   // Unknown topic — propose new row:
+   {"match": null, "proposed": {"slug": "llm-interpretability", "display_name": "LLM Interpretability", "description": "...", "aliases": ["interpretability"]}}
+   ```
+   If Ollama returns non-JSON: mark task failed (triggers retry).
+4. If `match` found: validate slug exists in taxonomy.md (reject hallucinated slugs), enqueue `ollama:clean-summarise`
+5. If `match` is null: enqueue `telebot:new-topic-approval` (includes full `original_task` for resumption). **Only `claude_worker` writes taxonomy.md** — via `claude:add-topic` after user approves.
+6. If `force_topic` field present in payload (set by user after rejection): skip classify, enqueue `ollama:clean-summarise` directly.
+
+Deduplication: use `enqueue_if_not_pending("ollama", "classify", dedup_key="url:<url>")` — duplicate URL submissions are silently dropped.
 
 ### Ollama Worker — Clean-Summarise Flow
 
-1. Clean content, extract key concepts, generate 1–2 paragraph summary
-2. Populate frontmatter, set `wiki_updated: false`
-3. Write to `/raw/<topic>/<date>_<slug>.md`
-4. Enqueue `claude:wiki-update` (priority 2)
+1. Call Ollama with `ollama_clean_summarise.txt`. **Output must be valid JSON:**
+   ```json
+   {"title": "...", "file_slug": "attention-is-all-you-need", "tags": ["transformers"], "cleaned_content": "...", "summary": "..."}
+   ```
+   `file_slug` is derived from title: lowercase, hyphens, strip stop words, max 50 chars.
+2. Build frontmatter dict, set `wiki_updated: false`
+3. Write to `/raw/<topic>/<YYYY-MM-DD>_<file_slug>.md` (create topic dir if needed)
+4. Enqueue `claude:wiki-update` via `enqueue_if_not_pending(dedup_key="wiki-update:<topic>")` — batches concurrent sources into one task.
 
-On startup: scan `/raw/` for files with `wiki_updated: false`, re-enqueue. Self-healing.
+Startup self-heal: **`claude_worker`** (not `ollama_worker`) scans `/raw/` for `wiki_updated: false` files on startup and every `WIKI_UPDATE_POLL_INTERVAL` seconds, re-enqueuing missed `claude:wiki-update` tasks.
 
 ### Claude Worker — Wiki Updater Flow
 
-1. Read all `/raw/<topic>/` files with `wiki_updated: false`
-2. Read current `/wiki/<topic>/<topic>.md` (if exists)
-3. Call Claude API: merge all unprocessed sources into the wiki page
-   - Single coherent page, not a list of summaries
-   - Cross-links to related pages via `[[wikilinks]]`
-   - Sources cited in-page
-4. Update `wiki/_meta/index.md` — add/update entry for this page
-5. Append to `wiki/_meta/log.md`
-6. Set `wiki_updated: true` on all processed files
-7. Enqueue `ollama:lint` (priority 2)
-8. Enqueue `telebot:notify` "✅ Wiki updated: <topic>"
+The `wiki-update` task payload contains only `topic`. The worker re-reads `/raw/<topic>/` **at execution time** — never trusts a stale file list from the payload.
+
+1. Scan `/raw/<topic>/` for all files with `wiki_updated: false` (fresh read at execution time)
+2. If none found: mark done, exit (idempotent)
+3. Read current `/wiki/<topic>/<topic>.md` — treat as empty string if file doesn't exist
+4. Build `user_content` with XML structure:
+   ```
+   <current_wiki_page>(existing content or "(empty — new topic)")</current_wiki_page>
+   <new_sources count="N"><source index="1" file="...">...</source>...</new_sources>
+   Topic slug: <slug>
+   ```
+5. Call Claude API with `claude_wiki_update.txt` — returns updated markdown page
+6. Write to `/wiki/<topic>/<topic>.md`
+7. Set `wiki_updated: true` in frontmatter of all processed `/raw/` files
+8. Update `wiki/_meta/index.md` — add/replace row for this topic
+9. Append to `wiki/_meta/log.md` — format: `{ISO_DATETIME} | wiki-update | {topic} | merged {N} sources: {filenames}`
+10. Enqueue `ollama:lint` (priority 2)
+11. Enqueue `telebot:notify` "✅ Wiki updated: <topic>"
 
 ### Ollama Worker — Wiki Health Checker (lint) Flow
 
@@ -396,19 +437,22 @@ User sends: /rename rag retrieval-augmented-generation
 claude:rename task enqueued
     |
     v
-Claude worker:
-    1. Update taxonomy.md: rename slug column value
+Claude worker — each step is idempotent (safe to retry from step 1 on failure):
+    1. Update taxonomy.md slug value (regex replace, idempotent)
     2. Move /raw/rag/ → /raw/retrieval-augmented-generation/
-    3. Move /wiki/rag/ → /wiki/retrieval-augmented-generation/
-    4. Update all [[wikilinks]] in /wiki/ that reference old slug
-    5. Update topic: field in all /raw/ frontmatter for affected files
-    6. Update index.md entry
-    7. Append to log.md
-    8. Update AnkiConnect concept IDs for affected cards
+       (check: if src exists and dst doesn't → move; if dst exists → already done; if neither → error)
+    3. Move /wiki/rag/ → /wiki/retrieval-augmented-generation/ (same pattern)
+    4. Update all [[wikilinks]] in /wiki/ that reference old slug (string replace, idempotent)
+    5. Update topic: field in all /raw/ frontmatter for affected files (regex replace, idempotent)
+    6. Update index.md entry (replace [[old]] with [[new]])
+    7. Append to log.md: "{ISO_DATETIME} | rename | rag → retrieval-augmented-generation | N wikilinks updated"
+    8. Update AnkiConnect concept IDs for affected cards (Phase 3)
     |
     v
 telebot:notify "✅ Renamed: rag → retrieval-augmented-generation"
 ```
+
+On any step failure: retry the whole operation from step 1. No partial rollback. Steps are idempotent so re-running is safe.
 
 This replaces the rename_watcher filesystem daemon entirely. Explicit command = no race conditions, no lockfile protocol, no watchdog.
 
@@ -457,7 +501,8 @@ First Chunk session fires ~1 day after the last Nugget in a group completes. Aft
 STEP 1 — DIFF
 Claude reads:
   - /raw/<topic>/<date>_<slug>.md  (the source)
-  - /wiki/<topic>/<topic>.md       (current wiki page)
+  - /wiki/<topic>/<topic>.md       (current wiki page — read as empty string "" if file doesn't exist)
+If wiki page is empty/missing: treat ALL concepts in source as NEW.
 Produces structured concept list:
   - NEW concepts (not in wiki)
   - ALREADY COVERED concepts
@@ -491,19 +536,24 @@ Enqueue claude:wiki-update for new concepts. Failure does not block steps 3/4.
 /digest called → topic has stale cards → Chunk session
 
 STEP 1 — QUERY ANKI
-Pull all cards for topic X. Filter: stale / overdue / due today.
+Pull stale cards via AnkiConnect:
+  stale_ids = findCards(query='deck:"WikiBot::AI" due:1')
+  (due:1 = due today or overdue in Anki query language)
+  Filter to cards whose WikiPage field matches topic X.
 
 STEP 2 — WIKI CHECK
 For each stale card: read current wiki page.
-Wiki updated since card created? → refresh card content. Update in Anki.
+Wiki updated since card created? → refresh card content via updateNoteFields. Never delete/recreate.
 
 STEP 3 — SERVE CHUNK READING
 Claude generates 5–15 min synthesis covering stale concepts.
 Framing: recap and connections, not first-time introduction.
+Sent as Telegram text message.
 
 STEP 4 — ASSEMBLE DECK
 Deck = stale cards only (updated where necessary). No new cards in Chunk.
-Sync to Anki. Send via Telegram.
+Cards already updated in Anki via AnkiConnect (step 2).
+Send formatted card summary to Telegram (Front/Back pairs as text — user reviews in Anki app).
 ```
 
 ### Session Selection Logic
@@ -563,10 +613,12 @@ Claude synthesises answer with citations
 Check write-back thresholds (≥300 words AND ≥3 wiki refs):
   ├── Below threshold → send answer, done
   └── Above threshold → propose write-back:
-      "💡 File this answer to wiki? Proposed: /wiki/rl/rlhf-ppo-walkthrough.md"
+      "💡 File this answer to wiki? Proposed: /wiki/reinforcement-learning/rlhf-ppo-walkthrough.md"
       Reply Y → sanitisation pass → write to /wiki/
       Reply N → discard
 ```
+
+**Write-back path constraint:** proposed path must be `/wiki/<existing-topic-slug>/<kebab-name>.md` where `<existing-topic-slug>` is a slug already in taxonomy.md. Claude prompt enforces this. Worker validates the proposed slug against taxonomy.md before writing — rejects any path with an unknown topic slug or nested depth > 1.
 
 No grep, no qmd, no vector search for MVP. index.md is sufficient up to ~100 topics. Upgrade to qmd when index.md exceeds a single context window.
 
@@ -618,11 +670,11 @@ Issues requiring judgment → summarised and sent via Telegram
 | Transcription | `faster-whisper` (MPS-accelerated) | Local |
 | Classify + clean + lint | Ollama — qwen2.5:14b (MVP) / 32b (prod) | Local |
 | All /wiki writes + digest + /ask | Claude API — claude-sonnet-4-6 | Cloud |
-| Task queue | SQLite (`/wikis/.queue/tasks.db`) | Local |
+| Task queue | SQLite (`~/Knowledge/.queue/tasks.db`) WAL mode | Local |
 | Topic registry | taxonomy.md (`/wiki/_meta/`) | Local |
 | Query routing | index.md (`/wiki/_meta/`) | Local |
 | Anki card storage + SM-2 | Anki + AnkiConnect plugin | Local |
-| Wiki + vault storage | Obsidian vault (local markdown) | Local |
+| Wiki + vault storage | Obsidian vault at `~/Knowledge/WikiBot-AI/` | Local |
 | Process management | `launchd` daemons (MacBook: manual start for MVP) | Local |
 
 ---
@@ -635,7 +687,7 @@ Build and test each component before starting the next. Run `tests/simulate.py` 
 
 - [ ] `queue/db.py` + `queue/schema.sql` — queue foundation
 - [ ] `bot.py` — receive messages, detect input type, enqueue classify task
-- [ ] `ingestion/video.py` — yt-dlp + faster-whisper, backoff retry, pending sessions
+- [ ] `ingestion/video.py` — yt-dlp + faster-whisper, backoff retry, queue-based manual-upload fallback
 - [ ] `ingestion/article.py` — trafilatura, explicit failure reporting
 - [ ] `ingestion/pdf.py` — pdfplumber + pytesseract fallback
 - [ ] `ingestion/audio.py` — faster-whisper direct
@@ -676,6 +728,35 @@ Build and test each component before starting the next. Run `tests/simulate.py` 
 ---
 
 ## 9. API Call Patterns
+
+### Queue API (`queue/db.py`)
+
+```python
+# Initialize DB (call once on worker startup)
+init_db()
+
+# Enqueue a task
+task_id = enqueue(queue, task_type, payload, priority=2)
+
+# Enqueue only if no pending/running task with same dedup_key (drops duplicates silently)
+task_id = enqueue_if_not_pending(queue, task_type, dedup_key, payload, priority=2)
+# Returns None if duplicate — not an error
+
+# Atomic claim — safe with multiple workers on same queue
+task = poll(queue)   # returns dict with payload already json.loads'd, or None
+
+# Mark outcomes
+mark_done(task_id)
+mark_failed(task_id, error="...")
+mark_retry(task_id, retries=N, backoff_seconds=300)
+mark_escalated(task_id)
+
+# Store a field back into task payload (used by telebot_worker after send)
+update_payload_field(task_id, "sent_message_id", msg_id)
+
+# Find escalated task by the Telegram message_id sent to user
+task = get_pending_escalation_by_message_id(telegram_message_id)
+```
 
 ### Claude API Call Pattern
 
@@ -727,14 +808,21 @@ def call_ollama(prompt_file: str, user_content: str) -> str:
 
 1. **Queue-only communication.** No daemon calls another directly. Every handoff is an enqueued task.
 2. **Ollama never writes /wiki/.** Ollama reads wiki pages for lint only. All /wiki/ writes come from claude_worker.py.
-3. **taxonomy.md is the only topic registry.** Folder names are derived from it. Never create folders manually. Never rename folders manually — use /rename.
+3. **taxonomy.md is the only topic registry.** Folder names are derived from it. Never create folders manually. Never rename folders manually — use /rename. **Only claude_worker writes taxonomy.md** (via `claude:add-topic` task).
 4. **index.md is updated on every wiki write.** No wiki update completes without updating index.md.
-5. **wiki_updated flag is the idempotency mechanism.** Any /raw/ file with wiki_updated: false is unprocessed. Workers scan on startup and re-enqueue. Do not remove this flag.
+5. **wiki_updated flag is the idempotency mechanism.** Any /raw/ file with wiki_updated: false is unprocessed. claude_worker scans on startup and re-enqueues. Do not remove this flag.
 6. **All config in config.py.** No hardcoded paths, model names, or thresholds in any other file.
 7. **All prompts in prompts/.** No inline prompt strings in Python files.
 8. **Card IDs are stable.** The concept ID (`<wiki_name>/<concept-slug>`) is stored in the `ConceptID` field on every note. Before creating any card, call `findNotes(query='deck:... ConceptID:...')`. If found: update with `updateNoteFields`, never delete and recreate. Review history must be preserved.
 9. **Data separation enforced.** No user context in /wiki/ or Anki. /ask write-backs go through sanitisation pass before any wiki write.
 10. **Flat topic folders only.** One level deep, kebab-case. Hierarchy via [[wikilinks]]. Reject any proposed topic slug containing `/`.
+11. **Queue polling is atomic.** `poll()` uses `BEGIN IMMEDIATE` + single `UPDATE … WHERE id = (SELECT … LIMIT 1)`. No SELECT-then-UPDATE. WAL mode enabled on every connection.
+12. **No lockfiles, no .pending_sessions.json.** All transient state (pending manual uploads, escalations) lives in the queue as tasks with `status='escalated'`.
+13. **Ollama output is always JSON.** Classify and clean-summarise prompts instruct Ollama to return only valid JSON. Non-JSON response → task fails → retry.
+14. **Rename steps are idempotent.** Each step checks current state before acting. Failed renames retry from step 1 — no partial rollback needed.
+15. **User reply matching via sent_message_id.** After telebot_worker sends an escalation message, it stores the Telegram `message_id` back in the task payload. bot.py matches user replies via `reply_to_message.message_id`.
+16. **wiki-update re-reads files at execution time.** The task payload contains only `topic`. The worker scans `/raw/<topic>/` fresh when the task runs — never trusts a stale file list baked into the payload.
+17. **log.md format is fixed.** Every entry: `{ISO_DATETIME} | {action} | {topic} | {detail}` — one line, append-only.
 
 ---
 
@@ -786,20 +874,36 @@ Unit test priority order:
 | Ollama scope | Classify, clean, summarise, structural lint only — never writes /wiki/ |
 | Ollama model (MVP) | qwen2.5:14b on MacBook (32GB RAM) |
 | Inter-daemon communication | SQLite task queue — all daemons enqueue, no direct calls |
+| Queue polling | Atomic `BEGIN IMMEDIATE` + single UPDATE claim; WAL mode |
 | Queue retry | 3 retries: 1min/5min/1hr backoff, then escalate to user via telebot |
+| Task deduplication | `enqueue_if_not_pending(dedup_key=...)` — duplicate URLs silently dropped |
+| Pending sessions | Queue tasks with status='escalated', not .pending_sessions.json |
+| Escalation reply matching | `sent_message_id` stored in task payload after telebot send |
 | /new/ staging directory | Removed — bot writes directly to /raw/<topic>/ after classification |
 | rename_watcher daemon | Removed — replaced by explicit /rename bot command |
+| Rename idempotency | Each step checks state before acting; retry from step 1 on failure |
 | /ask routing mechanism | index.md-first (Karpathy pattern) — no RAG infrastructure for MVP |
+| /ask write-back path | Must use existing taxonomy slug — validated before write |
 | /ask qmd upgrade | When index.md exceeds single context window (~100+ pages) |
 | /compile definition | Health check only: contradictions, orphans, gaps, missing links (Karpathy lint) |
 | /rebuild definition | Separate destructive full rewrite from /raw/ — requires explicit confirmation |
 | Anki sync method | AnkiConnect REST API — Anki runs on local machine |
+| Anki card delivery | AnkiConnect writes silently; text Front/Back summary sent to Telegram |
+| Chunk stale card query | `findCards(query='deck:"WikiBot::AI" due:1')` — due today or overdue |
 | Digest storage | Not stored — generated dynamically on every /digest call |
 | Anki card storage | Persistent in Anki — single source of truth for learning state |
 | Card ID scheme | `<wiki_name>/<concept-slug>` — e.g. `ai/dense-sparse-retrieval` |
 | Slug normalisation | Lowercase, hyphenate, strip stop words. Lives in anki/slugs.py. Applied before every AnkiConnect call. |
+| Ollama classify output | JSON only: `{"match": "<slug>", "confidence": N}` or `{"match": null, "proposed": {...}}` |
+| Ollama taxonomy writes | Forbidden. Only claude_worker writes taxonomy.md via claude:add-topic task |
+| wiki-update file list | Re-read at execution time from /raw/<topic>/ — payload contains only topic slug |
+| log.md format | `{ISO_DATETIME} \| {action} \| {topic} \| {detail}` — one line per event |
+| wiki-update user_content | XML structure: `<current_wiki_page>` + `<new_sources count="N"><source ...>` |
+| Worker shutdown | SIGTERM handler + KeyboardInterrupt — graceful exit |
+| Nugget diff empty wiki | Missing wiki page treated as empty string — all concepts treated as NEW |
+| Vault path | `~/Knowledge/WikiBot-AI/` — WIKIS_ROOT=`~/Knowledge`, VAULT_FOLDER=`WikiBot-AI` |
 | MemPalace | Removed from MVP entirely. No personalisation of digest framing. Future feature. |
-| Wiki name | `ai` — single wiki for MVP |
+| Wiki name | `ai` — logical name for Anki namespacing; vault folder is `WikiBot-AI` |
 | Multi-wiki | Future feature (Phase 4+) |
 | Bootstrap seed topics | 10 pre-seeded rows in taxonomy.md (defined in config.py TAXONOMY_SEED_TOPICS) |
 | index.md maintenance | Updated by claude_worker on every wiki write. Never manually edited. |
