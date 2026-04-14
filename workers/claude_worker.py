@@ -93,19 +93,57 @@ def call_claude(prompt_file: str, user_content: str) -> str:
 
 # ── Startup scan ─────────────────────────────────────────────────────────────
 
+def _get_known_slugs() -> set:
+    """
+    Parse taxonomy.md and return the set of slug values from the table.
+    Taxonomy is the single source of truth for topics (CLAUDE.md rule 3).
+    """
+    slugs = set()
+    taxonomy_path = Path(TAXONOMY_FILE)
+    if not taxonomy_path.exists():
+        logger.warning("taxonomy.md not found at %s", TAXONOMY_FILE)
+        return slugs
+    content = taxonomy_path.read_text(encoding="utf-8")
+    for line in content.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        # Skip separator rows like |---|---|...
+        if re.match(r"^\|[\s\-|]+\|$", line):
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        # cells[0] is empty (before first |), cells[1] is the slug column
+        if len(cells) < 3:
+            continue
+        slug = cells[1].strip()
+        # Skip header row
+        if slug and slug.lower() != "slug":
+            slugs.add(slug)
+    return slugs
+
+
 def startup_scan_unprocessed():
     """
-    Scan /raw/ for .md files with wiki_updated: false.
+    Read known topic slugs from taxonomy.md, then for each slug check if
+    /raw/<slug>/ contains .md files with wiki_updated: false.
     Enqueue one claude:wiki-update task per topic (deduped).
+
+    Uses taxonomy.md as the topic source per CLAUDE.md rule 3 —
+    never iterates /raw/ directory names directly.
     """
     raw_path = Path(RAW_DIR)
     if not raw_path.exists():
         return
 
-    for topic_dir in sorted(raw_path.iterdir()):
+    known_slugs = _get_known_slugs()
+    if not known_slugs:
+        logger.warning("startup_scan: no slugs found in taxonomy.md, skipping scan")
+        return
+
+    for topic in sorted(known_slugs):
+        topic_dir = raw_path / topic
         if not topic_dir.is_dir():
             continue
-        topic = topic_dir.name
         for md_file in sorted(topic_dir.glob("*.md")):
             content = md_file.read_text(encoding="utf-8")
             if "wiki_updated: false" in content:
