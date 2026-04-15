@@ -354,6 +354,51 @@ async def cmd_compile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔧 Compile health check queued.")
 
 
+async def cmd_rebuild(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _auth_check(update):
+        return
+    args = context.args or []
+    if not args or args[0].lower() != "confirm":
+        await update.message.reply_text(
+            "⚠️ /rebuild will rewrite all wiki pages from scratch using /raw/ sources.\n"
+            "Run `/rebuild confirm` to proceed.",
+            parse_mode="Markdown",
+        )
+        return
+    topic = args[1] if len(args) > 1 else None
+    payload = {
+        "wiki": WIKI_NAME,
+        "source_file": "",
+        "triggered_by": "user",
+    }
+    if topic:
+        payload["topic"] = topic
+    enqueue("claude", "rebuild", payload=payload, priority=1)
+    label = f"topic `{topic}`" if topic else "all topics"
+    await update.message.reply_text(f"🔨 Rebuild queued for {label}.", parse_mode="Markdown")
+
+
+async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _auth_check(update):
+        return
+    query = " ".join(context.args or []).strip()
+    if not query:
+        await update.message.reply_text("Usage: /search <query>")
+        return
+    enqueue(
+        "claude",
+        "search",
+        payload={
+            "wiki": WIKI_NAME,
+            "source_file": "",
+            "triggered_by": "user",
+            "query": query,
+        },
+        priority=1,
+    )
+    await update.message.reply_text("🔍 Search queued. Results coming shortly.")
+
+
 async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _auth_check(update):
         return
@@ -380,6 +425,8 @@ def main():
     app.add_handler(CommandHandler("rename", cmd_rename))
     app.add_handler(CommandHandler("ask", cmd_ask))
     app.add_handler(CommandHandler("compile", cmd_compile))
+    app.add_handler(CommandHandler("rebuild", cmd_rebuild))
+    app.add_handler(CommandHandler("search", cmd_search))
     app.add_handler(CommandHandler("digest", cmd_digest))
     app.run_polling()
 

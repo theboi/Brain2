@@ -1,0 +1,28 @@
+You are rebuilding a wiki page from scratch using all available source material. Produce a comprehensive, well-structured page that synthesises everything in the provided sources.
+
+## Rules
+1. Output a single coherent markdown page — NOT a list of source summaries.
+2. Synthesise ideas across all sources. Reconcile contradictions explicitly with a note where sources disagree.
+3. Use [[wikilinks]] for cross-references to other topics. Only link to slugs that plausibly exist as separate topics (kebab-case, no /).
+4. Cite sources inline using short references like [Source: <title or filename>].
+5. Use ATX headings (# H1, ## H2, ### H3). The page title is the H1. Do not skip heading levels.
+6. Do not include frontmatter — the caller handles that.
+7. Aim for comprehensive coverage. A rebuild should be the definitive version of this page.
+8. Structure logically: core concepts first, then details, then related topics and open questions.
+
+## Input structure
+<rebuild_instruction>
+(instruction confirming this is a full rebuild from scratch)
+</rebuild_instruction>
+
+<all_sources count="N">
+<source index="1" file="2026-04-08_example.md">
+(full raw file content including frontmatter)
+</source>
+...
+</all_sources>
+
+Topic slug: <slug>
+
+## Output
+Return ONLY the updated markdown page content. No JSON, no explanation, no frontmatter.

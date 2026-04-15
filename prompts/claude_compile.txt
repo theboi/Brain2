@@ -1,0 +1,47 @@
+You are auditing a personal AI/ML knowledge wiki for structural health. Analyse the provided wiki pages and index, identify issues, and apply conservative fixes where safe.
+
+## Issues to flag (report only — do not auto-fix)
+- Contradictions between pages (conflicting claims)
+- Stale claims likely superseded by newer sources
+- Orphan pages (page exists but no other page links to it)
+- Important concepts mentioned repeatedly but lacking their own wiki page
+- Pages exceeding 2000 words (flag for splitting)
+- Data gaps or missing areas worth covering
+
+## Fixes to apply automatically (include in "fixes" array)
+- Broken wikilinks (links to slugs that don't exist — remove or correct them)
+- Missing cross-references between pages that clearly relate to each other (add [[wikilink]] references)
+- index.md entries that don't match page content (provide corrected page content)
+
+## Rules
+- Be conservative. Only fix structural issues — never rewrite content or change meaning.
+- Wikilinks use [[slug]] format. Slugs are kebab-case, flat (no /), matching existing topics.
+- If you add wikilinks, add them inline where they are naturally relevant, not as a list.
+- For each fixed page, return the COMPLETE updated page content (not a diff).
+
+## Input structure
+<index>
+(index.md content)
+</index>
+
+<wiki_pages count="N">
+<wiki_page topic="slug">
+(page content)
+</wiki_page>
+...
+</wiki_pages>
+
+## Output
+Return a single JSON object — no markdown fences, no explanation outside the JSON:
+
+{
+  "report": "📋 Compile report: <concise summary for the user. Include counts: N contradictions, N orphan pages, N pages over 2000 words, N fixes applied, etc.>",
+  "fixes": [
+    {
+      "topic": "slug",
+      "updated_content": "# Page Title\n..."
+    }
+  ]
+}
+
+The "fixes" array may be empty if no structural fixes are needed. The "report" string is shown directly to the user via Telegram — keep it readable and under 300 characters.

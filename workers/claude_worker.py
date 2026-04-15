@@ -345,6 +345,52 @@ def handle_rename(task: dict):
     mark_done(task["id"])
 
 
+def handle_compile(task: dict):
+    """Run wiki health check, apply fixes, and notify user with report."""
+    from wiki.compiler import run_compile
+    report = run_compile()
+    enqueue("telebot", "notify", {
+        "wiki": WIKI_NAME,
+        "source_file": None,
+        "triggered_by": str(task["id"]),
+        "message": report,
+    }, priority=1)
+    _append_log("compile", "all", "health check complete")
+    mark_done(task["id"])
+
+
+def handle_rebuild(task: dict):
+    """Rebuild wiki pages from scratch from all /raw/ sources."""
+    from wiki.compiler import run_rebuild
+    topic = task["payload"].get("topic")  # None = all topics
+    n = run_rebuild(topic)
+    label = topic or "all topics"
+    enqueue("telebot", "notify", {
+        "wiki": WIKI_NAME,
+        "source_file": None,
+        "triggered_by": str(task["id"]),
+        "message": f"✅ Rebuild complete: {n} page(s) rebuilt ({label})",
+    }, priority=1)
+    _append_log("rebuild", label, f"{n} pages rebuilt")
+    mark_done(task["id"])
+
+
+def handle_search(task: dict):
+    """Search index.md via Claude and return matching pages."""
+    query = task["payload"]["query"]
+    index_path = Path(META_DIR) / "index.md"
+    index_content = index_path.read_text(encoding="utf-8") if index_path.exists() else "(empty)"
+    user_content = f"Search query: {query}\n\nIndex:\n{index_content}"
+    result = call_claude("claude_search.txt", user_content)
+    enqueue("telebot", "notify", {
+        "wiki": WIKI_NAME,
+        "source_file": None,
+        "triggered_by": str(task["id"]),
+        "message": result,
+    }, priority=1)
+    mark_done(task["id"])
+
+
 # ── Failure handler ───────────────────────────────────────────────────────────
 
 def handle_failure(task: dict, error: Exception):
@@ -388,6 +434,9 @@ HANDLERS = {
     "wiki-fix": handle_wiki_fix,
     "add-topic": handle_add_topic,
     "rename": handle_rename,
+    "compile": handle_compile,
+    "rebuild": handle_rebuild,
+    "search": handle_search,
 }
 
 
