@@ -107,9 +107,10 @@ def run_compile() -> str:
     # Strip markdown code fences if present
     cleaned = raw_response.strip()
     if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```[a-z]*\n?", "", cleaned)
+        cleaned = re.sub(r"^```[^\n]*\n?", "", cleaned)
         cleaned = re.sub(r"\n?```$", "", cleaned.rstrip())
 
+    logger.warning("compile: raw Claude response before parse: %s", cleaned[:500])
     result = json.loads(cleaned)
     report = result.get("report", "📋 Compile complete.")
     fixes = result.get("fixes", [])

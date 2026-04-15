@@ -379,7 +379,16 @@ def handle_search(task: dict):
     """Search index.md via Claude and return matching pages."""
     query = task["payload"]["query"]
     index_path = Path(META_DIR) / "index.md"
-    index_content = index_path.read_text(encoding="utf-8") if index_path.exists() else "(empty)"
+    if not index_path.exists():
+        enqueue("telebot", "notify", {
+            "wiki": WIKI_NAME,
+            "source_file": None,
+            "triggered_by": str(task["id"]),
+            "message": "No wiki index found yet. Ingest some content first.",
+        }, priority=1)
+        mark_done(task["id"])
+        return
+    index_content = index_path.read_text(encoding="utf-8")
     user_content = f"Search query: {query}\n\nIndex:\n{index_content}"
     result = call_claude("claude_search.txt", user_content)
     enqueue("telebot", "notify", {

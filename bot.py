@@ -358,14 +358,15 @@ async def cmd_rebuild(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _auth_check(update):
         return
     args = context.args or []
-    if not args or args[0].lower() != "confirm":
+    if "confirm" not in [a.lower() for a in args]:
         await update.message.reply_text(
             "⚠️ /rebuild will rewrite all wiki pages from scratch using /raw/ sources.\n"
             "Run `/rebuild confirm` to proceed.",
             parse_mode="Markdown",
         )
         return
-    topic = args[1] if len(args) > 1 else None
+    topic_args = [a for a in args if a.lower() != "confirm"]
+    topic = topic_args[0] if topic_args else None
     payload = {
         "wiki": WIKI_NAME,
         "source_file": "",
