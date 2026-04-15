@@ -435,7 +435,9 @@ def handle_ask(task: dict):
     answer = call_claude("claude_ask.txt", user_content)
 
     word_count = len(answer.split())
-    wiki_refs = len(re.findall(r'\[\[([^\]]+)\]\]', answer))
+    # Handle [[slug|Display Name]] — extract slug only
+    _wikilink_re = re.compile(r'\[\[([^\]|]+)(?:\|[^\]]*)?\]\]')
+    wiki_refs = len(_wikilink_re.findall(answer))
 
     # Send the answer
     enqueue("telebot", "notify", {
@@ -452,34 +454,32 @@ def handle_ask(task: dict):
         slug = '-'.join(slug.split()[:6])
         slug = re.sub(r'-+', '-', slug).strip('-')
 
-        # Pick primary topic from first wikilink in answer
-        topics_mentioned = re.findall(r'\[\[([^\]]+)\]\]', answer)
+        # Pick primary topic from wikilinks in answer — must be a known taxonomy slug
+        topics_mentioned = _wikilink_re.findall(answer)
         known_slugs = _get_known_slugs()
         primary_topic = next(
             (t for t in topics_mentioned if t in known_slugs),
             None,
         )
-        if primary_topic is None:
-            # Fall back to first known topic alphabetically
-            primary_topic = sorted(known_slugs)[0] if known_slugs else "general"
 
-        proposed_path = f"/wiki/{primary_topic}/{slug}.md"
-
-        enqueue("telebot", "user-decision-required", {
-            "wiki": WIKI_NAME,
-            "source_file": None,
-            "triggered_by": str(task["id"]),
-            "task_type_detail": "ask-writeback-proposal",
-            "message": (
-                f"💡 File this answer to wiki?\n"
-                f"Proposed: `{proposed_path}`\n"
-                f"Reply Y to confirm, N to discard."
-            ),
-            "original_task": {
-                "raw_response": answer,
-                "proposed_path": proposed_path,
-            },
-        }, priority=1)
+        if primary_topic is not None:
+            proposed_path = f"/wiki/{primary_topic}/{slug}.md"
+            enqueue("telebot", "user-decision-required", {
+                "wiki": WIKI_NAME,
+                "source_file": None,
+                "triggered_by": str(task["id"]),
+                "task_type_detail": "ask-writeback-proposal",
+                "message": (
+                    f"💡 File this answer to wiki?\n"
+                    f"Proposed: `{proposed_path}`\n"
+                    f"Reply Y to confirm, N to discard."
+                ),
+                "original_task": {
+                    "raw_response": answer,
+                    "proposed_path": proposed_path,
+                },
+            }, priority=1)
+        # else: no valid taxonomy topic resolved — skip write-back proposal silently
 
     _append_log("ask", "query", f"q={question[:80]} | words={word_count} | refs={wiki_refs}")
     mark_done(task["id"])
@@ -519,8 +519,10 @@ def handle_sanitise_writeback(task: dict):
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     abs_path.write_text(sanitised, encoding="utf-8")
 
-    # Update index.md and log
-    _update_index_md(topic_slug, sanitised)
+    # Update index.md only if this is the main topic page (sub-pages don't get an index entry)
+    is_main_page = (page_name == f"{topic_slug}.md")
+    if is_main_page:
+        _update_index_md(topic_slug, sanitised)
     _append_log("ask-writeback", topic_slug, f"filed to {proposed_path}")
 
     enqueue("telebot", "notify", {
