@@ -44,6 +44,8 @@ from config import (
     WIKI_DIR,
     WIKI_NAME,
     WIKI_UPDATE_POLL_INTERVAL,
+    WRITEBACK_MIN_WIKI_REFS,
+    WRITEBACK_MIN_WORDS,
 )
 from taskqueue.db import (
     enqueue,
@@ -400,6 +402,136 @@ def handle_search(task: dict):
     mark_done(task["id"])
 
 
+def handle_ask(task: dict):
+    """Answer a /ask question using index.md and all wiki pages, with optional write-back."""
+    question = task["payload"]["question"]
+
+    index_path = Path(META_DIR) / "index.md"
+    if not index_path.exists():
+        enqueue("telebot", "notify", {
+            "wiki": WIKI_NAME,
+            "source_file": None,
+            "triggered_by": str(task["id"]),
+            "message": "No wiki index yet. Ingest some content first.",
+        }, priority=1)
+        mark_done(task["id"])
+        return
+
+    index_content = index_path.read_text(encoding="utf-8")
+
+    # Read all wiki pages (MVP: full scan is fine at this scale)
+    wiki_pages = {}
+    wiki_path = Path(WIKI_DIR)
+    for topic_dir in sorted(wiki_path.iterdir()):
+        if topic_dir.is_dir() and not topic_dir.name.startswith("_"):
+            page = topic_dir / f"{topic_dir.name}.md"
+            if page.exists():
+                wiki_pages[topic_dir.name] = page.read_text(encoding="utf-8")
+
+    user_content = f"Question: {question}\n\nIndex:\n{index_content}\n\nWiki pages:\n"
+    for topic, content in wiki_pages.items():
+        user_content += f"\n<page topic='{topic}'>\n{content}\n</page>\n"
+
+    answer = call_claude("claude_ask.txt", user_content)
+
+    word_count = len(answer.split())
+    wiki_refs = len(re.findall(r'\[\[([^\]]+)\]\]', answer))
+
+    # Send the answer
+    enqueue("telebot", "notify", {
+        "wiki": WIKI_NAME,
+        "source_file": None,
+        "triggered_by": str(task["id"]),
+        "message": answer,
+    }, priority=1)
+
+    # Propose write-back if thresholds met
+    if word_count >= WRITEBACK_MIN_WORDS and wiki_refs >= WRITEBACK_MIN_WIKI_REFS:
+        # Derive proposed path from question
+        slug = re.sub(r'[^\w\s]', '', question.lower())
+        slug = '-'.join(slug.split()[:6])
+        slug = re.sub(r'-+', '-', slug).strip('-')
+
+        # Pick primary topic from first wikilink in answer
+        topics_mentioned = re.findall(r'\[\[([^\]]+)\]\]', answer)
+        known_slugs = _get_known_slugs()
+        primary_topic = next(
+            (t for t in topics_mentioned if t in known_slugs),
+            None,
+        )
+        if primary_topic is None:
+            # Fall back to first known topic alphabetically
+            primary_topic = sorted(known_slugs)[0] if known_slugs else "general"
+
+        proposed_path = f"/wiki/{primary_topic}/{slug}.md"
+
+        enqueue("telebot", "user-decision-required", {
+            "wiki": WIKI_NAME,
+            "source_file": None,
+            "triggered_by": str(task["id"]),
+            "task_type_detail": "ask-writeback-proposal",
+            "message": (
+                f"💡 File this answer to wiki?\n"
+                f"Proposed: `{proposed_path}`\n"
+                f"Reply Y to confirm, N to discard."
+            ),
+            "original_task": {
+                "raw_response": answer,
+                "proposed_path": proposed_path,
+            },
+        }, priority=1)
+
+    _append_log("ask", "query", f"q={question[:80]} | words={word_count} | refs={wiki_refs}")
+    mark_done(task["id"])
+
+
+def handle_sanitise_writeback(task: dict):
+    """Sanitise an /ask answer and write it to the wiki as a sub-page."""
+    raw_response = task["payload"]["raw_response"]
+    proposed_path = task["payload"]["proposed_path"]
+
+    # Validate path: must be /wiki/<existing-slug>/<page>.md, depth == 4 parts
+    parts = Path(proposed_path).parts  # ('/', 'wiki', '<slug>', '<page>.md')
+    if len(parts) != 4 or parts[1] != "wiki":
+        raise ValueError(f"Invalid proposed_path depth: {proposed_path}")
+    topic_slug = parts[2]
+    page_name = parts[3]
+
+    # Reject nested slugs (CLAUDE.md rule 8)
+    if "/" in topic_slug:
+        raise ValueError(f"Nested topic slug not allowed: {topic_slug}")
+
+    known_slugs = _get_known_slugs()
+    if topic_slug not in known_slugs:
+        raise ValueError(f"Unknown topic slug in proposed_path: {topic_slug}")
+
+    # Sanitise: strip conversational framing, preserve wikilinks and facts
+    user_content = (
+        f"<raw_answer>\n{raw_response}\n</raw_answer>\n\n"
+        f"Proposed file: {proposed_path}"
+    )
+    sanitised = call_claude("claude_sanitise_writeback.txt", user_content)
+    if not sanitised or not sanitised.strip():
+        raise ValueError("claude_sanitise_writeback returned empty response")
+
+    # Write to wiki
+    abs_path = Path(WIKI_DIR) / topic_slug / page_name
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_text(sanitised, encoding="utf-8")
+
+    # Update index.md and log
+    _update_index_md(topic_slug, sanitised)
+    _append_log("ask-writeback", topic_slug, f"filed to {proposed_path}")
+
+    enqueue("telebot", "notify", {
+        "wiki": WIKI_NAME,
+        "source_file": None,
+        "triggered_by": str(task["id"]),
+        "message": f"✅ Filed to wiki: `{proposed_path}`",
+    }, priority=1)
+    mark_done(task["id"])
+
+
 # ── Failure handler ───────────────────────────────────────────────────────────
 
 def handle_failure(task: dict, error: Exception):
@@ -446,6 +578,8 @@ HANDLERS = {
     "compile": handle_compile,
     "rebuild": handle_rebuild,
     "search": handle_search,
+    "ask": handle_ask,
+    "sanitise-writeback": handle_sanitise_writeback,
 }
 
 

@@ -164,7 +164,30 @@ async def _handle_escalation_reply(
     task_type = task["task_type"]
     reply_lower = reply_text.strip().lower()
 
-    if task_type == "user-decision-required":
+    if task_type == "user-decision-required" and task["payload"].get("task_type_detail") == "ask-writeback-proposal":
+        original = task["payload"].get("original_task", {})
+        if reply_lower in ("y", "yes"):
+            enqueue(
+                "claude",
+                "sanitise-writeback",
+                payload={
+                    "wiki": task["payload"].get("wiki", WIKI_NAME),
+                    "source_file": None,
+                    "triggered_by": str(task["id"]),
+                    "raw_response": original.get("raw_response", ""),
+                    "proposed_path": original.get("proposed_path", ""),
+                },
+                priority=1,
+            )
+            mark_done(task["id"])
+            await update.message.reply_text("✅ Write-back queued.")
+        elif reply_lower in ("n", "no"):
+            mark_done(task["id"])
+            await update.message.reply_text("⏭ Discarded.")
+        else:
+            await update.message.reply_text("Reply *Y* to file to wiki, *N* to discard.", parse_mode="Markdown")
+
+    elif task_type == "user-decision-required":
         if reply_lower == "retry":
             original = task["payload"].get("original_task", {})
             if original:

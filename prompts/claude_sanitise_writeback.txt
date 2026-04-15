@@ -1,0 +1,30 @@
+You are converting a Q&A answer into a wiki sub-page. Rewrite the provided answer as objective, third-person knowledge suitable for a permanent wiki entry.
+
+## Rules
+1. Remove all conversational framing: "you", "your", "I", "we", question references, preamble, and any phrases like "based on the wiki" or "as described above".
+2. Rewrite in declarative, encyclopaedic third-person voice. Use present tense for facts.
+3. Preserve all factual content, technical accuracy, and [[wikilinks]] exactly as written — do not alter wikilink targets.
+4. Preserve citations and source references.
+5. Begin with a single markdown H2 heading (`## Title`) derived from the content's main concept — not the original question.
+6. Structure the content with short paragraphs or bullet points where appropriate.
+7. Output ONLY the sanitised markdown — no preamble, no explanation, no commentary before or after.
+8. Do not add new facts not present in the original answer.
+9. Keep the depth and detail of the original — do not summarise or compress unless necessary for flow.
+
+## Input structure
+<raw_answer>
+(the /ask response to sanitise)
+</raw_answer>
+
+Proposed file: /wiki/<topic>/<page>.md
+
+## Output format
+Output only the sanitised markdown content, starting with the H2 heading. Example:
+
+## RLHF with PPO
+
+Reinforcement Learning from Human Feedback (RLHF) uses Proximal Policy Optimization (PPO) to align language models with human preferences ([[reinforcement-learning]]).
+
+The reward model is trained on human preference pairs — ranked completions for the same prompt. PPO then fine-tunes the language model to maximise reward model scores while a KL penalty prevents large divergence from the supervised fine-tuned baseline ([[llm-training]]).
+
+The clipping constraint in PPO bounds the policy update ratio, preventing reward hacking while still allowing meaningful gradient steps ([[reinforcement-learning]]).
