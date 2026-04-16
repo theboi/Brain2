@@ -485,6 +485,66 @@ def handle_ask(task: dict):
     mark_done(task["id"])
 
 
+def handle_digest_session(task: dict):
+    """Select and enqueue the appropriate digest session type."""
+    from digest.session import select_session
+
+    result = select_session(WIKI_NAME)
+    base = {"wiki": WIKI_NAME, "source_file": None, "triggered_by": str(task["id"])}
+
+    if result["type"] == "nugget":
+        enqueue("claude", "digest-nugget", {
+            **base,
+            "source_file": result["source_file"],
+        }, priority=1)
+    elif result["type"] == "chunk":
+        enqueue("claude", "digest-chunk", {
+            **base,
+            "stale_cards": result["stale_cards"],
+        }, priority=1)
+    else:
+        enqueue("telebot", "notify", {
+            **base,
+            "message": "✅ All caught up. No session needed today.",
+        }, priority=1)
+
+    mark_done(task["id"])
+
+
+def handle_digest_nugget(task: dict):
+    """Run a Nugget digest session and notify the user."""
+    from digest.nugget import run_nugget
+
+    source_file = task["payload"]["source_file"]
+    summary = run_nugget(source_file, call_claude, enqueue, str(task["id"]))
+
+    enqueue("telebot", "notify", {
+        "wiki": WIKI_NAME,
+        "source_file": source_file,
+        "triggered_by": str(task["id"]),
+        "message": summary,
+    }, priority=1)
+    _append_log("digest-nugget", Path(source_file).parent.name, f"source={Path(source_file).name}")
+    mark_done(task["id"])
+
+
+def handle_digest_chunk(task: dict):
+    """Run a Chunk digest session and notify the user."""
+    from digest.chunk import run_chunk
+
+    stale_cards = task["payload"]["stale_cards"]
+    summary = run_chunk(stale_cards, call_claude, enqueue, str(task["id"]))
+
+    enqueue("telebot", "notify", {
+        "wiki": WIKI_NAME,
+        "source_file": None,
+        "triggered_by": str(task["id"]),
+        "message": summary,
+    }, priority=1)
+    _append_log("digest-chunk", "all", f"{len(stale_cards)} stale cards")
+    mark_done(task["id"])
+
+
 def handle_sanitise_writeback(task: dict):
     """Sanitise an /ask answer and write it to the wiki as a sub-page."""
     raw_response = task["payload"]["raw_response"]
@@ -582,6 +642,9 @@ HANDLERS = {
     "search": handle_search,
     "ask": handle_ask,
     "sanitise-writeback": handle_sanitise_writeback,
+    "digest-session": handle_digest_session,
+    "digest-nugget": handle_digest_nugget,
+    "digest-chunk": handle_digest_chunk,
 }
 
 
