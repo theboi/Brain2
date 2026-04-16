@@ -319,23 +319,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Anki card counts
     try:
-        import requests as _req
-        from config import ANKI_CONNECT_URL, ANKI_CONNECT_VERSION
-
-        def _anki(action, **params):
-            r = _req.post(
-                ANKI_CONNECT_URL,
-                json={"action": action, "version": ANKI_CONNECT_VERSION, "params": params},
-                timeout=5,
-            )
-            r.raise_for_status()
-            data = r.json()
-            if data.get("error"):
-                raise RuntimeError(data["error"])
-            return data["result"]
-
-        total = len(_anki("findCards", query=f'deck:"{ANKI_DECK_NAME}"'))
-        due = len(_anki("findCards", query=f'deck:"{ANKI_DECK_NAME}" due:1'))
+        from anki.connect import _anki_request
+        total = len(_anki_request("findCards", query=f'deck:"{ANKI_DECK_NAME}"'))
+        due = len(_anki_request("findCards", query=f'deck:"{ANKI_DECK_NAME}" due:1'))
         lines.append(f"\n*🃏 Anki ({ANKI_DECK_NAME}):*")
         lines.append(f"  Total cards: {total}")
         lines.append(f"  Due today: {due}")
