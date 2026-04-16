@@ -18,7 +18,7 @@ from telegram.ext import (
     filters,
 )
 
-from config import TELEGRAM_ALLOWED_USER_ID, TELEGRAM_BOT_TOKEN, WIKI_NAME
+from config import ANKI_DECK_NAME, TELEGRAM_ALLOWED_USER_ID, TELEGRAM_BOT_TOKEN, WIKI_NAME
 from taskqueue.db import (
     enqueue,
     enqueue_if_not_pending,
@@ -308,12 +308,40 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "SELECT queue, status, COUNT(*) as cnt FROM tasks GROUP BY queue, status"
     ).fetchall()
     conn.close()
-    if not rows:
-        await update.message.reply_text("Queue is empty.")
-        return
-    lines = ["*Queue Status:*"]
-    for row in rows:
-        lines.append(f"  `{row['queue']}` / `{row['status']}`: {row['cnt']}")
+
+    lines = []
+    if rows:
+        lines.append("*📊 Queue:*")
+        for row in rows:
+            lines.append(f"  `{row['queue']}` / `{row['status']}`: {row['cnt']}")
+    else:
+        lines.append("Queue is empty.")
+
+    # Anki card counts
+    try:
+        import requests as _req
+        from config import ANKI_CONNECT_URL, ANKI_CONNECT_VERSION
+
+        def _anki(action, **params):
+            r = _req.post(
+                ANKI_CONNECT_URL,
+                json={"action": action, "version": ANKI_CONNECT_VERSION, "params": params},
+                timeout=5,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if data.get("error"):
+                raise RuntimeError(data["error"])
+            return data["result"]
+
+        total = len(_anki("findCards", query=f'deck:"{ANKI_DECK_NAME}"'))
+        due = len(_anki("findCards", query=f'deck:"{ANKI_DECK_NAME}" due:1'))
+        lines.append(f"\n*🃏 Anki ({ANKI_DECK_NAME}):*")
+        lines.append(f"  Total cards: {total}")
+        lines.append(f"  Due today: {due}")
+    except Exception:
+        lines.append("\n*🃏 Anki:* offline")
+
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
