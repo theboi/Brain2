@@ -47,7 +47,7 @@ def authorize(store: Store, ctx: RequestContext, action: str,
         return
 
     if action not in PROJECT_ACTION_ROLES:
-        raise PermissionDenied(f"unknown action: '{action}'")
+        raise ValueError(f"unknown action: '{action}'")
 
     if project_id is None:
         raise PermissionDenied(f"action '{action}' requires a project_id")
@@ -57,7 +57,7 @@ def authorize(store: Store, ctx: RequestContext, action: str,
     effective = store.effective_project_role(tenant_id, project_id, ctx.user_id)
 
     bg = store.get_active_break_glass_grant(tenant_id, project_id, ctx.user_id)
-    bg_role = bg["role"] if bg else None
+    bg_role = bg.get("role") if bg else None
 
     best_role: str | None = None
     for r in filter(None, [effective, bg_role]):
