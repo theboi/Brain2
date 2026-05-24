@@ -1,0 +1,26 @@
+[project]
+name = "brain2"
+version = "0.0.1"
+description = "Self-hostable multi-tenant business knowledge system"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=4.1"]
+
+[project.scripts]
+brain2-migrate = "brain2.store.migrations.runner:main"
+# brain2-api / brain2-mcp / brain2-worker / brain2-init are added in later sub-plans.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["brain2*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
