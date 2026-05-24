@@ -35,12 +35,13 @@ class SecretManager:
         plaintext = self._decrypt(self._aes, value_enc)
         self._store.touch_secret(tenant_id, key,
                                  datetime.now(timezone.utc).isoformat())
+        # TODO(P04): emit credential_accessed audit event with accessed_by
         return plaintext
 
     def rotate(self, tenant_id: str, key: str, new_plaintext: bytes,
                *, accessed_by: str) -> None:
+        """Atomically replace a credential (single INSERT OR REPLACE)."""
         new_enc = self._encrypt(self._aes, new_plaintext)
-        self._store.delete_secret(tenant_id, key)
         self._store.store_secret(tenant_id, key, new_enc)
 
     # --- per-subject data keys (GDPR crypto-shredding) ---
