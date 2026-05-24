@@ -53,3 +53,13 @@ def test_refresh_reuse_revokes_family(tm):
 def test_invalid_token_raises(tm):
     with pytest.raises(TokenError):
         tm.validate("not-a-real-token")
+
+
+def test_logout_then_refresh_is_not_theft(tm):
+    """Revoking access token and then refreshing should raise TokenError, not TokenReuseError."""
+    raw_access, raw_refresh = tm.issue("t1", "u1")
+    tm.revoke(raw_access)  # logout
+    with pytest.raises(TokenError) as exc_info:
+        tm.refresh(raw_refresh)
+    # Must NOT be TokenReuseError (that would trigger family revocation for a normal logout)
+    assert not isinstance(exc_info.value, TokenReuseError)

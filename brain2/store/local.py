@@ -332,8 +332,20 @@ class LocalStore:
 
     def revoke_token_by_refresh(self, refresh_lookup: str) -> None:
         with self.transaction() as cx:
-            cx.execute("UPDATE tokens SET revoked_at=? WHERE refresh_lookup=? AND revoked_at IS NULL",
-                       (_now_iso(), refresh_lookup))
+            cx.execute(
+                "UPDATE tokens SET refresh_consumed_at=? WHERE refresh_lookup=? AND refresh_consumed_at IS NULL",
+                (_now_iso(), refresh_lookup))
+
+    def consume_refresh_token(self, refresh_lookup: str) -> dict | None:
+        with self.transaction() as cx:
+            row = cx.execute(
+                "SELECT * FROM tokens WHERE refresh_lookup=?", (refresh_lookup,)).fetchone()
+            if not row or row["refresh_consumed_at"] is not None:
+                return None
+            cx.execute(
+                "UPDATE tokens SET refresh_consumed_at=? WHERE refresh_lookup=? AND refresh_consumed_at IS NULL",
+                (_now_iso(), refresh_lookup))
+        return dict(row)
 
     # --- auth: password credentials ---
     def set_password_credential(self, tenant_id: str, user_id: str,

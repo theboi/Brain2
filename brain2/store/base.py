@@ -114,6 +114,13 @@ class Store(Protocol):
     def lookup_token_by_refresh(self, refresh_lookup: str) -> dict | None: ...
     def revoke_token_by_refresh(self, refresh_lookup: str) -> None: ...
 
+    def consume_refresh_token(self, refresh_lookup: str) -> dict | None:
+        """Atomically look up and mark a refresh token as consumed (rotation).
+        Returns the row if this was the first consumption.
+        Returns None if not found or already consumed.
+        """
+        ...
+
     # --- auth: password credentials ---
     def set_password_credential(self, tenant_id: str, user_id: str,
                                  algo: str, hash_val: str, params: str) -> None: ...

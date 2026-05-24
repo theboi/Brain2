@@ -29,6 +29,7 @@ CREATE TABLE tokens (
     expires_at     TEXT NOT NULL,
     refresh_expires_at TEXT,
     revoked_at     TEXT,
+    refresh_consumed_at TEXT,
     created_at     TEXT NOT NULL
 );
 CREATE INDEX idx_tokens_tenant ON tokens(tenant_id, user_id);

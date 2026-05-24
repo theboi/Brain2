@@ -75,20 +75,36 @@ class TokenManager:
     def refresh(self, raw_refresh: str) -> tuple[str, str]:
         """Consume refresh token; issue new access+refresh pair. Raises on reuse."""
         refresh_lookup = _sha256_hex(raw_refresh)
-        row = self._store.lookup_token_by_refresh(refresh_lookup)
-        if row is None:
+
+        # First check for theft: was this refresh already consumed (rotation) or revoked?
+        existing = self._store.lookup_token_by_refresh(refresh_lookup)
+        if existing is None:
             raise TokenError("refresh token not found")
-        if row["revoked_at"] is not None:
-            if row["family_id"]:
-                self._store.revoke_family(row["family_id"])
+        if existing["refresh_consumed_at"] is not None:
+            # Already consumed during a prior rotation — this is theft
+            if existing["family_id"] is not None:
+                self._store.revoke_family(existing["family_id"])
             raise TokenReuseError("refresh token reused — family revoked")
-        if row.get("refresh_expires_at"):
-            exp = datetime.fromisoformat(row["refresh_expires_at"])
+        if existing["revoked_at"] is not None:
+            # Explicitly revoked (logout/family-kill) but never consumed — not theft
+            raise TokenError("token revoked")
+        if existing.get("refresh_expires_at"):
+            exp = datetime.fromisoformat(existing["refresh_expires_at"])
             if exp.tzinfo is None:
                 exp = exp.replace(tzinfo=timezone.utc)
             if exp <= datetime.now(timezone.utc):
                 raise TokenError("refresh token expired")
-        self._store.revoke_token_by_refresh(refresh_lookup)
+
+        # Atomically consume (C2 fix: marks consumed in one transaction)
+        row = self._store.consume_refresh_token(refresh_lookup)
+        if row is None:
+            # Lost the race — another request consumed it first; treat as reuse
+            existing2 = self._store.lookup_token_by_refresh(refresh_lookup)
+            if existing2 is not None and existing2["family_id"] is not None:
+                self._store.revoke_family(existing2["family_id"])
+            raise TokenReuseError("refresh token reused — family revoked")
+
+        # Issue new pair in same family
         new_raw, new_refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         self._store.issue_token(
             tenant_id=row["tenant_id"],
