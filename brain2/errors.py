@@ -1,0 +1,21 @@
+"""Domain errors. API layer maps these to HTTP status codes (P12)."""
+
+
+class Brain2Error(Exception):
+    """Base for all Brain2 domain errors."""
+
+
+class PermissionDenied(Brain2Error):
+    """authorize() rejected the action (-> 403)."""
+
+
+class NotFound(Brain2Error):
+    """A scoped entity does not exist for this tenant (-> 404)."""
+
+
+class Conflict(Brain2Error):
+    """Optimistic-concurrency / uniqueness conflict (-> 409)."""
+
+
+class MigrationError(Brain2Error):
+    """Schema migration failure or code/schema version skew (-> boot refusal)."""
