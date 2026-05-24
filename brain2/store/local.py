@@ -316,7 +316,7 @@ class LocalStore:
 
     def revoke_token(self, token_lookup: str) -> None:
         with self.transaction() as cx:
-            cx.execute("UPDATE tokens SET revoked_at=? WHERE token_lookup=?",
+            cx.execute("UPDATE tokens SET revoked_at=? WHERE token_lookup=? AND revoked_at IS NULL",
                        (_now_iso(), token_lookup))
 
     def revoke_family(self, family_id: str) -> None:
@@ -331,7 +331,7 @@ class LocalStore:
 
     def revoke_token_by_refresh(self, refresh_lookup: str) -> None:
         with self.transaction() as cx:
-            cx.execute("UPDATE tokens SET revoked_at=? WHERE refresh_lookup=?",
+            cx.execute("UPDATE tokens SET revoked_at=? WHERE refresh_lookup=? AND revoked_at IS NULL",
                        (_now_iso(), refresh_lookup))
 
     # --- auth: password credentials ---
@@ -339,14 +339,15 @@ class LocalStore:
                                  algo: str, hash_val: str, params: str) -> None:
         with self.transaction() as cx:
             cx.execute(
-                "INSERT INTO password_credentials(user_id, algo, hash, params, updated_at) "
-                "VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
+                "INSERT INTO password_credentials(tenant_id, user_id, algo, hash, params, updated_at) "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(tenant_id, user_id) DO UPDATE SET "
                 "algo=excluded.algo, hash=excluded.hash, params=excluded.params, updated_at=excluded.updated_at",
-                (user_id, algo, hash_val, params, _now_iso()))
+                (tenant_id, user_id, algo, hash_val, params, _now_iso()))
 
     def get_password_credential(self, tenant_id: str, user_id: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT * FROM password_credentials WHERE user_id=?", (user_id,)).fetchone()
+            "SELECT * FROM password_credentials WHERE tenant_id=? AND user_id=?",
+            (tenant_id, user_id)).fetchone()
         return dict(row) if row else None
 
     def increment_failed_login(self, tenant_id: str, user_id: str) -> int:
@@ -382,7 +383,7 @@ class LocalStore:
                 "reason, granted_by, expires_at, created_at) VALUES (?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(tenant_id, project_id, user_id) DO UPDATE SET "
                 "role=excluded.role, reason=excluded.reason, granted_by=excluded.granted_by, "
-                "expires_at=excluded.expires_at, created_at=excluded.created_at",
+                "expires_at=excluded.expires_at",
                 (tenant_id, project_id, user_id, role, reason, granted_by, expires_at, _now_iso()))
 
     def get_active_break_glass_grant(self, tenant_id: str, project_id: str,

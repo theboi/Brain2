@@ -1,12 +1,14 @@
 -- 0003_auth: password credentials, tokens (SHA-256 lookup), refresh rotation.
 
 CREATE TABLE password_credentials (
-    user_id     TEXT NOT NULL PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
     algo        TEXT NOT NULL DEFAULT 'argon2id',
     hash        TEXT NOT NULL,
     params      TEXT NOT NULL DEFAULT '{}',
     must_reset  INTEGER NOT NULL DEFAULT 0,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, user_id)
 );
 
 CREATE TABLE password_reset_tokens (
