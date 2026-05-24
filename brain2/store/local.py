@@ -99,7 +99,8 @@ class LocalStore:
         if not row:
             return None
         return User(id=row["user_id"], tenant_id=row["tenant_id"], email=row["email"],
-                    role=row["role"], status=row["status"])
+                    role=row["role"], status=row["status"],
+                    locked_until=row["locked_until"])
 
     # --- groups ---
     def create_group(self, tenant_id: str, group_id: str, name: str) -> None:

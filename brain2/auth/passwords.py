@@ -11,6 +11,9 @@ from brain2.store.base import Store
 _LOCKOUT_THRESHOLD = 10
 _LOCKOUT_DURATION_MIN = 15
 
+_ph = PasswordHasher()
+_DUMMY_HASH = _ph.hash("__dummy__")  # constant-time guard for timing safety
+
 
 class CredentialError(Exception):
     """Wrong password, no credential, or hash verification failure."""
@@ -18,9 +21,6 @@ class CredentialError(Exception):
 
 class AccountLockedError(Exception):
     """Account temporarily locked due to repeated failed logins."""
-
-
-_ph = PasswordHasher()
 
 
 class PasswordManager:
@@ -34,13 +34,19 @@ class PasswordManager:
     def verify_password(self, tenant_id: str, user_id: str, plaintext: str) -> None:
         user = self._store.get_user(tenant_id, user_id)
         if user is None:
+            _dummy_verify(plaintext)
             raise CredentialError("invalid credentials")
 
+        # Auto-unlock if lock window has expired
         if user.status == "locked":
-            raise AccountLockedError("account is temporarily locked")
+            if user.locked_until and _is_past(user.locked_until):
+                self._store.reset_failed_login(tenant_id, user_id)
+            else:
+                raise AccountLockedError("account is temporarily locked")
 
         row = self._store.get_password_credential(tenant_id, user_id)
         if row is None:
+            _dummy_verify(plaintext)
             raise CredentialError("invalid credentials")
 
         try:
@@ -56,3 +62,17 @@ class PasswordManager:
             raise CredentialError("invalid credentials")
 
         self._store.reset_failed_login(tenant_id, user_id)
+
+
+def _dummy_verify(plaintext: str) -> None:
+    try:
+        _ph.verify(_DUMMY_HASH, plaintext)
+    except Exception:
+        pass
+
+
+def _is_past(iso: str) -> bool:
+    dt = datetime.fromisoformat(iso)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt <= datetime.now(timezone.utc)

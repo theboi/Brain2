@@ -35,6 +35,7 @@ class User(_Base):
     email: str
     role: TenantRole
     status: Literal["active", "locked", "disabled"] = "active"  # P4 §1
+    locked_until: str | None = None
     created_at: datetime = Field(default_factory=_now)
 
 
