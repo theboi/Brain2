@@ -66,3 +66,29 @@ class Store(Protocol):
     def remember_idempotent(self, tenant_id: str, key: str, status_code: int,
                             response: dict) -> None: ...
     def recall_idempotent(self, tenant_id: str, key: str) -> tuple[int, dict] | None: ...
+
+    # --- secrets (encrypted credentials) ---
+    def store_secret(self, tenant_id: str, key: str, value_enc: bytes) -> None:
+        """Store an already-encrypted blob. Caller encrypts; Store persists."""
+        ...
+
+    def get_secret(self, tenant_id: str, key: str) -> bytes | None: ...
+
+    def delete_secret(self, tenant_id: str, key: str) -> None: ...
+
+    def touch_secret(self, tenant_id: str, key: str, accessed_at: str) -> None:
+        """Record an access timestamp for audit (Phase 4 §9.3)."""
+        ...
+
+    # --- per-subject data keys (GDPR crypto-shredding, Phase 4 §9.3) ---
+    def put_data_key(self, tenant_id: str, subject_id: str, key_enc: bytes) -> None:
+        """Upsert an encrypted data key for a subject."""
+        ...
+
+    def get_data_key(self, tenant_id: str, subject_id: str) -> bytes | None:
+        """Return the encrypted data key, or None if shredded/absent."""
+        ...
+
+    def shred_data_key(self, tenant_id: str, subject_id: str) -> None:
+        """Destroy the data key. PII encrypted under it becomes unrecoverable."""
+        ...

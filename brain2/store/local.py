@@ -246,3 +246,50 @@ class LocalStore:
         if not row:
             return None
         return (row["status_code"], json.loads(row["response"]))
+
+    # --- secrets ---
+    def store_secret(self, tenant_id: str, key: str, value_enc: bytes) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT OR REPLACE INTO secrets(tenant_id, key, value_enc, created_at) "
+                "VALUES (?,?,?,?)",
+                (tenant_id, key, value_enc, _now_iso()))
+
+    def get_secret(self, tenant_id: str, key: str) -> bytes | None:
+        row = self._conn.execute(
+            "SELECT value_enc FROM secrets WHERE tenant_id=? AND key=?",
+            (tenant_id, key)).fetchone()
+        return bytes(row["value_enc"]) if row else None
+
+    def delete_secret(self, tenant_id: str, key: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("DELETE FROM secrets WHERE tenant_id=? AND key=?",
+                       (tenant_id, key))
+
+    def touch_secret(self, tenant_id: str, key: str, accessed_at: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("UPDATE secrets SET accessed_at=? WHERE tenant_id=? AND key=?",
+                       (accessed_at, tenant_id, key))
+
+    # --- per-subject data keys ---
+    def put_data_key(self, tenant_id: str, subject_id: str, key_enc: bytes) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO subject_data_keys(tenant_id, subject_id, key_enc, created_at) "
+                "VALUES (?,?,?,?) ON CONFLICT(tenant_id, subject_id) DO UPDATE SET "
+                "key_enc=excluded.key_enc, shredded_at=NULL",
+                (tenant_id, subject_id, key_enc, _now_iso()))
+
+    def get_data_key(self, tenant_id: str, subject_id: str) -> bytes | None:
+        row = self._conn.execute(
+            "SELECT key_enc FROM subject_data_keys "
+            "WHERE tenant_id=? AND subject_id=? AND key_enc IS NOT NULL",
+            (tenant_id, subject_id)).fetchone()
+        return bytes(row["key_enc"]) if row else None
+
+    def shred_data_key(self, tenant_id: str, subject_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE subject_data_keys SET key_enc=NULL, shredded_at=? "
+                "WHERE tenant_id=? AND subject_id=?",
+                (_now_iso(), tenant_id, subject_id))
