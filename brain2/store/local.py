@@ -293,3 +293,102 @@ class LocalStore:
                 "UPDATE subject_data_keys SET key_enc=NULL, shredded_at=? "
                 "WHERE tenant_id=? AND subject_id=?",
                 (_now_iso(), tenant_id, subject_id))
+
+    # --- auth: tokens ---
+    def issue_token(self, tenant_id: str, user_id: str,
+                    token_lookup: str, refresh_lookup: str | None,
+                    family_id: str | None, expires_at: str,
+                    refresh_expires_at: str | None = None) -> str:
+        token_id = str(uuid.uuid4())
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO tokens(token_id, tenant_id, user_id, token_lookup, "
+                "refresh_lookup, family_id, expires_at, refresh_expires_at, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (token_id, tenant_id, user_id, token_lookup, refresh_lookup,
+                 family_id, expires_at, refresh_expires_at, _now_iso()))
+        return token_id
+
+    def lookup_token(self, token_lookup: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM tokens WHERE token_lookup=?", (token_lookup,)).fetchone()
+        return dict(row) if row else None
+
+    def revoke_token(self, token_lookup: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("UPDATE tokens SET revoked_at=? WHERE token_lookup=?",
+                       (_now_iso(), token_lookup))
+
+    def revoke_family(self, family_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("UPDATE tokens SET revoked_at=? WHERE family_id=? AND revoked_at IS NULL",
+                       (_now_iso(), family_id))
+
+    def lookup_token_by_refresh(self, refresh_lookup: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM tokens WHERE refresh_lookup=?", (refresh_lookup,)).fetchone()
+        return dict(row) if row else None
+
+    def revoke_token_by_refresh(self, refresh_lookup: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("UPDATE tokens SET revoked_at=? WHERE refresh_lookup=?",
+                       (_now_iso(), refresh_lookup))
+
+    # --- auth: password credentials ---
+    def set_password_credential(self, tenant_id: str, user_id: str,
+                                 algo: str, hash_val: str, params: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO password_credentials(user_id, algo, hash, params, updated_at) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
+                "algo=excluded.algo, hash=excluded.hash, params=excluded.params, updated_at=excluded.updated_at",
+                (user_id, algo, hash_val, params, _now_iso()))
+
+    def get_password_credential(self, tenant_id: str, user_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM password_credentials WHERE user_id=?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+    def increment_failed_login(self, tenant_id: str, user_id: str) -> int:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE users SET failed_login_count = failed_login_count + 1 "
+                "WHERE tenant_id=? AND user_id=?", (tenant_id, user_id))
+            row = cx.execute(
+                "SELECT failed_login_count FROM users WHERE tenant_id=? AND user_id=?",
+                (tenant_id, user_id)).fetchone()
+        return row["failed_login_count"] if row else 0
+
+    def reset_failed_login(self, tenant_id: str, user_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE users SET failed_login_count=0, locked_until=NULL "
+                "WHERE tenant_id=? AND user_id=?", (tenant_id, user_id))
+
+    def lock_user(self, tenant_id: str, user_id: str, locked_until: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE users SET status='locked', locked_until=? "
+                "WHERE tenant_id=? AND user_id=?",
+                (locked_until, tenant_id, user_id))
+
+    # --- auth: break-glass ---
+    def set_break_glass_grant(self, tenant_id: str, project_id: str, user_id: str,
+                               role: str, reason: str, granted_by: str,
+                               expires_at: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO break_glass_grants(tenant_id, project_id, user_id, role, "
+                "reason, granted_by, expires_at, created_at) VALUES (?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(tenant_id, project_id, user_id) DO UPDATE SET "
+                "role=excluded.role, reason=excluded.reason, granted_by=excluded.granted_by, "
+                "expires_at=excluded.expires_at, created_at=excluded.created_at",
+                (tenant_id, project_id, user_id, role, reason, granted_by, expires_at, _now_iso()))
+
+    def get_active_break_glass_grant(self, tenant_id: str, project_id: str,
+                                      user_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM break_glass_grants WHERE tenant_id=? AND project_id=? "
+            "AND user_id=? AND expires_at > ?",
+            (tenant_id, project_id, user_id, _now_iso())).fetchone()
+        return dict(row) if row else None

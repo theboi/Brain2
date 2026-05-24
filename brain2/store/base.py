@@ -92,3 +92,48 @@ class Store(Protocol):
     def shred_data_key(self, tenant_id: str, subject_id: str) -> None:
         """Destroy the data key. PII encrypted under it becomes unrecoverable."""
         ...
+
+    # --- auth: tokens ---
+    def issue_token(self, tenant_id: str, user_id: str,
+                    token_lookup: str, refresh_lookup: str | None,
+                    family_id: str | None, expires_at: str,
+                    refresh_expires_at: str | None = None) -> str:
+        """Insert token row; return token_id."""
+        ...
+
+    def lookup_token(self, token_lookup: str) -> dict | None:
+        """O(1) index probe. Returns row dict or None."""
+        ...
+
+    def revoke_token(self, token_lookup: str) -> None: ...
+
+    def revoke_family(self, family_id: str) -> None:
+        """Revoke all tokens in a refresh family (theft detection)."""
+        ...
+
+    def lookup_token_by_refresh(self, refresh_lookup: str) -> dict | None: ...
+    def revoke_token_by_refresh(self, refresh_lookup: str) -> None: ...
+
+    # --- auth: password credentials ---
+    def set_password_credential(self, tenant_id: str, user_id: str,
+                                 algo: str, hash_val: str, params: str) -> None: ...
+
+    def get_password_credential(self, tenant_id: str, user_id: str) -> dict | None: ...
+
+    def increment_failed_login(self, tenant_id: str, user_id: str) -> int:
+        """Increment counter; return new count."""
+        ...
+
+    def reset_failed_login(self, tenant_id: str, user_id: str) -> None: ...
+
+    def lock_user(self, tenant_id: str, user_id: str, locked_until: str) -> None: ...
+
+    # --- auth: break-glass ---
+    def set_break_glass_grant(self, tenant_id: str, project_id: str, user_id: str,
+                               role: str, reason: str, granted_by: str,
+                               expires_at: str) -> None: ...
+
+    def get_active_break_glass_grant(self, tenant_id: str, project_id: str,
+                                      user_id: str) -> dict | None:
+        """Return grant only if it exists and expires_at > now."""
+        ...
