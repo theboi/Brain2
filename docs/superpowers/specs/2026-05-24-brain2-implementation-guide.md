@@ -1,5 +1,7 @@
 # Brain2 Implementation Guide
 
+> ⚠️ **SUPERSEDED (2026-05-24).** This guide describes the pre-Phase-4/5 design (3 phases, `core/` layout, `EventQueue` processor + `store.emit_event`, startup-only orphan recovery, no schema-migration framework, no LLM gateway / idempotency / pagination / MCP-agent model). Those mechanisms are replaced by [Phase 4](2026-05-24-brain2-phase4-scale-correctness.md) and [Phase 5](2026-05-24-brain2-phase5-platform-hardening.md), and the authoritative build order is the [master plan](../plans/2026-05-24-brain2-master-plan.md) with its `plan-NN-*` sub-plans. The "p99 < 10 s" performance line below is also stale versus the [README](README.md) baseline (p99 < 5 s). Retained for historical context only.
+
 > Comprehensive guide for implementing Brain2 Core and add-ons across 3 phases. Designed for parallel AI agent execution.
 
 ---

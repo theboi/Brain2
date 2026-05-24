@@ -132,7 +132,7 @@ def handle_oauth_callback(code):
 - `admin`: manage project access grants, delete project.
 
 **Implicit rules:**
-- Tenant `owner`/`admin` implicitly get project `admin` for all projects.
+- Tenant `owner`/`admin` get administrative **capabilities only** (user/group/project/add-on management, audit-log access). They do **not** get implicit project *data* access — that requires an explicit `AccessGrant` or an auditable break-glass grant. (Least-privilege; authoritative per [Phase 1 Supplemental §1](2026-05-24-brain2-phase1-supplemental.md) / [Phase 4 §9.5](2026-05-24-brain2-phase4-scale-correctness.md). Supersedes any earlier "implicit project admin" wording.)
 - Group grants: user's effective role = max(direct grant, any group grant).
 - Task authorization: can view task status only if authorized for task's project (or tenant if no project).
 - Audit logs: viewable by tenant `admin` only.
@@ -188,8 +188,11 @@ def authorize(ctx, action: str, tenant_id: str, project_id: str = None) -> None:
                            if g.principal_type == 'group']
             
             roles = [g.role for g in [direct_grant] + group_grants if g]
-            if user.role in ['owner', 'admin']:
-                roles.append('admin')  # implicit admin for tenant admins
+            # Least-privilege: tenant owner/admin do NOT get implicit project data access.
+            # An active break-glass grant (auditable, time-boxed) counts as a normal grant here.
+            break_glass = store.get_break_glass_grant(project_id, ctx.user_id)  # None if absent/expired
+            if break_glass:
+                roles.append(break_glass.role)
             
             if not any(role_ge(r, project_required_role) for r in roles):
                 log_audit("access_denied", action=action, reason="insufficient_project_role")

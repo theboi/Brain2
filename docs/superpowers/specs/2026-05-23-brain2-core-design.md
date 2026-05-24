@@ -109,7 +109,7 @@ Unlike the prior boilerplate seam, access control is **enforced** in core.
   - Project access (user or group grant for that project, sufficient role for action).
   - Raises on denial; logged as audit event (§13).
   - Examples: registering a data source needs `editor`; running a query needs `viewer`; listing audit logs needs tenant `admin`.
-- **Effective role** = max of the user's direct grant and any group grants for that project; tenant admins/owners implicitly get project `admin`.
+- **Effective role** = max of the user's direct grant and any group grants for that project. Tenant `owner`/`admin` hold administrative *capabilities* (manage users/groups/projects/add-ons, read audit logs) but **do not** get implicit project data access — data access requires an explicit `AccessGrant` or an auditable, time-boxed break-glass grant. (Least-privilege model, authoritative per [Phase 1 Supplemental §1](2026-05-24-brain2-phase1-supplemental.md) and [Phase 4 §9.5](2026-05-24-brain2-phase4-scale-correctness.md); this supersedes the earlier "implicit project admin" wording.)
 - **Task authorization:** task reads are authorized by project (if task is project-scoped) or tenant; tasks are tenant-isolated.
 
 ## 7. Core knowledge engine (operations)

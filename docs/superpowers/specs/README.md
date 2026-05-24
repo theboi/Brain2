@@ -1,7 +1,11 @@
 # Brain2 Specification Suite — Complete & Production-Ready
 
 **Date:** 2026-05-24  
-**Status:** All critical flaws addressed, ready for implementation planning  
+**Status:** Round-1 + Round-2 flaws addressed, ready for implementation planning  
+
+> **Round 2 (runtime scale, correctness & residual security):** a second review found 8 critical + 10 important flaws in the *runtime execution layer* (auth implementability, LLM/worker scaling, tenant fairness, event ordering, aggregate correctness, read-only-under-pooling) not covered by Round 1. See [SPEC_REVIEW_R2.md](../../../SPEC_REVIEW_R2.md), [PROPOSALS_R2.md](../../../PROPOSALS_R2.md), and the authoritative [Phase 4 spec](2026-05-24-brain2-phase4-scale-correctness.md).
+>
+> **Round 3 (platform, integration & failure modes):** a third review found 7 critical + 8 important flaws in the *platform/integration layer* (no schema-migration framework, DB-connection-across-LLM pool exhaustion, no pagination, MCP agent identity/load, dependency failure modes / Redis SPOF, file-handling & SSRF, metric cardinality). See [SPEC_REVIEW_R3.md](../../../SPEC_REVIEW_R3.md), [PROPOSALS_R3.md](../../../PROPOSALS_R3.md), and the authoritative [Phase 5 spec](2026-05-24-brain2-phase5-platform-hardening.md).
 
 ---
 
@@ -51,6 +55,23 @@
    - Deployment runbooks (rolling upgrades, incident response)
    - Sections: 1-7 (operations checklist included)
 
+7. **[Phase 4: Runtime Scale, Correctness & Residual Security](2026-05-24-brain2-phase4-scale-correctness.md)** — *NEW (Round 2)*
+   - Auth made implementable: password lifecycle (§1), indexable SHA-256 tokens (§2)
+   - Runtime tier: LLM gateway (§3), durable worker-fleet task queue (§4), per-tenant fairness (§5)
+   - Exactly-once-effective, ordered events via transactional outbox + SKIP LOCKED (§6)
+   - Correctness: aggregation push-down (§7); read-only via DB role + READ ONLY txn (§8)
+   - Important fixes §9: wiki growth, scope=all pre-filter, GDPR crypto-shredding, LocalStore ACID, admin least-privilege, revocation freshness, idempotency, log consolidation, backup keys
+   - **Authoritative** where it conflicts with earlier specs; edits core §6 and security §2 (admin least-privilege)
+
+8. **[Phase 5: Platform, Integration & Failure-Mode Hardening](2026-05-24-brain2-phase5-platform-hardening.md)** — *NEW (Round 3)*
+   - Operability: schema-migration framework (§2), bounded large-entity deletion (§8.1)
+   - Throughput: connection discipline / no-I/O-under-a-connection (§1), keyset pagination everywhere (§3)
+   - Integration: MCP agent identity + on-behalf-of authority + per-agent limits (§4), API versioning (§8.3)
+   - Resilience: dependency degradation matrix removing the Redis SPOF (§5)
+   - Safety: file/blob streaming + AV scan + object store + SSRF guard (§6)
+   - Observability that scales: bounded metric cardinality (§7), usage metering seam (§8.8)
+   - **Authoritative** where it conflicts with earlier specs
+
 ---
 
 ## Critical Issues Fixed (12 Total)
@@ -84,6 +105,59 @@
 | I-6 | External scheduler reliability | Optional built-in scheduler | Report §5 |
 | I-7 | Report access control | Authorize on read, filter by project | Report §5, Security §2 |
 | I-8 | No observability | Structured logging, metrics, alerts | Operations §2 |
+
+---
+
+## Round-2 Issues Fixed (8 Critical + 10 Important)
+
+Runtime-layer, correctness, and residual-security flaws found after Round 1. Full detail in
+[SPEC_REVIEW_R2.md](../../../SPEC_REVIEW_R2.md) / [PROPOSALS_R2.md](../../../PROPOSALS_R2.md); all fixed in [Phase 4](2026-05-24-brain2-phase4-scale-correctness.md).
+
+| # | Issue | Severity | Fixed By (Phase 4 §) |
+|---|-------|----------|----------------------|
+| R2-1 | No password storage / lifecycle | CRITICAL | §1 |
+| R2-2 | Opaque token = bcrypt → un-indexable | CRITICAL | §2 |
+| R2-3 | LLM tier unbounded global bottleneck | CRITICAL | §3 |
+| R2-4 | In-process ThreadPool task runner | CRITICAL | §4 |
+| R2-5 | No tenant resource fairness | CRITICAL | §5 |
+| R2-6 | Event queue: no lock / ordering / dual-write | CRITICAL | §6 |
+| R2-7 | Aggregates computed on truncated rows | CRITICAL | §7 |
+| R2-8 | Read-only bypass (pooling + CTE) | CRITICAL | §8 |
+| R2-I1 | Unbounded wiki growth + merge livelock | IMPORTANT | §9.1 |
+| R2-I2 | scope=all fan-out, O(N) routing | IMPORTANT | §9.2 |
+| R2-I3 | GDPR erasure vs immutable audit | IMPORTANT | §9.3 |
+| R2-I4 | LocalStore not ACID (files+SQLite) | IMPORTANT | §9.4 |
+| R2-I5 | Admin-access contradiction across specs | IMPORTANT | §9.5 (core §6 / security §2 edited) |
+| R2-I6 | Stale authz cache vs revocation | IMPORTANT | §9.6 |
+| R2-I7 | No mutating-call idempotency | IMPORTANT | §9.7 |
+| R2-I8 | Four overlapping log systems | IMPORTANT | §9.8 |
+| R2-I9 | Backup key lifecycle vs retention | IMPORTANT | §9.9 |
+| R2-I10 | Credential discard vs pooling | IMPORTANT | §9.10 |
+
+---
+
+## Round-3 Issues Fixed (7 Critical + 8 Important)
+
+Platform/integration and failure-mode flaws found after Round 2. Full detail in
+[SPEC_REVIEW_R3.md](../../../SPEC_REVIEW_R3.md) / [PROPOSALS_R3.md](../../../PROPOSALS_R3.md); all fixed in [Phase 5](2026-05-24-brain2-phase5-platform-hardening.md).
+
+| # | Issue | Severity | Fixed By (Phase 5 §) |
+|---|-------|----------|----------------------|
+| R3-1 | DB connection held across LLM/external calls | CRITICAL | §1 |
+| R3-2 | No schema-migration / evolution framework | CRITICAL | §2 |
+| R3-3 | No pagination; in-memory filtering | CRITICAL | §3 |
+| R3-4 | MCP agent identity/authority/load | CRITICAL | §4 |
+| R3-5 | Dependency failure modes; Redis SPOF | CRITICAL | §5 |
+| R3-6 | File/blob handling + SSRF | CRITICAL | §6 |
+| R3-7 | Metric/log label cardinality explosion | CRITICAL | §7 |
+| R3-I1 | Large-entity deletion long locks | IMPORTANT | §8.1 |
+| R3-I2 | Unbounded / undefined schema introspection | IMPORTANT | §8.2 |
+| R3-I3 | No API versioning/compat policy | IMPORTANT | §8.3 |
+| R3-I4 | Writeback feedback loop / drift | IMPORTANT | §8.4 |
+| R3-I5 | FSRS concurrent-review lost update | IMPORTANT | §8.5 |
+| R3-I6 | Cross-user cache correctness | IMPORTANT | §8.6 |
+| R3-I7 | Scheduled-report timezone/DST/double-run | IMPORTANT | §8.7 |
+| R3-I8 | No usage metering | IMPORTANT | §8.8 |
 
 ---
 
@@ -311,4 +385,4 @@ BACKUP_RETENTION_DAYS=90
 
 **Status:** ✅ Ready for implementation planning and task breakdown.
 
-**Next Step:** Create detailed task-by-task implementation plan (Teams A-I, parallel execution).
+**Next Step:** Implementation planning is complete — see the authoritative [master plan](../plans/2026-05-24-brain2-master-plan.md) (Tier 0–4 build order + `plan-NN-*` sub-plans; `plan-01-foundation` is written in full). The earlier "Teams A–I" plan ([implementation.md](../plans/2026-05-24-brain2-implementation.md)) and the [implementation guide](2026-05-24-brain2-implementation-guide.md) are superseded (pre-Phase-4/5) and retained only as historical context.

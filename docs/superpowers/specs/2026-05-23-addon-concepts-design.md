@@ -16,7 +16,7 @@ Turn a project's wiki knowledge into durable retention for the people who need t
 
 ## 3. Concept model
 
-A concept is one atomic, testable proposition with a stable ID `<topic>/<concept-slug>-<4charhash>` (unique within a project's wiki). Stored via **core namespaced storage**, keyed per page:
+A concept is one atomic, testable proposition with a stable ID `<topic>/<concept-slug>-<8charhash>` (unique within a project's wiki; on hash collision a `-1`/`-2` sequence suffix is appended). The hash is **8 chars** — extended from the original 4-char design, which collided at ~10k concepts, per [Phase 2 §1](2026-05-24-brain2-phase2-data-integrity.md). Stored via **core namespaced storage**, keyed per page:
 
 ```
 key:   page:{project_id}:{topic}:concepts
@@ -33,6 +33,7 @@ Per-user FSRS lives in the core Store as **relational tables** (per tenant, shar
 concept_state (core Store, namespace="concepts", table="concept_state")
   tenant_id, user_id, project_id, concept_id,
   difficulty, stability, retrievability, last_reviewed, due_at,
+  version,                      -- optimistic-lock for concurrent reviews (P5 §8.5)
   PRIMARY KEY(tenant_id, user_id, project_id, concept_id);
 CREATE INDEX idx_due ON concept_state(tenant_id, user_id, due_at);
 
@@ -47,7 +48,7 @@ Benefits:
 - **Simpler backup/recovery:** concept state backed up with core Store.
 - **Easier migration:** PostgresStore migration includes concepts state automatically.
 
-`record_review` computes new FSRS state via precomputed **`due_at`**, so "what's due" is an indexed `WHERE tenant_id=? AND user_id=? AND due_at <= now ORDER BY due_at` query. A concept with no row = never reviewed = nugget candidate. Algorithm: `py-fsrs` defaults; due threshold retrievability < 0.85. (FSRS rationale + parameters: see prior spec.)
+`record_review` computes new FSRS state via precomputed **`due_at`**, so "what's due" is an indexed `WHERE tenant_id=? AND user_id=? AND due_at <= now ORDER BY due_at` query. A concept with no row = never reviewed = nugget candidate. Algorithm: `py-fsrs` defaults; due threshold retrievability < 0.85. (FSRS rationale + parameters: see prior spec.) Concurrent reviews are reconciled by **compare-and-set on `version`**; on conflict the state is recomputed deterministically from `review_event` history (events are the source of truth) — see [Phase 5 §8.5](2026-05-24-brain2-phase5-platform-hardening.md).
 
 ## 5. Sessions
 

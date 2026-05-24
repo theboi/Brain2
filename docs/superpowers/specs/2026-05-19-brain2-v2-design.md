@@ -1,5 +1,7 @@
 # Brain2 v2 — Design
 
+> ⚠️ **SUPERSEDED (2026-05-23 → 2026-05-24).** This is the original *single-user, personal* Brain2 design (FileStore / Obsidian files as source of truth, `X-User-Id`, per-user SQLite). It was superseded by the **multi-tenant business** redesign — see [2026-05-23-brain2-core-design.md](2026-05-23-brain2-core-design.md) and the [spec README](README.md) (Phases 1–5). Retained only as a reference for FSRS math, ingestion, and sync/prompt logic (cited by the master plan's `plan-10`).
+
 ## 1. Context
 
 Brain2 turns anything you read, watch, or attend into durable knowledge. You hand it a URL, file, or pasted text; it transcribes and cleans the source, compiles it into a living Obsidian wiki, breaks each page into atomic *concepts*, and then teaches those concepts back to you through spaced repetition until you actually remember them. Reading something once rarely sticks — Brain2 closes the loop from capture to retention.

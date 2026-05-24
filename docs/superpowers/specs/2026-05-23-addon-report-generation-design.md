@@ -38,7 +38,7 @@ ReportTemplate = {
   data_source_ids: [str],
   output: "markdown" | "pdf",
   writeback_to_wiki: bool,    # if true, the finished report is also written as a wiki page
-  schedule: cron-string | null,   # metadata for an EXTERNAL scheduler; the add-on does not run cron
+  schedule: { timezone: IANA-tz, cron } | null,  # explicit IANA tz; DST-aware next-run; idempotent per (template_id, scheduled_slot_utc) — P5 §8.7. Metadata for an EXTERNAL scheduler; the add-on does not run cron.
   created_by, created_at
 }
 
@@ -56,7 +56,7 @@ Both persist via core namespaced storage (`registry.storage("report-generation")
 ## 5. Triggers & delivery
 
 - **On-demand report:** `generate_report(template_id)` or `generate_report(ad_hoc_spec, scope)` → `task_id`. Poll core `get_task_status`; result is a stored `Report`.
-- **Scheduled reports:** the add-on does **not** run an internal scheduler (consistent with core). Templates carry a `schedule`; an **external scheduler** (cron/launchd/an agent, or optional built-in core scheduler if enabled) periodically calls `list_due_report_templates(now)` then `generate_report(template_id)` for each. Scheduling stays out-of-process and swappable.
+- **Scheduled reports:** the add-on does **not** run an internal scheduler (consistent with core). Templates carry a `schedule`; an **external scheduler** (cron/launchd/an agent, or optional built-in core scheduler if enabled) periodically calls `list_due_report_templates(now)` then `generate_report(template_id)` for each. Scheduling stays out-of-process and swappable. The `schedule` carries an explicit IANA `timezone`, next-run is computed **DST-aware**, and generation is **idempotent on `(template_id, scheduled_slot_utc)`** so overlapping scheduler ticks produce exactly one report per slot ([Phase 5 §8.7](2026-05-24-brain2-phase5-platform-hardening.md)).
 - **Delivery:** reports are stored and retrievable (`list_reports`, `get_report`). **Access control:** report reads are authorized by project (user must have project `viewer` or higher). `list_reports` is filtered to projects the user can access.
 - **Writeback to wiki:** if `writeback_to_wiki` is set, the finished report is also written as a wiki page (via core wiki write) so it's searchable/shareable. Wiki page access follows project access control (inherited).
 - **Ad-hoc "chat with your data"** is **not here** — it's core `query`. Users/agents hit core directly for one-off analytics; this add-on is for the repeatable, stored, scheduled case.
