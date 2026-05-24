@@ -5,6 +5,7 @@ description = "Self-hostable multi-tenant business knowledge system"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.6",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]

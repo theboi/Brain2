@@ -19,3 +19,24 @@ def test_env_override(monkeypatch):
     cfg = importlib.reload(config_module).load_config()
     assert cfg.storage_type == "postgres"
     assert cfg.default_tenant == "acme"
+
+
+import base64
+import secrets as _secrets
+
+
+def test_secret_key_from_env(monkeypatch):
+    key_bytes = _secrets.token_bytes(32)
+    monkeypatch.setenv("BRAIN2_SECRET_KEY", base64.urlsafe_b64encode(key_bytes).decode())
+    cfg = importlib.reload(config_module).load_config()
+    assert cfg.secret_key == key_bytes
+
+
+def test_secret_key_generates_when_absent(monkeypatch):
+    monkeypatch.delenv("BRAIN2_SECRET_KEY", raising=False)
+    import warnings
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        cfg = importlib.reload(config_module).load_config()
+    assert len(cfg.secret_key) == 32
+    assert any("BRAIN2_SECRET_KEY" in str(warning.message) for warning in w)
