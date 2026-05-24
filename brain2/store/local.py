@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -164,7 +165,6 @@ class LocalStore:
     def put_wiki_page(self, tenant_id: str, project_id: str, topic: str, content: str,
                       *, expect_version: int | None = None,
                       updated_by: str | None = None) -> WikiPage:
-        import uuid
         now = _now_iso()
         with self.transaction() as cx:
             row = cx.execute(

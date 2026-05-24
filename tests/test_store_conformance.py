@@ -52,3 +52,11 @@ def test_duplicate_tenant_conflict(store):
     store.create_tenant("t1", "Acme")
     with pytest.raises(Conflict):
         store.create_tenant("t1", "Acme again")
+
+
+def test_cross_tenant_roles_are_isolated(two_tenants):
+    s = two_tenants
+    # Grant in t1 does not affect t2.
+    s.grant_access("t1", "p1", "user", "u1", "editor")
+    assert s.effective_project_role("t1", "p1", "u1") == "editor"
+    assert s.effective_project_role("t2", "p1", "u1") == "viewer"  # unaffected
