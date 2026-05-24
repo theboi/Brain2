@@ -35,6 +35,11 @@ def _discover(directory: Path) -> list[tuple[int, str, str]]:
             raise MigrationError(f"Bad migration filename: {path.name}")
         out.append((int(m.group(1)), path.name, path.read_text()))
     out.sort(key=lambda t: t[0])
+    seen = set()
+    for v, name, _ in out:
+        if v in seen:
+            raise MigrationError(f"Duplicate migration version {v} (found {name})")
+        seen.add(v)
     return out
 
 

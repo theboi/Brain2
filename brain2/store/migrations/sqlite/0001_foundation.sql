@@ -35,7 +35,9 @@ CREATE TABLE group_membership (
     tenant_id TEXT NOT NULL,
     group_id  TEXT NOT NULL,
     user_id   TEXT NOT NULL,
-    PRIMARY KEY (tenant_id, group_id, user_id)
+    PRIMARY KEY (tenant_id, group_id, user_id),
+    FOREIGN KEY (tenant_id, group_id) REFERENCES groups(tenant_id, group_id),
+    FOREIGN KEY (tenant_id, user_id) REFERENCES users(tenant_id, user_id)
 );
 
 CREATE TABLE projects (
@@ -61,7 +63,7 @@ CREATE INDEX idx_access_principal ON access_grants(tenant_id, principal_type, pr
 -- Wiki content in the DB (Phase 4 §9.4): the .md tree is a derived export only.
 CREATE TABLE wiki_pages (
     tenant_id       TEXT NOT NULL,
-    project_id      TEXT NOT NULL,
+    project_id      TEXT NOT NULL,                 -- no FK to projects (composite key complexity)
     page_id         TEXT NOT NULL,
     topic           TEXT NOT NULL,
     content         TEXT NOT NULL,
