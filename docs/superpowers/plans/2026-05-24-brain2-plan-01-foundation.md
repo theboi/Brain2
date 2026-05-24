@@ -1350,7 +1350,7 @@ git commit -m "feat(foundation): RequestContext + mandatory multi-tenant isolati
 - **Idempotency (Phase 4 §9.7):** tenant-scoped `idempotency_keys` table + store methods (handler middleware wired in P12). ✅
 - **Connection discipline (Phase 5 §1):** `transaction()` sets `in_transaction`; the no-network assertion shim is added when the LLM gateway lands (P06) — flagged, not silently skipped.
 
-**Deferred to named sub-plans (not gaps):** Token/password tables → P03 migration `0002`. Events/outbox → P04 `0003`. Tasks queue columns → P05. Secrets table → P02. These add new migration files; they never edit `0001`.
+**Deferred to named sub-plans (not gaps):** Secrets + data-keys → P02 migration `0002`. Token/password/break-glass tables → P03 migration `0003`. Events/outbox/audit → P04 migration `0004`. Tasks queue + saga → P05 migration `0005`. These add new migration files in dependency order; they never edit `0001`.
 
 ---
 
