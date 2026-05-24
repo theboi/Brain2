@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 TenantRole = Literal["owner", "admin", "member"]
 ProjectRole = Literal["viewer", "editor", "admin"]
@@ -19,13 +19,17 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class Tenant(BaseModel):
+class _Base(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+
+class Tenant(_Base):
     id: str
     name: str
     created_at: datetime = Field(default_factory=_now)
 
 
-class User(BaseModel):
+class User(_Base):
     id: str
     tenant_id: str
     email: str
@@ -34,22 +38,23 @@ class User(BaseModel):
     created_at: datetime = Field(default_factory=_now)
 
 
-class Group(BaseModel):
+class Group(_Base):
     id: str
     tenant_id: str
     name: str
+    # Not auto-populated by LocalStore; queried via effective_project_role / group_membership table.
     member_user_ids: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_now)
 
 
-class Project(BaseModel):
+class Project(_Base):
     id: str
     tenant_id: str
     name: str
     created_at: datetime = Field(default_factory=_now)
 
 
-class AccessGrant(BaseModel):
+class AccessGrant(_Base):
     tenant_id: str
     project_id: str
     principal_type: PrincipalType
@@ -58,7 +63,7 @@ class AccessGrant(BaseModel):
     created_at: datetime = Field(default_factory=_now)
 
 
-class WikiPage(BaseModel):
+class WikiPage(_Base):
     """Content lives here, not on disk (Phase 4 §9.4). `version` powers
     optimistic-locking merge (Core §14); incremented on every write."""
     id: str
