@@ -23,3 +23,7 @@ class MigrationError(Brain2Error):
 
 class RateLimitExceeded(Brain2Error):
     """Request rejected due to rate limit or backlog ceiling."""
+
+
+class LLMError(Brain2Error):
+    """LLM provider error (5xx, circuit open, timeout, etc.) (-> 502 or 503)."""
