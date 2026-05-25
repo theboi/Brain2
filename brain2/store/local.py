@@ -35,6 +35,10 @@ class LocalStore:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
+        # WAL: durable crash-recovery + concurrent readers (no-op for :memory:).
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        # Wait up to 5s for a lock instead of erroring immediately under contention.
+        self._conn.execute("PRAGMA busy_timeout = 5000")
         self._lock = threading.RLock()
         self.in_transaction = False  # connection-discipline guard (Phase 5 §1)
 
