@@ -295,6 +295,75 @@ class LocalStore:
                 "WHERE tenant_id=? AND subject_id=?",
                 (_now_iso(), tenant_id, subject_id))
 
+    # --- event outbox ---
+    def emit_event_in_txn(self, cx, tenant_id: str, event_type: str,
+                          entity_id: str, payload: dict) -> str:
+        event_id = str(uuid.uuid4())
+        cx.execute(
+            "INSERT INTO event_outbox(event_id, tenant_id, event_type, entity_id, "
+            "payload, enqueued_at) VALUES (?,?,?,?,?,?)",
+            (event_id, tenant_id, event_type, entity_id,
+             json.dumps(payload), _now_iso()))
+        return event_id
+
+    def claim_events(self, eligible_tenants: list[str], batch_size: int,
+                     now_iso: str) -> list[dict]:
+        if not eligible_tenants:
+            return []
+        placeholders = ",".join("?" * len(eligible_tenants))
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT * FROM event_outbox o
+                WHERE o.delivered = 0
+                  AND o.dead_lettered_at IS NULL
+                  AND (o.retry_at IS NULL OR o.retry_at <= ?)
+                  AND o.tenant_id IN ({placeholders})
+                  AND NOT EXISTS (
+                      SELECT 1 FROM event_outbox e2
+                      WHERE e2.entity_id = o.entity_id
+                        AND e2.delivered = 0
+                        AND e2.dead_lettered_at IS NULL
+                        AND e2.enqueued_at < o.enqueued_at)
+                ORDER BY o.enqueued_at
+                LIMIT ?
+                """,
+                [now_iso] + list(eligible_tenants) + [batch_size],
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def ack_event(self, event_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE event_outbox SET delivered=1, delivered_at=? WHERE event_id=?",
+                (_now_iso(), event_id))
+
+    def nack_event(self, event_id: str, error: str, retry_at: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE event_outbox SET retry_count=retry_count+1, error=?, retry_at=? "
+                "WHERE event_id=?",
+                (error, retry_at, event_id))
+
+    def dead_letter_event(self, event_id: str, error: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE event_outbox SET dead_lettered_at=?, error=? WHERE event_id=?",
+                (_now_iso(), error, event_id))
+
+    def is_processed(self, subscriber_id: str, event_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM processed_events WHERE subscriber_id=? AND event_id=?",
+            (subscriber_id, event_id)).fetchone()
+        return row is not None
+
+    def mark_processed(self, subscriber_id: str, event_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT OR IGNORE INTO processed_events(subscriber_id, event_id, processed_at) "
+                "VALUES (?,?,?)",
+                (subscriber_id, event_id, _now_iso()))
+
     # --- auth: tokens ---
     def issue_token(self, tenant_id: str, user_id: str,
                     token_lookup: str, refresh_lookup: str | None,

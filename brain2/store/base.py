@@ -93,6 +93,39 @@ class Store(Protocol):
         """Destroy the data key. PII encrypted under it becomes unrecoverable."""
         ...
 
+    # --- event outbox (P4 §6) ---
+    def emit_event_in_txn(self, cx: Any, tenant_id: str, event_type: str,
+                          entity_id: str, payload: dict) -> str:
+        """Insert event row into outbox within an already-open transaction.
+        Returns event_id. cx is the Transaction (sqlite3.Connection for LocalStore)."""
+        ...
+
+    def claim_events(self, eligible_tenants: list[str], batch_size: int,
+                     now_iso: str) -> list[dict]:
+        """Claim a batch of deliverable events (per-entity ordering enforced).
+        Returns list of row dicts; caller must ack/nack each."""
+        ...
+
+    def ack_event(self, event_id: str) -> None:
+        """Mark event as successfully delivered."""
+        ...
+
+    def nack_event(self, event_id: str, error: str, retry_at: str) -> None:
+        """Record failure and schedule retry."""
+        ...
+
+    def dead_letter_event(self, event_id: str, error: str) -> None:
+        """Permanently fail event (max retries exceeded)."""
+        ...
+
+    def is_processed(self, subscriber_id: str, event_id: str) -> bool:
+        """Check if a subscriber already processed this event (dedup guard)."""
+        ...
+
+    def mark_processed(self, subscriber_id: str, event_id: str) -> None:
+        """Record that subscriber processed this event."""
+        ...
+
     # --- auth: tokens ---
     def issue_token(self, tenant_id: str, user_id: str,
                     token_lookup: str, refresh_lookup: str | None,
