@@ -93,6 +93,11 @@ class Store(Protocol):
                   value: int) -> None: ...
     def get_usage(self, tenant_id: str, window_start: str) -> dict[str, int]: ...
 
+    # --- audit chain source (Phase 3 §3) ---
+    def list_events_ordered(self, tenant_id: str) -> list[dict]:
+        """All events for a tenant in append order (for merkle hashing)."""
+        ...
+
     # --- secrets (encrypted credentials) ---
     def store_secret(self, tenant_id: str, key: str, value_enc: bytes) -> None:
         """Store an already-encrypted blob. Caller encrypts; Store persists."""

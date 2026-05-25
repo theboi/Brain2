@@ -341,6 +341,14 @@ class LocalStore:
             (tenant_id, window_start)).fetchall()
         return {r["metric"]: r["value"] for r in rows}
 
+    # --- audit chain source (P3 §3) ---
+    def list_events_ordered(self, tenant_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT event_id, event_type, entity_id, payload, enqueued_at "
+            "FROM event_outbox WHERE tenant_id=? ORDER BY enqueued_at, event_id",
+            (tenant_id,)).fetchall()
+        return [dict(r) for r in rows]
+
     # --- idempotency ---
     def remember_idempotent(self, tenant_id: str, key: str, status_code: int,
                             response: dict) -> None:
