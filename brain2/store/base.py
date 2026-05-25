@@ -98,6 +98,11 @@ class Store(Protocol):
         """All events for a tenant in append order (for merkle hashing)."""
         ...
 
+    # --- startup orphan recovery (single-process LocalStore) ---
+    def recover_orphan_tasks(self) -> int:
+        """Requeue 'running' tasks stranded by a restart; returns count recovered."""
+        ...
+
     # --- secrets (encrypted credentials) ---
     def store_secret(self, tenant_id: str, key: str, value_enc: bytes) -> None:
         """Store an already-encrypted blob. Caller encrypts; Store persists."""

@@ -693,6 +693,32 @@ class LocalStore:
                 (now_iso,))
             return cx.execute("SELECT changes() as n").fetchone()["n"]
 
+    def recover_orphan_tasks(self) -> int:
+        """Requeue tasks stuck in 'running' after a restart (single-process orphans).
+
+        In the single-process LocalStore model, any 'running' task on boot was
+        claimed by a now-dead process. Each is counted as one attempt and
+        requeued; tasks past max_retries are failed so a crash-looping task
+        eventually dead-ends. Returns the number of tasks recovered.
+        """
+        with self.transaction() as cx:
+            rows = cx.execute(
+                "SELECT task_id, retry_count, max_retries FROM tasks "
+                "WHERE status='running'").fetchall()
+            for r in rows:
+                new_count = r["retry_count"] + 1
+                if new_count <= r["max_retries"]:
+                    cx.execute(
+                        "UPDATE tasks SET status='pending', retry_count=?, claimed_by=NULL, "
+                        "lease_expires_at=NULL, error='recovered after restart' "
+                        "WHERE task_id=?", (new_count, r["task_id"]))
+                else:
+                    cx.execute(
+                        "UPDATE tasks SET status='failed', retry_count=?, "
+                        "error='max retries exceeded after restart', completed_at=? "
+                        "WHERE task_id=?", (new_count, _now_iso(), r["task_id"]))
+            return len(rows)
+
     def count_running_tasks(self, tenant_id: str) -> int:
         row = self._conn.execute(
             "SELECT COUNT(*) as n FROM tasks WHERE tenant_id=? AND status='running'",
