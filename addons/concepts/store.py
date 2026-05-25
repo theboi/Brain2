@@ -1,21 +1,38 @@
 """Concept-specific storage operations using LocalStore._conn directly."""
 from __future__ import annotations
 
-import uuid
+import hashlib
+import re
 from datetime import datetime, timezone
 
 from addons.concepts.models import Concept, ConceptState, ReviewEvent
 
-_ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
+# Slug stop-words (v2 design §4.1).
+_SLUG_STOP = frozenset({"the", "of", "a", "an", "is", "to", "in", "for", "and",
+                        "or", "with", "by", "on", "at", "from", "as"})
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _gen_id(length: int = 8) -> str:
-    import secrets
-    return "".join(secrets.choice(_ID_CHARS) for _ in range(length))
+def _slugify(text: str, max_len: int = 50) -> str:
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    meaningful = [w for w in words if w not in _SLUG_STOP] or words
+    slug = "-".join(meaningful)[:max_len].strip("-")
+    return slug or "concept"
+
+
+def _concept_id(tenant_id: str, project_id: str, title: str, body: str) -> str:
+    """Deterministic concept ID: ``<slug>-<8charhash>`` (v2 §4.1, Phase 2 §1).
+
+    Same statement -> same ID, so concept identity (and the user's review
+    history) survives re-extraction across page edits. The hash includes
+    tenant+project so IDs are globally unique without a per-tenant prefix.
+    """
+    digest = hashlib.sha256(
+        f"{tenant_id}|{project_id}|{title}|{body}".encode()).hexdigest()[:8]
+    return f"{_slugify(title)}-{digest}"
 
 
 class ConceptStore:
@@ -24,21 +41,26 @@ class ConceptStore:
 
     def create_concept(self, tenant_id: str, project_id: str, title: str,
                         body: str = "", page_id: str | None = None) -> Concept:
-        for _ in range(5):
-            concept_id = _gen_id(8)
-            try:
-                now = _now_iso()
-                self._conn.execute(
-                    "INSERT INTO concepts(concept_id, tenant_id, project_id, title, body, "
-                    "page_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-                    (concept_id, tenant_id, project_id, title, body, page_id, now, now))
-                self._conn.commit()
-                return Concept(concept_id=concept_id, tenant_id=tenant_id,
-                               project_id=project_id, title=title, body=body,
-                               page_id=page_id, created_at=now, updated_at=now)
-            except Exception:
-                continue
-        concept_id = str(uuid.uuid4())[:8]
+        """Create (or return the existing) concept for this content.
+
+        IDs are deterministic (``_concept_id``); identical content is idempotent
+        (returns the existing concept, preserving review history). A genuine hash
+        collision with *different* content falls back to a ``-1``, ``-2`` …
+        sequence suffix (Phase 2 §1).
+        """
+        base = _concept_id(tenant_id, project_id, title, body)
+        concept_id = base
+        seq = 0
+        while True:
+            existing = self._conn.execute(
+                "SELECT title, body FROM concepts WHERE tenant_id=? AND concept_id=?",
+                (tenant_id, concept_id)).fetchone()
+            if existing is None:
+                break
+            if existing["title"] == title and existing["body"] == body:
+                return self.get_concept(tenant_id, concept_id)  # idempotent
+            seq += 1
+            concept_id = f"{base}-{seq}"
         now = _now_iso()
         self._conn.execute(
             "INSERT INTO concepts(concept_id, tenant_id, project_id, title, body, "

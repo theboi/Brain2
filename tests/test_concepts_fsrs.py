@@ -46,8 +46,33 @@ def test_concept_store_save_and_load(store):
     _apply_migration(store._conn)
     store.create_tenant("t1", "Acme")
     cs = ConceptStore(store._conn)
-    concept = cs.create_concept("t1", "p1", "Eiffel Tower")
-    assert len(concept.concept_id) == 8
+    concept = cs.create_concept("t1", "p1", "Eiffel Tower", body="A tower in Paris")
+    # Deterministic, readable, slug + 8-char hash (v2 §4.1, Phase 2 §1).
+    assert concept.concept_id.startswith("eiffel-tower-")
+
+
+def test_concept_id_is_deterministic_and_idempotent(store):
+    _apply_migration(store._conn)
+    store.create_tenant("t1", "Acme")
+    cs = ConceptStore(store._conn)
+    c1 = cs.create_concept("t1", "p1", "Self-attention", body="weighted sum of values")
+    c2 = cs.create_concept("t1", "p1", "Self-attention", body="weighted sum of values")
+    # Same statement -> same ID; re-creating returns the existing concept.
+    assert c1.concept_id == c2.concept_id
+    assert len(cs.list_concepts("t1", "p1")) == 1
+    # Different body -> different concept ID.
+    c3 = cs.create_concept("t1", "p1", "Self-attention", body="something else")
+    assert c3.concept_id != c1.concept_id
+
+
+def test_concept_id_distinct_across_tenants(store):
+    _apply_migration(store._conn)
+    store.create_tenant("t1", "Acme")
+    store.create_tenant("t2", "Beta")
+    cs = ConceptStore(store._conn)
+    a = cs.create_concept("t1", "p1", "Same Title", body="same body")
+    b = cs.create_concept("t2", "p1", "Same Title", body="same body")
+    assert a.concept_id != b.concept_id  # global PK safe across tenants
 
 
 def test_cas_conflict_triggers_recompute(store):
