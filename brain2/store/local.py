@@ -325,6 +325,22 @@ class LocalStore:
                 (status, page_id, error, _now_iso(), tenant_id, job_id),
             )
 
+    # --- usage metering (P5 §8.8) ---
+    def add_usage(self, tenant_id: str, window_start: str, metric: str,
+                  value: int) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO tenant_usage(tenant_id, window_start, metric, value) "
+                "VALUES (?,?,?,?) ON CONFLICT(tenant_id, window_start, metric) "
+                "DO UPDATE SET value = value + excluded.value",
+                (tenant_id, window_start, metric, value))
+
+    def get_usage(self, tenant_id: str, window_start: str) -> dict[str, int]:
+        rows = self._conn.execute(
+            "SELECT metric, value FROM tenant_usage WHERE tenant_id=? AND window_start=?",
+            (tenant_id, window_start)).fetchall()
+        return {r["metric"]: r["value"] for r in rows}
+
     # --- idempotency ---
     def remember_idempotent(self, tenant_id: str, key: str, status_code: int,
                             response: dict) -> None:
