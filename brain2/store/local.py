@@ -102,6 +102,12 @@ class LocalStore:
                     role=row["role"], status=row["status"],
                     locked_until=row["locked_until"])
 
+    def get_user_id_by_email(self, tenant_id: str, email: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT user_id FROM users WHERE tenant_id=? AND email=?",
+            (tenant_id, email)).fetchone()
+        return row["user_id"] if row else None
+
     # --- groups ---
     def create_group(self, tenant_id: str, group_id: str, name: str) -> None:
         with self.transaction() as cx:
