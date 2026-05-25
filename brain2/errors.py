@@ -31,3 +31,13 @@ class LLMError(Brain2Error):
 
 class PageTooLarge(Brain2Error):
     """Wiki page content exceeds the byte ceiling (-> 413)."""
+
+
+class QueryNotAllowed(Brain2Error):
+    """Query was rejected (write attempt, parse violation, etc.) (-> 400)."""
+
+class AggregateOverUnboundedResult(Brain2Error):
+    """Aggregate computed over a truncated result set — answer would be wrong (-> 400)."""
+
+class SSRFBlocked(Brain2Error):
+    """URL targets a private/link-local/loopback address — request refused (-> 400)."""

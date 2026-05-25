@@ -91,3 +91,18 @@ class IngestionJob(_Base):
     error: str | None = None
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
+
+
+class DataSource(_Base):
+    id: str
+    tenant_id: str
+    project_id: str
+    name: str
+    connector_type: str
+    connection_ref: str
+    schema_cache: dict | None = None
+    schema_at: datetime | None = None
+    drift_detected: bool = False
+    status: Literal["active", "disabled"] = "active"
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)

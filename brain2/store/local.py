@@ -665,3 +665,69 @@ class LocalStore:
             "SELECT COUNT(*) as n FROM tasks WHERE tenant_id=? AND status='pending'",
             (tenant_id,)).fetchone()
         return row["n"] if row else 0
+
+    # --- data sources ---
+    def create_datasource(self, tenant_id: str, project_id: str, name: str,
+                          connector_type: str, connection_ref: str) -> str:
+        ds_id = str(uuid.uuid4())
+        now = _now_iso()
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO data_sources(datasource_id, tenant_id, project_id, name, "
+                "connector_type, connection_ref, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                (ds_id, tenant_id, project_id, name, connector_type, connection_ref, now, now))
+        return ds_id
+
+    def get_datasource(self, tenant_id: str, datasource_id: str):
+        row = self._conn.execute(
+            "SELECT * FROM data_sources WHERE tenant_id=? AND datasource_id=?",
+            (tenant_id, datasource_id)).fetchone()
+        return self._row_to_datasource(row) if row else None
+
+    def list_datasources(self, tenant_id: str, project_id: str):
+        rows = self._conn.execute(
+            "SELECT * FROM data_sources WHERE tenant_id=? AND project_id=? ORDER BY name",
+            (tenant_id, project_id)).fetchall()
+        return [self._row_to_datasource(r) for r in rows]
+
+    def update_datasource_schema(self, tenant_id: str, datasource_id: str,
+                                  schema: dict) -> None:
+        now = _now_iso()
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE data_sources SET schema_cache=?, schema_at=?, updated_at=? "
+                "WHERE tenant_id=? AND datasource_id=?",
+                (json.dumps(schema), now, now, tenant_id, datasource_id))
+
+    def set_datasource_drift(self, tenant_id: str, datasource_id: str,
+                              drift: bool) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE data_sources SET drift_detected=?, updated_at=? "
+                "WHERE tenant_id=? AND datasource_id=?",
+                (1 if drift else 0, _now_iso(), tenant_id, datasource_id))
+
+    def disable_datasource(self, tenant_id: str, datasource_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE data_sources SET status='disabled', updated_at=? "
+                "WHERE tenant_id=? AND datasource_id=?",
+                (_now_iso(), tenant_id, datasource_id))
+
+    def _row_to_datasource(self, row):
+        from brain2.models import DataSource
+        schema = json.loads(row["schema_cache"]) if row["schema_cache"] else None
+        return DataSource(
+            id=row["datasource_id"],
+            tenant_id=row["tenant_id"],
+            project_id=row["project_id"],
+            name=row["name"],
+            connector_type=row["connector_type"],
+            connection_ref=row["connection_ref"],
+            schema_cache=schema,
+            schema_at=row["schema_at"],
+            drift_detected=bool(row["drift_detected"]),
+            status=row["status"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
