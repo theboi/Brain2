@@ -85,3 +85,20 @@ def test_atomic_rollback_loses_event(store):
         pass
     batch = store.claim_events(["t1"], 10, _future(-1))
     assert batch == []
+
+
+def test_cross_tenant_entity_ordering_is_isolated(store):
+    """Tenant B's backlog for entity_id 'page1' must not block Tenant A's event."""
+    store.create_tenant("t1", "Acme")
+    store.create_tenant("t2", "Beta")
+    # Tenant B emits first (earlier enqueued_at)
+    with store.transaction() as cx:
+        e_b = store.emit_event_in_txn(cx, "t2", "page_updated", "page1", {})
+    # Tenant A emits second
+    with store.transaction() as cx:
+        e_a = store.emit_event_in_txn(cx, "t1", "page_updated", "page1", {})
+    # Only claiming for t1 — must get t1's event unblocked
+    batch = store.claim_events(["t1"], 10, _future(-1))
+    ids = [r["event_id"] for r in batch]
+    assert e_a in ids, "t1's event should be claimable regardless of t2's backlog"
+    assert e_b not in ids, "t2's event should not appear when only t1 is eligible"

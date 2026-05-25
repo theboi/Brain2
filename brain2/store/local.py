@@ -311,17 +311,19 @@ class LocalStore:
         if not eligible_tenants:
             return []
         placeholders = ",".join("?" * len(eligible_tenants))
-        with self._lock:
-            rows = self._conn.execute(
+        with self.transaction() as cx:
+            rows = cx.execute(
                 f"""
                 SELECT * FROM event_outbox o
                 WHERE o.delivered = 0
                   AND o.dead_lettered_at IS NULL
+                  AND o.claimed_at IS NULL
                   AND (o.retry_at IS NULL OR o.retry_at <= ?)
                   AND o.tenant_id IN ({placeholders})
                   AND NOT EXISTS (
                       SELECT 1 FROM event_outbox e2
-                      WHERE e2.entity_id = o.entity_id
+                      WHERE e2.tenant_id = o.tenant_id
+                        AND e2.entity_id = o.entity_id
                         AND e2.delivered = 0
                         AND e2.dead_lettered_at IS NULL
                         AND e2.enqueued_at < o.enqueued_at)
@@ -330,25 +332,31 @@ class LocalStore:
                 """,
                 [now_iso] + list(eligible_tenants) + [batch_size],
             ).fetchall()
+            if rows:
+                ids = [r["event_id"] for r in rows]
+                id_placeholders = ",".join("?" * len(ids))
+                cx.execute(
+                    f"UPDATE event_outbox SET claimed_at=? WHERE event_id IN ({id_placeholders})",
+                    [_now_iso()] + ids)
         return [dict(r) for r in rows]
 
     def ack_event(self, event_id: str) -> None:
         with self.transaction() as cx:
             cx.execute(
-                "UPDATE event_outbox SET delivered=1, delivered_at=? WHERE event_id=?",
+                "UPDATE event_outbox SET delivered=1, delivered_at=?, claimed_at=NULL WHERE event_id=?",
                 (_now_iso(), event_id))
 
     def nack_event(self, event_id: str, error: str, retry_at: str) -> None:
         with self.transaction() as cx:
             cx.execute(
-                "UPDATE event_outbox SET retry_count=retry_count+1, error=?, retry_at=? "
+                "UPDATE event_outbox SET retry_count=retry_count+1, error=?, retry_at=?, claimed_at=NULL "
                 "WHERE event_id=?",
                 (error, retry_at, event_id))
 
     def dead_letter_event(self, event_id: str, error: str) -> None:
         with self.transaction() as cx:
             cx.execute(
-                "UPDATE event_outbox SET dead_lettered_at=?, error=? WHERE event_id=?",
+                "UPDATE event_outbox SET dead_lettered_at=?, error=?, claimed_at=NULL WHERE event_id=?",
                 (_now_iso(), error, event_id))
 
     def is_processed(self, subscriber_id: str, event_id: str) -> bool:

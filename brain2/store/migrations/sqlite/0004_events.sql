@@ -12,10 +12,11 @@ CREATE TABLE event_outbox (
     retry_count      INTEGER NOT NULL DEFAULT 0,
     retry_at         TEXT,
     dead_lettered_at TEXT,
-    error            TEXT
+    error            TEXT,
+    claimed_at       TEXT
 );
 CREATE INDEX idx_outbox_dispatch ON event_outbox(tenant_id, delivered, dead_lettered_at, retry_at, enqueued_at);
-CREATE INDEX idx_outbox_entity   ON event_outbox(entity_id, delivered, enqueued_at);
+CREATE INDEX idx_outbox_entity   ON event_outbox(tenant_id, entity_id, delivered, enqueued_at);
 
 CREATE TABLE processed_events (
     subscriber_id TEXT NOT NULL,
