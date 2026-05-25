@@ -11,7 +11,7 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from brain2.errors import Conflict
 from brain2.models import Project, Tenant, User, WikiPage
@@ -502,7 +502,6 @@ class LocalStore:
         if not eligible_tenants:
             return None
         placeholders = ",".join("?" * len(eligible_tenants))
-        from datetime import datetime, timedelta, timezone
         dt = datetime.fromisoformat(now_iso)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)

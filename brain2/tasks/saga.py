@@ -16,9 +16,13 @@ def delete_user_saga(store: Store, tenant_id: str, user_id: str,
                      addon_handlers: list[_AddonHandler]) -> None:
     """Disable user, call all add-on delete_user_data handlers, emit user_deleted event.
 
-    Each handler failure is logged and isolated — the saga continues to maximise cleanup.
-    The user is disabled regardless of handler failures.
+    Order: disable (in-txn) → addon handlers (isolated, logged failures) → emit event (in-txn).
     """
+    with store.transaction() as cx:
+        cx.execute(
+            "UPDATE users SET status='disabled' WHERE tenant_id=? AND user_id=?",
+            (tenant_id, user_id))
+
     for handler in addon_handlers:
         try:
             handler(tenant_id, user_id)
@@ -26,8 +30,5 @@ def delete_user_saga(store: Store, tenant_id: str, user_id: str,
             logger.error("addon delete_user_data failed for user %s: %s", user_id, exc)
 
     with store.transaction() as cx:
-        cx.execute(
-            "UPDATE users SET status='disabled' WHERE tenant_id=? AND user_id=?",
-            (tenant_id, user_id))
         emit(store, cx, tenant_id, "user_deleted", user_id,
              {"tenant_id": tenant_id, "user_id": user_id})

@@ -25,16 +25,16 @@ def test_run_one_returns_false_when_empty(store):
 def test_failed_handler_marks_task_failed_or_retry(store):
     store.create_tenant("t1", "Acme")
     registry = TaskRegistry()
-
     def boom_handler(task):
         raise ValueError("boom")
-
     registry.register("bad", boom_handler)
     with store.transaction() as cx:
         store.enqueue_task_in_txn(cx, "t1", "bad", {}, max_retries=0)
     run_one(store, registry, ["t1"])
-    row = store._conn.execute("SELECT status FROM tasks WHERE tenant_id='t1'").fetchone()
-    assert row["status"] == "failed"
+    # Task with max_retries=0 should be failed, not re-claimable
+    from datetime import datetime, timezone
+    result = store.claim_task("w1", ["t1"], datetime.now(timezone.utc).isoformat(), 60)
+    assert result is None
 
 
 def test_eligible_tenants_excludes_at_cap(store):

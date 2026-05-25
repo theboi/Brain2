@@ -81,3 +81,19 @@ def test_count_running_and_pending(store):
     assert store.count_pending_tasks("t1") == 2
     store.claim_task("w1", ["t1"], _now(), 60)
     assert store.count_running_tasks("t1") == 1
+
+
+def test_heartbeat_extends_lease(store):
+    store.create_tenant("t1", "Acme")
+    with store.transaction() as cx:
+        store.enqueue_task_in_txn(cx, "t1", "x", {})
+    store.claim_task("w1", ["t1"], _now(), lease_seconds=1)
+    # Extend lease far into the future
+    extended = _future(9999)
+    store.heartbeat_task(
+        store._conn.execute("SELECT task_id FROM tasks").fetchone()["task_id"],
+        extended
+    )
+    # Sweep with a time just past original lease expiry but before extended expiry
+    recovered = store.sweep_expired_leases(_future(5))
+    assert recovered == 0  # task is still running, not swept
