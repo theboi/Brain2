@@ -19,3 +19,7 @@ class Conflict(Brain2Error):
 
 class MigrationError(Brain2Error):
     """Schema migration failure or code/schema version skew (-> boot refusal)."""
+
+
+class RateLimitExceeded(Brain2Error):
+    """Request rejected due to rate limit or backlog ceiling."""
