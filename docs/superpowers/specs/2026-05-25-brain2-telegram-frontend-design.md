@@ -82,7 +82,7 @@ Kept deliberately minimal and aligned with existing patterns:
 2. **Store methods**: link/resolve + counts.
 3. **Config**: service key + owner Telegram ID.
 4. **Routes**: `/api/v1/telegram/*` (service-key auth).
-5. **Operations**: register `create_user`, `list_users`, `set_user_role` (action `manage_users`) — dispatched through the *existing* `/api/v1/ops/{name}` route, no new op routes.
+5. **Operations**: register `create_user`, `list_users`, `set_user_role` (action `manage_users`) and `transfer_ownership` (new action `manage_ownership`, owner-only) — dispatched through the *existing* `/api/v1/ops/{name}` route, no new op routes. Requires the tenant-role-rank fix in `authorize()` (§3).
 6. **Op discovery**: `GET /api/v1/ops` returns the caller-invokable op list for menu rendering (mirrors MCP `list_tools` filtering).
 
 ---
@@ -95,6 +95,18 @@ A single env var on **both** server and bot designates the trusted operator:
 
 The link is one-to-one and globally unique: **one Telegram ID ↔ one Brain2 user**. `telegram_links.telegram_id` is `UNIQUE`.
 
+### Roles & the ownership invariant
+
+Tenant roles rank `owner > admin > member`. The **bootstrap user becomes the `owner`** — conceptually the person is provisioned first and the tenant is created *for* them; in storage the two are written atomically (the tenant remains the primary entity, the data model is unchanged).
+
+**Invariant: every tenant must have at least one `owner` at all times.** It is enforced as a *guard*, not by restructuring tenant creation:
+
+- The **last owner cannot be demoted or removed** until ownership is transferred (or a second owner is promoted first). Attempting it → `409 Conflict` ("transfer ownership first").
+- Ownership is moved via a dedicated, owner-only **`transfer_ownership`** operation (a tenant may have more than one owner; transfer promotes a target to `owner` and may optionally step the caller down to `admin`).
+- Promotion *to* `owner` is owner-gated; ordinary admins (`manage_users`) may only assign `{admin, member}`. This prevents an admin from escalating themselves to owner.
+
+> **Required core fix (Plan A):** `authorize()` currently ranks only *project* roles (`viewer/editor/admin` in `brain2/auth/authorize.py:29`); there is no tenant-role rank, so `_role_ge("owner","admin")` is `False` and a tenant `owner` would be wrongly **denied** admin-gated actions. Plan A adds a tenant-role rank `{member:1, admin:2, owner:3}` used by the `TENANT_ACTION_ROLES` branch, plus a new `manage_ownership` action requiring `owner`.
+
 ### Onboarding decision tree (when an unlinked Telegram user texts the bot)
 
 ```
@@ -102,7 +114,7 @@ resolve(telegram_id) linked?
 ├── yes → greet, show main menu (role-aware)
 └── no  → GET /telegram/status  → bootstrapped? (tenant_count > 0)
           ├── NO (fresh install)
-          │   ├── telegram_id == OWNER  → BOOTSTRAP flow (create tenant + admin)
+          │   ├── telegram_id == OWNER  → BOOTSTRAP flow (create owner user → tenant)
           │   └── else                   → "Brain2 isn't set up yet. Ask the operator." (refuse)
           └── YES (accounts exist)
               ├── telegram_id == OWNER  → offer "Link existing account"
@@ -146,8 +158,15 @@ def link_telegram(self, tenant_id: str, user_id: str, telegram_id: int) -> None:
 def get_user_by_telegram(self, telegram_id: int) -> tuple[str, str] | None: ...   # (tenant_id, user_id) | None
 def count_tenants(self) -> int: ...
 def count_users(self, tenant_id: str) -> int: ...
+def count_owners(self, tenant_id: str) -> int: ...                # for the last-owner guard
 def create_user_with_password(self, tenant_id: str, user_id: str, email: str,
                               role: str, password: str) -> User: ...  # convenience used by bootstrap + create_user
+def provision_tenant(self, name: str, owner_email: str, owner_password: str,
+                     owner_display_name: str) -> tuple[Tenant, User]: ...
+    # atomic: create owner user + tenant (owner role) in one transaction.
+    # The application/bootstrap path uses this; low-level create_tenant stays a
+    # primitive for tests/internals. The "≥1 owner" invariant is enforced by the
+    # role-mutation guards (set_user_role / transfer_ownership), not here.
 ```
 
 `link_telegram` raises `Conflict` if the `telegram_id` is already linked or the user already has a link (maps to HTTP 409). These are added to the **Postgres conformance suite** too (the store conformance tests are parametrized — see `tests/test_store_conformance.py`).
@@ -173,7 +192,7 @@ All require header `X-Telegram-Service-Key`; mismatch → `401`. A FastAPI depen
 | `POST /api/v1/telegram/link` | `{telegram_id, tenant_id, email, password}` | service key **+** password verifies | `{token, refresh_token, user_id, role}` |
 | `POST /api/v1/telegram/link-owner` | `{telegram_id, tenant_id, email}` | service key **+** `telegram_id==owner_id` **+** owner not already linked | `{token, refresh_token, user_id, role}` |
 
-- **bootstrap** creates the tenant (id derived from `workspace_name` or a generated id), creates the admin user with `role="admin"` (first user is admin per requirement; `owner` reserved if the project distinguishes it — see open question OQ-1), sets the password, writes the `telegram_links` row, issues a token pair, and returns it. All within one transaction; on any failure nothing is persisted.
+- **bootstrap** provisions the **owner user and tenant atomically** via `provision_tenant` (the person is the seed of the workspace): create the user with `role="owner"`, create the tenant (id derived from `workspace_name`, random suffix on collision), set the password, write the `telegram_links` row, issue a token pair, return it. All within one transaction; on any failure nothing is persisted.
 - **link** resolves `user_id` by `(tenant_id, email)`, verifies the password via `PasswordService.verify_password`, writes the link, issues tokens. Wrong password → `401`; already-linked telegram_id → `409`.
 - **link-owner** is the passwordless owner path; same as link minus the password check, plus the owner gate.
 - **`tenant_id` is optional** in `link`/`link-owner`: when the deployment has exactly one tenant (the common single-workspace case) the server resolves it automatically, so the bot never has to ask. With multiple tenants it is required (omitting it → `400` with a "specify workspace" detail). `email` is unique only *within* a tenant, so this disambiguation matters only in multi-tenant deployments.
@@ -186,11 +205,12 @@ Registered in `_register_core_operations` and reached via `POST /api/v1/ops/{nam
 
 | Op name | Action | Params | Handler behavior |
 |---|---|---|---|
-| `create_user` | `manage_users` | `{email, password, display_name, role}` | create user + set password in the caller's tenant; `role ∈ {admin, member}` |
+| `create_user` | `manage_users` | `{email, password, display_name, role}` | create user + set password in the caller's tenant; `role ∈ {admin, member}` (never `owner`) |
 | `list_users` | `manage_users` | `{cursor?, limit?}` | keyset-paginated tenant user list `[{user_id, email, role, telegram_linked}]` |
-| `set_user_role` | `manage_users` | `{user_id, role}` | change a user's tenant role; cannot demote the last admin (guard) |
+| `set_user_role` | `manage_users` | `{user_id, role}` | set role among `{admin, member}` only; **may not grant `owner` and may not demote an `owner`** → `409` if attempted (use `transfer_ownership`) |
+| `transfer_ownership` | `manage_ownership` | `{target_user_id, step_down?}` | promote `target_user_id` to `owner`; if `step_down` true, demote caller to `admin`. Guarded so `count_owners(tenant) ≥ 1` always holds |
 
-`authorize(store, ctx, "manage_users", project_id=None)` already requires tenant role `admin` (see `brain2/auth/authorize.py:12`). No new authorization logic.
+`authorize(store, ctx, "manage_users")` requires tenant role `admin` (`brain2/auth/authorize.py:12`); `manage_ownership` is the **new** action requiring `owner`. Both rely on the Plan-A tenant-role rank fix (§3) so that `owner` satisfies `admin`-gated actions. The **last-owner guard** uses `count_owners` and is enforced in the `set_user_role` / `transfer_ownership` handlers (and in any future user-deletion op).
 
 ### 4.6 Op discovery: `GET /api/v1/ops`
 
@@ -328,7 +348,10 @@ A per-user `mode` toggle (`/mode nlp` ↔ `/mode commands`, stored in `sessions.
 - `bootstrap`: success path; rejected when `tenant_count>0`; rejected when `telegram_id != owner`; rejected without service key.
 - `link`: success; wrong password → 401; duplicate link → 409.
 - `link-owner`: success for owner; rejected for non-owner; rejected when owner already linked.
-- Ops `create_user` / `list_users` / `set_user_role`: authorize as admin passes; as member → 403; last-admin demotion guard.
+- **Tenant-role rank fix**: `owner` passes `manage_users`/other admin actions; `member` denied; `manage_ownership` requires `owner` (admin denied).
+- Ops `create_user` / `list_users` / `set_user_role`: authorize as admin passes; as member → 403; `set_user_role` rejects granting `owner` and rejects demoting an owner (→409).
+- `transfer_ownership`: owner promotes target; optional step-down; last-owner guard keeps `count_owners ≥ 1` (cannot demote sole owner without transfer).
+- `bootstrap` provisions owner+tenant atomically (rollback on failure); first user role is `owner`.
 - `GET /api/v1/ops` filters to invokable ops.
 
 **Bot side (pytest + mocked API via `respx`/`httpx.MockTransport`):**
@@ -347,7 +370,7 @@ PTB handlers tested by invoking the handler callbacks with fabricated `Update`/`
 The work splits cleanly into two sequential plans (server first, bot second):
 
 - **Plan A — Brain2 server: Telegram identity & user-management surface**
-  `telegram_links` migration + store methods (incl. Postgres conformance), config keys, `/api/v1/telegram/*` routes, `create_user`/`list_users`/`set_user_role` ops, `Operation` metadata + `GET /api/v1/ops`. TDD throughout; all via `.venv/bin/python -m pytest`.
+  `authorize()` tenant-role-rank fix + `manage_ownership` action; `telegram_links` migration + store methods incl. `count_owners` / `provision_tenant` (and Postgres conformance); config keys; `/api/v1/telegram/*` routes; `create_user`/`list_users`/`set_user_role`/`transfer_ownership` ops with the last-owner guard; `Operation` metadata + `GET /api/v1/ops`. TDD throughout; all via `.venv/bin/python -m pytest`.
 
 - **Plan B — `brain2-telegram` bot package**
   `config`, `api_client`, `session_store`, `formatting`, `bot`, and the `handlers/*` (start/bootstrap/link/admin/ops), plus the NLP-mode toggle stub and webhook seam. Mocked-API tests for every flow. New `pyproject` script `brain2-telegram`.
@@ -356,6 +379,7 @@ The work splits cleanly into two sequential plans (server first, bot second):
 
 ## 13. Open questions (resolve during plan-writing)
 
-- **OQ-1 — first-user role**: requirement says the first user is **admin**. The model has `owner|admin|member`. Use `admin`, or reserve `owner` for the bootstrap user? Default assumption: bootstrap user = `admin` (matches the stated requirement literally); revisit if `owner` carries distinct privileges.
+- **OQ-1 — first-user role**: ✅ **Resolved — bootstrap user = `owner`.** Every tenant must have ≥1 owner; the last owner cannot be demoted/removed until ownership is transferred (§3). Requires the `authorize()` tenant-role-rank fix.
 - **OQ-2 — tenant_id derivation** at bootstrap: slugify `workspace_name` vs. generated id. Default: slug + random suffix on collision.
 - **OQ-3 — `list_users.telegram_linked`** requires joining `telegram_links`; confirm acceptable in the list handler (one extra indexed lookup).
+- **OQ-4 — `transfer_ownership` semantics**: does transfer always step the previous owner down, or allow multiple co-owners? Default: `step_down` is optional (co-owners allowed); the guard only enforces `≥1 owner`.
