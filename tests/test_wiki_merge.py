@@ -66,3 +66,51 @@ def test_find_ingestion_job_by_hash(store):
     job = store.find_ingestion_job_by_hash("t1", "sha256abc")
     assert job is not None
     assert job.topic == "intro"
+
+
+import pytest
+from brain2.knowledge.wiki import merge_page, search
+from brain2.errors import PageTooLarge
+
+
+def test_merge_page_creates_new(store):
+    store.create_tenant("t1", "Acme")
+    store.create_project("t1", "p1", "Proj")
+    page = merge_page(store, "t1", "p1", "intro", "Hello world", updated_by="u1")
+    assert page.topic == "intro"
+    assert page.version == 1
+    assert page.content_hash is not None
+
+
+def test_merge_page_hash_fastpath_skips_update(store):
+    store.create_tenant("t1", "Acme")
+    store.create_project("t1", "p1", "Proj")
+    page1 = merge_page(store, "t1", "p1", "intro", "Same content", updated_by="u1")
+    page2 = merge_page(store, "t1", "p1", "intro", "Same content", updated_by="u1")
+    assert page1.version == page2.version  # no increment — content unchanged
+
+
+def test_merge_page_increments_version_on_change(store):
+    store.create_tenant("t1", "Acme")
+    store.create_project("t1", "p1", "Proj")
+    merge_page(store, "t1", "p1", "intro", "Version 1", updated_by="u1")
+    page2 = merge_page(store, "t1", "p1", "intro", "Version 2", updated_by="u1")
+    assert page2.version == 2
+
+
+def test_merge_page_raises_on_too_large(store):
+    store.create_tenant("t1", "Acme")
+    store.create_project("t1", "p1", "Proj")
+    big_content = "x" * 300_000
+    with pytest.raises(PageTooLarge):
+        merge_page(store, "t1", "p1", "big", big_content, updated_by="u1",
+                   page_max_bytes=262_144)
+
+
+def test_search_returns_relevant_pages(store):
+    store.create_tenant("t1", "Acme")
+    store.create_project("t1", "p1", "Proj")
+    merge_page(store, "t1", "p1", "python-intro", "Python programming language basics")
+    merge_page(store, "t1", "p1", "rust-intro", "Rust systems programming")
+    results = search(store, "t1", "p1", "Python programming", max_breadth=50)
+    assert any("Python" in p.content for p in results)
