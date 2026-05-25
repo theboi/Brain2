@@ -70,6 +70,8 @@ class CsvConnector:
         self._source = source
 
     def query(self, sql: str) -> list[dict[str, Any]]:
+        from brain2.discipline import assert_outside_txn
+        assert_outside_txn("run_query")  # external data access, never inside a Store txn
         read_only_query(sql)
         self._source.seek(0)
         reader = csv.DictReader(self._source)

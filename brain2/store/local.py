@@ -53,20 +53,25 @@ class LocalStore:
 
     @contextmanager
     def transaction(self):
+        from brain2 import discipline
         with self._lock:
-            if self.in_transaction:
-                yield self._conn  # nested -> reuse (savepoint semantics deferred)
-                return
-            self.in_transaction = True
+            discipline.enter()  # mark thread inside a Store txn (Phase 5 §1)
             try:
-                self._conn.execute("BEGIN")
-                yield self._conn
-                self._conn.execute("COMMIT")
-            except Exception:
-                self._conn.execute("ROLLBACK")
-                raise
+                if self.in_transaction:
+                    yield self._conn  # nested -> reuse (savepoint semantics deferred)
+                    return
+                self.in_transaction = True
+                try:
+                    self._conn.execute("BEGIN")
+                    yield self._conn
+                    self._conn.execute("COMMIT")
+                except Exception:
+                    self._conn.execute("ROLLBACK")
+                    raise
+                finally:
+                    self.in_transaction = False
             finally:
-                self.in_transaction = False
+                discipline.exit()
 
     # --- tenants ---
     def create_tenant(self, tenant_id: str, name: str) -> Tenant:

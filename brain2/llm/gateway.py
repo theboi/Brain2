@@ -122,6 +122,8 @@ class LLMGateway:
 
     def complete(self, tenant_id: str, user_id: str,
                  request: CompletionRequest) -> CompletionResponse:
+        from brain2.discipline import assert_outside_txn
+        assert_outside_txn("LLM call")  # never hold a Store txn across an LLM call
         sem = self._get_semaphore(tenant_id)
         acquired = sem.acquire(blocking=False)
         if not acquired:
