@@ -13,7 +13,7 @@
 ## How to read this plan
 
 1. **This document** — build order, file map, cross-cutting invariants, sub-plan index, acceptance gates.
-2. **Sub-plan documents** (`2026-05-24-brain2-plan-NN-<name>.md`) — the actual task-by-task TDD plans. `plan-01-foundation` is written in full; the rest are scoped here and authored on the same pattern as each becomes the active work item.
+2. **Sub-plan documents** — the actual task-by-task TDD plans. Filenames: `2026-05-24-brain2-plan-01-foundation.md` for the foundation; plans **02–14** under the `2026-05-25-brain2-plan-NN-<name>.md` prefix (the canonical, executed series). **Status:** plans 01–10 are written; 01–09 are implemented and their test suites pass (run via the project venv — `.venv/bin/python -m pytest`); P10/Concepts is partially implemented (FSRS + store + migration done; LLM-driven sync, supercession, sessions/handlers outstanding). Plans 11–14 are scoped below and authored on the same pattern as each becomes the active work item.
 
 When a sub-plan and an earlier *spec* disagree, the **Authoritative reconciliations** table below wins. Phases 4 and 5 are authoritative over Phases 1–3 and the original Core/Storage/Security/Operations specs wherever they overlap.
 
@@ -177,4 +177,4 @@ Dependencies are hard unless noted. Sub-plans with no shared dependency may run 
 
 ## Execution handoff
 
-Start with **plan-01-foundation** (fully written). Recommended approach: **subagent-driven development** — one fresh subagent per task with two-stage review between tasks. After Tier 0 is green, dispatch Tier 1 sub-plans (02/03/04/05/06) in parallel; author each remaining sub-plan (on the plan-01 pattern, no placeholders) at the moment it becomes the active work item, so it reflects the interfaces the prior tier actually produced.
+Tiers 0–2 and the add-on framework are built: plans 01–09 are implemented with passing suites, and P10/Concepts is partially implemented. Remaining work, in order: (1) finish **plan-10-concepts** (deterministic concept IDs, LLM-driven ADD/UPDATE/SUPERSEDE/RETIRE/MERGE sync, supercession FSRS merge, sessions/handlers); (2) author + execute **plan-11-reports → plan-14-postgres-store** on the same pattern. Recommended approach: **subagent-driven development** — one fresh subagent per task with two-stage review between tasks. Always run tests via the project venv (`.venv/bin/python -m pytest`), not the bare `python` shim.
