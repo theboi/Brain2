@@ -732,6 +732,11 @@ class LocalStore:
             updated_at=row["updated_at"],
         )
 
+    # --- addon migrations ---
+    def apply_addon_migration(self, sql: str) -> None:
+        """Execute a raw SQL migration script for an add-on schema."""
+        self._conn.executescript(sql)
+
     # --- addons ---
     def enable_addon(self, tenant_id: str, addon_id: str,
                      config: dict | None = None) -> None:

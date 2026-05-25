@@ -8,6 +8,7 @@ dependencies = [
     "cryptography>=42.0",
     "argon2-cffi>=23.1",
     "httpx>=0.27",
+    "fsrs>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -22,7 +23,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["brain2*"]
+include = ["brain2*", "addons*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
