@@ -15,6 +15,7 @@ TENANT_ACTION_ROLES: dict[str, str] = {
     "manage_projects": "admin",
     "manage_addons": "admin",
     "view_audit_logs": "admin",
+    "manage_ownership": "owner",      # owner-only (transfer_ownership)
 }
 
 PROJECT_ACTION_ROLES: dict[str, str] = {
@@ -28,6 +29,9 @@ PROJECT_ACTION_ROLES: dict[str, str] = {
 
 _ROLE_RANK = {"viewer": 1, "editor": 2, "admin": 3}
 
+# Tenant roles rank independently of project roles (owner > admin > member).
+_TENANT_ROLE_RANK = {"member": 1, "admin": 2, "owner": 3}
+
 
 def _role_ge(a: str, b: str) -> bool:
     return _ROLE_RANK.get(a, 0) >= _ROLE_RANK.get(b, 0)
@@ -40,7 +44,7 @@ def authorize(store: Store, ctx: RequestContext, action: str,
 
     if action in TENANT_ACTION_ROLES:
         required = TENANT_ACTION_ROLES[action]
-        if not _role_ge(ctx.tenant_role, required):
+        if _TENANT_ROLE_RANK.get(ctx.tenant_role, 0) < _TENANT_ROLE_RANK.get(required, 0):
             raise PermissionDenied(
                 f"action '{action}' requires tenant role '{required}'"
             )

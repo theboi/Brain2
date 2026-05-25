@@ -59,3 +59,27 @@ def test_break_glass_grants_access(setup):
 def test_no_access_raises_permission_denied(setup):
     with pytest.raises(PermissionDenied):
         authorize(setup, _ctx("member1"), action="read_wiki", project_id="nonexistent")
+
+
+def test_owner_satisfies_admin_gated_action(store):
+    store.create_tenant("t1", "Acme")
+    # owner must outrank admin for tenant actions (manage_users requires 'admin')
+    authorize(store, _ctx("u1", "owner"), "manage_users")  # no raise
+
+
+def test_admin_satisfies_admin_gated_action(store):
+    store.create_tenant("t1", "Acme")
+    authorize(store, _ctx("u1", "admin"), "manage_users")  # no raise
+
+
+def test_member_denied_admin_gated_action(store):
+    store.create_tenant("t1", "Acme")
+    with pytest.raises(PermissionDenied):
+        authorize(store, _ctx("u1", "member"), "manage_users")
+
+
+def test_manage_ownership_requires_owner(store):
+    store.create_tenant("t1", "Acme")
+    authorize(store, _ctx("u1", "owner"), "manage_ownership")  # no raise
+    with pytest.raises(PermissionDenied):
+        authorize(store, _ctx("u1", "admin"), "manage_ownership")
