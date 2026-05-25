@@ -483,3 +483,96 @@ class LocalStore:
             "AND user_id=? AND expires_at > ?",
             (tenant_id, project_id, user_id, _now_iso())).fetchone()
         return dict(row) if row else None
+
+    # --- task queue ---
+    def enqueue_task_in_txn(self, cx, tenant_id: str, task_type: str,
+                             payload: dict, priority: int = 100,
+                             available_at: str | None = None,
+                             max_retries: int = 3) -> str:
+        task_id = str(uuid.uuid4())
+        cx.execute(
+            "INSERT INTO tasks(task_id, tenant_id, task_type, payload, priority, "
+            "available_at, max_retries, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (task_id, tenant_id, task_type, json.dumps(payload), priority,
+             available_at or _now_iso(), max_retries, _now_iso()))
+        return task_id
+
+    def claim_task(self, worker_id: str, eligible_tenants: list[str],
+                   now_iso: str, lease_seconds: int = 60) -> dict | None:
+        if not eligible_tenants:
+            return None
+        placeholders = ",".join("?" * len(eligible_tenants))
+        from datetime import datetime, timedelta, timezone
+        dt = datetime.fromisoformat(now_iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        lease_exp = (dt + timedelta(seconds=lease_seconds)).isoformat()
+        with self.transaction() as cx:
+            row = cx.execute(
+                f"""SELECT task_id FROM tasks
+                    WHERE status='pending'
+                      AND available_at <= ?
+                      AND tenant_id IN ({placeholders})
+                    ORDER BY priority, available_at
+                    LIMIT 1""",
+                [now_iso] + list(eligible_tenants),
+            ).fetchone()
+            if not row:
+                return None
+            task_id = row["task_id"]
+            cx.execute(
+                "UPDATE tasks SET status='running', claimed_by=?, lease_expires_at=?, "
+                "started_at=COALESCE(started_at, ?) WHERE task_id=?",
+                (worker_id, lease_exp, now_iso, task_id))
+            updated = cx.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        return dict(updated)
+
+    def heartbeat_task(self, task_id: str, lease_expires_at: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("UPDATE tasks SET lease_expires_at=? WHERE task_id=?",
+                       (lease_expires_at, task_id))
+
+    def complete_task(self, task_id: str, result: dict) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE tasks SET status='done', completed_at=?, result=? WHERE task_id=?",
+                (_now_iso(), json.dumps(result), task_id))
+
+    def fail_task(self, task_id: str, error: str, retry_at: str | None) -> None:
+        with self.transaction() as cx:
+            row = cx.execute(
+                "SELECT retry_count, max_retries FROM tasks WHERE task_id=?",
+                (task_id,)).fetchone()
+            if not row:
+                return
+            new_count = row["retry_count"] + 1
+            if retry_at is not None and new_count <= row["max_retries"]:
+                cx.execute(
+                    "UPDATE tasks SET status='pending', retry_count=?, error=?, "
+                    "available_at=?, lease_expires_at=NULL, claimed_by=NULL WHERE task_id=?",
+                    (new_count, error, retry_at, task_id))
+            else:
+                cx.execute(
+                    "UPDATE tasks SET status='failed', retry_count=?, error=?, "
+                    "completed_at=? WHERE task_id=?",
+                    (new_count, error, _now_iso(), task_id))
+
+    def sweep_expired_leases(self, now_iso: str) -> int:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE tasks SET status='pending', claimed_by=NULL, lease_expires_at=NULL "
+                "WHERE status='running' AND lease_expires_at < ?",
+                (now_iso,))
+            return cx.execute("SELECT changes() as n").fetchone()["n"]
+
+    def count_running_tasks(self, tenant_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) as n FROM tasks WHERE tenant_id=? AND status='running'",
+            (tenant_id,)).fetchone()
+        return row["n"] if row else 0
+
+    def count_pending_tasks(self, tenant_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) as n FROM tasks WHERE tenant_id=? AND status='pending'",
+            (tenant_id,)).fetchone()
+        return row["n"] if row else 0

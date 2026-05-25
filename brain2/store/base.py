@@ -177,3 +177,34 @@ class Store(Protocol):
                                       user_id: str) -> dict | None:
         """Return grant only if it exists and expires_at > now."""
         ...
+
+    # --- task queue (P4 §4) ---
+    def enqueue_task_in_txn(self, cx: Any, tenant_id: str, task_type: str,
+                             payload: dict, priority: int = 100,
+                             available_at: str | None = None,
+                             max_retries: int = 3) -> str:
+        """Insert task into queue within an open transaction. Returns task_id."""
+        ...
+
+    def claim_task(self, worker_id: str, eligible_tenants: list[str],
+                   now_iso: str, lease_seconds: int = 60) -> dict | None:
+        """Atomically claim one pending task. Returns row dict or None."""
+        ...
+
+    def heartbeat_task(self, task_id: str, lease_expires_at: str) -> None:
+        """Renew task lease."""
+        ...
+
+    def complete_task(self, task_id: str, result: dict) -> None: ...
+
+    def fail_task(self, task_id: str, error: str,
+                  retry_at: str | None) -> None:
+        """Record failure. If retry_at is not None and retries remain, reschedule to pending."""
+        ...
+
+    def sweep_expired_leases(self, now_iso: str) -> int:
+        """Return expired running tasks to pending. Returns count recovered."""
+        ...
+
+    def count_running_tasks(self, tenant_id: str) -> int: ...
+    def count_pending_tasks(self, tenant_id: str) -> int: ...
