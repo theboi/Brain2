@@ -103,6 +103,10 @@ class Store(Protocol):
         """Requeue 'running' tasks stranded by a restart; returns count recovered."""
         ...
 
+    def list_tenant_ids(self) -> list[str]:
+        """All (non-deleted) tenant ids — for the single-process worker's sweep."""
+        ...
+
     # --- secrets (encrypted credentials) ---
     def store_secret(self, tenant_id: str, key: str, value_enc: bytes) -> None:
         """Store an already-encrypted blob. Caller encrypts; Store persists."""

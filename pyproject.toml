@@ -20,6 +20,8 @@ dev = ["pytest>=8.0", "pytest-cov>=4.1"]
 brain2-migrate = "brain2.store.migrations.runner:main"
 brain2-api = "brain2.api:main"
 brain2-mcp = "brain2.mcp:main"
+brain2-worker = "brain2.runtime:worker_main"
+brain2-init = "brain2.init_cmd:main"
 
 [build-system]
 requires = ["setuptools>=68"]

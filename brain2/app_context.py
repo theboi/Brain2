@@ -11,6 +11,7 @@ from brain2.addons.registry import AddonRegistry
 from brain2.auth.passwords import PasswordManager
 from brain2.auth.tokens import TokenManager
 from brain2.config import load_config
+from brain2.events.registry_events import EventRegistry
 from brain2.operations import OperationRegistry
 from brain2.secrets import SecretManager
 from brain2.store.base import Store
@@ -28,6 +29,7 @@ class AppContext:
     operations: OperationRegistry
     addons: AddonRegistry
     tasks: TaskRegistry
+    events: EventRegistry           # P04 outbox subscribers (worker drains via dispatch_one)
     connector_factory: object       # Callable[[tenant_id, datasource_id], connector]
 
 
@@ -42,6 +44,7 @@ def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext
     operations = OperationRegistry()
     addons = AddonRegistry()
     tasks = TaskRegistry()
+    events = EventRegistry()
     connector_factory = _build_connector_factory(store, secrets)
     if gateway is None:
         gateway = _build_gateway()
@@ -50,7 +53,7 @@ def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext
     _register_addons(addons, tasks, store, gateway, connector_factory)
     return AppContext(store=store, secrets=secrets, tokens=tokens, passwords=passwords,
                       gateway=gateway, operations=operations, addons=addons,
-                      tasks=tasks, connector_factory=connector_factory)
+                      tasks=tasks, events=events, connector_factory=connector_factory)
 
 
 def _build_connector_factory(store: Store, secrets: SecretManager):

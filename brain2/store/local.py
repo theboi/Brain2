@@ -82,6 +82,11 @@ class LocalStore:
                        (tenant_id, name, _now_iso()))
         return Tenant(id=tenant_id, name=name)
 
+    def list_tenant_ids(self) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT tenant_id FROM tenants WHERE deleted_at IS NULL").fetchall()
+        return [r["tenant_id"] for r in rows]
+
     def get_tenant(self, tenant_id: str) -> Tenant | None:
         row = self._conn.execute(
             "SELECT * FROM tenants WHERE tenant_id=? AND deleted_at IS NULL", (tenant_id,)
