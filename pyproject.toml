@@ -9,6 +9,8 @@ dependencies = [
     "argon2-cffi>=23.1",
     "httpx>=0.27",
     "fsrs>=6.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]
@@ -16,7 +18,8 @@ dev = ["pytest>=8.0", "pytest-cov>=4.1"]
 
 [project.scripts]
 brain2-migrate = "brain2.store.migrations.runner:main"
-# brain2-api / brain2-mcp / brain2-worker / brain2-init are added in later sub-plans.
+brain2-api = "brain2.api:main"
+brain2-mcp = "brain2.mcp:main"
 
 [build-system]
 requires = ["setuptools>=68"]
