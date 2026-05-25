@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from brain2.errors import Conflict
-from brain2.models import Project, Tenant, User, WikiPage
+from brain2.models import IngestionJob, Project, Tenant, User, WikiPage
 from brain2.store.migrations.runner import (
     SQLITE_MIGRATIONS_DIR,
     applied_version,
@@ -163,9 +163,24 @@ class LocalStore:
         return max(roles, key=lambda r: _ROLE_RANK[r])
 
     # --- wiki pages ---
+    def _row_to_wiki_page(self, row) -> WikiPage:
+        return WikiPage(
+            id=row["page_id"],
+            tenant_id=row["tenant_id"],
+            project_id=row["project_id"],
+            topic=row["topic"],
+            content=row["content"],
+            version=row["version"],
+            last_updated_by=row["last_updated_by"],
+            content_hash=row["content_hash"] if "content_hash" in row.keys() else None,
+            provenance=row["provenance"] if "provenance" in row.keys() else None,
+        )
+
     def put_wiki_page(self, tenant_id: str, project_id: str, topic: str, content: str,
                       *, expect_version: int | None = None,
-                      updated_by: str | None = None) -> WikiPage:
+                      updated_by: str | None = None,
+                      content_hash: str | None = None,
+                      provenance: str | None = None) -> WikiPage:
         now = _now_iso()
         with self.transaction() as cx:
             row = cx.execute(
@@ -184,8 +199,10 @@ class LocalStore:
                 new_version = current_version + 1
                 cx.execute(
                     "UPDATE wiki_pages SET content=?, version=?, last_updated_by=?, "
-                    "updated_at=? WHERE tenant_id=? AND page_id=?",
-                    (content, new_version, updated_by, now, tenant_id, page_id),
+                    "updated_at=?, content_hash=?, provenance=? "
+                    "WHERE tenant_id=? AND page_id=?",
+                    (content, new_version, updated_by, now, content_hash, provenance,
+                     tenant_id, page_id),
                 )
             else:
                 if expect_version is not None and expect_version != 0:
@@ -197,10 +214,10 @@ class LocalStore:
                 new_version = 1
                 cx.execute(
                     "INSERT INTO wiki_pages(tenant_id, project_id, page_id, topic, content, "
-                    "version, last_updated_by, created_at, updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    "version, last_updated_by, created_at, updated_at, content_hash, provenance) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (tenant_id, project_id, page_id, topic, content, new_version,
-                     updated_by, now, now),
+                     updated_by, now, now, content_hash, provenance),
                 )
         return WikiPage(
             id=page_id,
@@ -210,6 +227,8 @@ class LocalStore:
             content=content,
             version=new_version,
             last_updated_by=updated_by,
+            content_hash=content_hash,
+            provenance=provenance,
         )
 
     def get_wiki_page(self, tenant_id: str, project_id: str, topic: str) -> WikiPage | None:
@@ -217,17 +236,88 @@ class LocalStore:
             "SELECT * FROM wiki_pages WHERE tenant_id=? AND project_id=? AND topic=?",
             (tenant_id, project_id, topic),
         ).fetchone()
-        if not row:
-            return None
-        return WikiPage(
-            id=row["page_id"],
+        return self._row_to_wiki_page(row) if row else None
+
+    def list_wiki_pages(self, tenant_id: str, project_id: str,
+                        limit: int = 50, cursor: str | None = None) -> list[WikiPage]:
+        if cursor:
+            rows = self._conn.execute(
+                "SELECT * FROM wiki_pages WHERE tenant_id=? AND project_id=? "
+                "AND topic > ? ORDER BY topic LIMIT ?",
+                (tenant_id, project_id, cursor, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM wiki_pages WHERE tenant_id=? AND project_id=? "
+                "ORDER BY topic LIMIT ?",
+                (tenant_id, project_id, limit),
+            ).fetchall()
+        return [self._row_to_wiki_page(r) for r in rows]
+
+    def search_wiki_fts(self, tenant_id: str, project_id: str,
+                        query: str, limit: int = 50) -> list[WikiPage]:
+        rows = self._conn.execute(
+            """SELECT w.* FROM wiki_pages w
+               JOIN wiki_fts ON wiki_fts.rowid = w.rowid
+               WHERE wiki_fts MATCH ?
+                 AND w.tenant_id = ?
+                 AND w.project_id = ?
+               ORDER BY rank
+               LIMIT ?""",
+            (query, tenant_id, project_id, limit),
+        ).fetchall()
+        return [self._row_to_wiki_page(r) for r in rows]
+
+    # --- ingestion jobs ---
+    def _row_to_ingestion_job(self, row) -> IngestionJob:
+        return IngestionJob(
+            id=row["job_id"],
             tenant_id=row["tenant_id"],
             project_id=row["project_id"],
+            content_hash=row["content_hash"],
             topic=row["topic"],
-            content=row["content"],
-            version=row["version"],
-            last_updated_by=row["last_updated_by"],
+            status=row["status"],
+            page_id=row["page_id"],
+            error=row["error"],
         )
+
+    def create_ingestion_job(self, tenant_id: str, project_id: str,
+                              content_hash: str, topic: str) -> str:
+        job_id = str(uuid.uuid4())
+        now = _now_iso()
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO ingestion_jobs(job_id, tenant_id, project_id, content_hash, "
+                "topic, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                (job_id, tenant_id, project_id, content_hash, topic, "pending", now, now),
+            )
+        return job_id
+
+    def get_ingestion_job(self, tenant_id: str, job_id: str) -> IngestionJob | None:
+        row = self._conn.execute(
+            "SELECT * FROM ingestion_jobs WHERE tenant_id=? AND job_id=?",
+            (tenant_id, job_id),
+        ).fetchone()
+        return self._row_to_ingestion_job(row) if row else None
+
+    def find_ingestion_job_by_hash(self, tenant_id: str,
+                                    content_hash: str) -> IngestionJob | None:
+        row = self._conn.execute(
+            "SELECT * FROM ingestion_jobs WHERE tenant_id=? AND content_hash=? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (tenant_id, content_hash),
+        ).fetchone()
+        return self._row_to_ingestion_job(row) if row else None
+
+    def update_ingestion_job(self, tenant_id: str, job_id: str,
+                              status: str, page_id: str | None = None,
+                              error: str | None = None) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE ingestion_jobs SET status=?, page_id=?, error=?, updated_at=? "
+                "WHERE tenant_id=? AND job_id=?",
+                (status, page_id, error, _now_iso(), tenant_id, job_id),
+            )
 
     # --- idempotency ---
     def remember_idempotent(self, tenant_id: str, key: str, status_code: int,

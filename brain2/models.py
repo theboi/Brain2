@@ -74,5 +74,20 @@ class WikiPage(_Base):
     content: str
     version: int = 1
     last_updated_by: str | None = None
+    content_hash: str | None = None
+    provenance: str | None = None
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class IngestionJob(_Base):
+    id: str
+    tenant_id: str
+    project_id: str
+    content_hash: str
+    topic: str
+    status: Literal["pending", "running", "done", "failed"] = "pending"
+    page_id: str | None = None
+    error: str | None = None
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)

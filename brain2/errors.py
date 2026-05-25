@@ -27,3 +27,7 @@ class RateLimitExceeded(Brain2Error):
 
 class LLMError(Brain2Error):
     """LLM provider error (5xx, circuit open, timeout, etc.) (-> 502 or 503)."""
+
+
+class PageTooLarge(Brain2Error):
+    """Wiki page content exceeds the byte ceiling (-> 413)."""

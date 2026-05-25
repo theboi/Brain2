@@ -9,7 +9,7 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from typing import Any, Protocol, runtime_checkable
 
-from brain2.models import Tenant, User, Project, WikiPage
+from brain2.models import Tenant, User, Project, WikiPage, IngestionJob
 
 
 class Transaction(Protocol):
@@ -55,12 +55,32 @@ class Store(Protocol):
     # --- wiki content (in DB, Phase 4 §9.4) ---
     def put_wiki_page(self, tenant_id: str, project_id: str, topic: str, content: str,
                       *, expect_version: int | None = None,
-                      updated_by: str | None = None) -> WikiPage:
+                      updated_by: str | None = None,
+                      content_hash: str | None = None,
+                      provenance: str | None = None) -> WikiPage:
         """Create or update with optimistic locking (Core §14). Raises Conflict
         if expect_version is given and does not match the stored version."""
         ...
 
     def get_wiki_page(self, tenant_id: str, project_id: str, topic: str) -> WikiPage | None: ...
+
+    def list_wiki_pages(self, tenant_id: str, project_id: str,
+                        limit: int = 50, cursor: str | None = None) -> list[WikiPage]: ...
+
+    def search_wiki_fts(self, tenant_id: str, project_id: str,
+                        query: str, limit: int = 50) -> list[WikiPage]: ...
+
+    def create_ingestion_job(self, tenant_id: str, project_id: str,
+                              content_hash: str, topic: str) -> str: ...
+
+    def get_ingestion_job(self, tenant_id: str, job_id: str) -> IngestionJob | None: ...
+
+    def find_ingestion_job_by_hash(self, tenant_id: str,
+                                    content_hash: str) -> IngestionJob | None: ...
+
+    def update_ingestion_job(self, tenant_id: str, job_id: str,
+                              status: str, page_id: str | None = None,
+                              error: str | None = None) -> None: ...
 
     # --- idempotency (Phase 4 §9.7) ---
     def remember_idempotent(self, tenant_id: str, key: str, status_code: int,
