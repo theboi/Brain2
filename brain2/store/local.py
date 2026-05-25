@@ -731,3 +731,64 @@ class LocalStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    # --- addons ---
+    def enable_addon(self, tenant_id: str, addon_id: str,
+                     config: dict | None = None) -> None:
+        now = _now_iso()
+        cfg = json.dumps(config or {})
+        with self.transaction() as cx:
+            cx.execute(
+                """INSERT INTO addons(addon_id, tenant_id, status, config, enabled_at, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(addon_id, tenant_id) DO UPDATE SET
+                   status='enabled', config=excluded.config, enabled_at=excluded.enabled_at,
+                   disabled_at=NULL, updated_at=excluded.updated_at""",
+                (addon_id, tenant_id, "enabled", cfg, now, now, now))
+
+    def disable_addon(self, tenant_id: str, addon_id: str) -> None:
+        now = _now_iso()
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE addons SET status='disabled', disabled_at=?, updated_at=? "
+                "WHERE addon_id=? AND tenant_id=?",
+                (now, now, addon_id, tenant_id))
+
+    def remove_addon(self, tenant_id: str, addon_id: str) -> None:
+        now = _now_iso()
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE addons SET status='removed', removed_at=?, updated_at=? "
+                "WHERE addon_id=? AND tenant_id=?",
+                (now, now, addon_id, tenant_id))
+
+    def get_addon(self, tenant_id: str, addon_id: str):
+        row = self._conn.execute(
+            "SELECT * FROM addons WHERE tenant_id=? AND addon_id=?",
+            (tenant_id, addon_id)).fetchone()
+        return self._row_to_addon(row) if row else None
+
+    def list_addons(self, tenant_id: str, status: str | None = None):
+        if status:
+            rows = self._conn.execute(
+                "SELECT * FROM addons WHERE tenant_id=? AND status=? ORDER BY addon_id",
+                (tenant_id, status)).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM addons WHERE tenant_id=? ORDER BY addon_id",
+                (tenant_id,)).fetchall()
+        return [self._row_to_addon(r) for r in rows]
+
+    def _row_to_addon(self, row):
+        from brain2.models import Addon
+        return Addon(
+            id=row["addon_id"],
+            tenant_id=row["tenant_id"],
+            status=row["status"],
+            config=json.loads(row["config"]),
+            enabled_at=row["enabled_at"],
+            disabled_at=row["disabled_at"],
+            removed_at=row["removed_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )

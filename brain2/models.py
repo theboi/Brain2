@@ -106,3 +106,15 @@ class DataSource(_Base):
     status: Literal["active", "disabled"] = "active"
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
+
+
+class Addon(_Base):
+    id: str
+    tenant_id: str
+    status: Literal["enabled", "disabled", "removed"] = "enabled"
+    config: dict = Field(default_factory=dict)
+    enabled_at: datetime | None = None
+    disabled_at: datetime | None = None
+    removed_at: datetime | None = None
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
