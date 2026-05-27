@@ -118,3 +118,24 @@ def test_complete_link_persists_session(tmp_path):
     complete_link(client, sessions, chat_id=6, telegram_id=77,
                   data={"email": "m@a.com", "password": "longenough"})
     assert sessions.get(6)["role"] == "member"
+
+
+def test_complete_create_user_calls_op(tmp_path):
+    import httpx
+    from brain2_telegram.api_client import Brain2Client
+    from brain2_telegram.handlers.admin import complete_create_user
+    from brain2_telegram.session_store import SessionStore
+
+    def handler(req):
+        if req.url.path == "/api/v1/ops/create_user":
+            assert req.headers["Authorization"] == "Bearer tok"
+            return httpx.Response(200, json={"user_id": "u9", "role": "member"})
+        raise AssertionError(req.url.path)
+    client = Brain2Client("http://x", "svc", transport=httpx.MockTransport(handler))
+    sessions = SessionStore(str(tmp_path / "s.sqlite"))
+    sessions.put(3, tenant_id="t", user_id="admin", role="admin",
+                 token="tok", refresh_token="r")
+    out = complete_create_user(client, sessions, chat_id=3,
+                               data={"email": "n@a.com", "password": "longenough",
+                                     "display_name": "N", "role": "member"})
+    assert out["user_id"] == "u9"
