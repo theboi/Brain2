@@ -75,3 +75,9 @@ def test_authed_run_op_raises_need_relink_when_refresh_fails(tmp_path):
     with pytest.raises(NeedRelink):
         authed_run_op(_client(handler), sessions, 1, "list_users", {})
     assert sessions.get(1) is None   # cleared on relink-needed
+
+
+def test_main_menu_text_mentions_role_and_commands():
+    from brain2_telegram.handlers.start import main_menu_text
+    txt = main_menu_text({"role": "owner", "tenant_id": "acme"})
+    assert "owner" in txt and "/ops" in txt
