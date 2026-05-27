@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from brain2.app_context import AppContext
+from brain2.auth.authorize import authorize
 from brain2.context import RequestContext
 from brain2.errors import (AggregateOverUnboundedResult, Brain2Error, Conflict,
                            NotFound, PageTooLarge, PermissionDenied, QueryNotAllowed,
@@ -78,6 +79,21 @@ def create_app(actx: AppContext) -> FastAPI:
     def me(ctx: RequestContext = Depends(_auth)):
         return {"user_id": ctx.user_id, "tenant_id": ctx.tenant_id,
                 "role": ctx.tenant_role}
+
+    @app.get("/api/v1/ops")
+    def list_ops(project_id: str | None = None, ctx: RequestContext = Depends(_auth)):
+        out = []
+        for name in actx.operations.names():
+            op = actx.operations.get(name)
+            try:
+                authorize(actx.store, ctx, op.action, project_id)
+            except PermissionDenied:
+                continue
+            except Exception:
+                continue       # project ops needing a project_id we weren't given
+            out.append({"name": name, "action": op.action,
+                        "summary": op.summary, "params": op.params})
+        return {"ops": out}
 
     # --- generic operation dispatch (core + add-on ops) ---
     @app.post("/api/v1/ops/{name}")
