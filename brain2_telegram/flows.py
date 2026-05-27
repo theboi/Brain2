@@ -39,23 +39,38 @@ def parse_kv(text: str) -> dict:
     return out
 
 
-def authed_run_op(client: Brain2Client, sessions: SessionStore, chat_id: int,
-                  name: str, params: dict, idempotency_key: str | None = None) -> dict:
-    """Dispatch an op with the cached token; on 401 refresh once and retry; if the
-    refresh also fails, clear the session and raise NeedRelink."""
+def _authed_call(client: Brain2Client, sessions: SessionStore, chat_id: int, call):
+    """Run `call(token)` with the cached token; on 401 refresh once and retry. If
+    the refresh also fails, clear the session and raise NeedRelink. `call` is a
+    function taking a bearer token and performing one authenticated request."""
     sess = sessions.get(chat_id)
     if sess is None:
         raise NeedRelink("no session")
     try:
-        return client.run_op(sess["token"], name, params, idempotency_key)
+        return call(sess["token"])
     except ApiError as e:
         if e.status != 401:
             raise
-    # refresh + retry once
     try:
         pair = client.refresh(sess["refresh_token"])
     except ApiError:
         sessions.clear(chat_id)
         raise NeedRelink("refresh failed")
     sessions.update_tokens(chat_id, pair["token"], pair["refresh_token"])
-    return client.run_op(pair["token"], name, params, idempotency_key)
+    return call(pair["token"])
+
+
+def authed_run_op(client: Brain2Client, sessions: SessionStore, chat_id: int,
+                  name: str, params: dict, idempotency_key: str | None = None) -> dict:
+    """Dispatch an op with the cached token; on 401 refresh once and retry; if the
+    refresh also fails, clear the session and raise NeedRelink."""
+    return _authed_call(client, sessions, chat_id,
+                        lambda tok: client.run_op(tok, name, params, idempotency_key))
+
+
+def authed_list_ops(client: Brain2Client, sessions: SessionStore, chat_id: int,
+                    project_id: str | None = None) -> dict:
+    """List invokable ops with the cached token; same 401-refresh-retry as
+    authed_run_op so a token expiring before /ops doesn't force a re-link."""
+    return _authed_call(client, sessions, chat_id,
+                        lambda tok: client.list_ops(tok, project_id))

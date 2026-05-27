@@ -158,3 +158,25 @@ def test_run_named_op_parses_kv_and_dispatches(tmp_path):
     sessions.put(1, tenant_id="t", user_id="u", role="admin", token="tok", refresh_token="r")
     out = run_named_op(client, sessions, 1, "set_user_role", "user_id=u2 role=admin")
     assert out["role"] == "admin"
+
+
+def test_authed_list_ops_refreshes_on_401(tmp_path):
+    import httpx
+    from brain2_telegram.api_client import Brain2Client
+    from brain2_telegram.flows import authed_list_ops
+    from brain2_telegram.session_store import SessionStore
+
+    sessions = SessionStore(str(tmp_path / "s.sqlite"))
+    sessions.put(1, tenant_id="t", user_id="u", role="admin", token="old", refresh_token="r")
+
+    def handler(req):
+        if req.url.path == "/api/v1/auth/tokens/refresh":
+            return httpx.Response(200, json={"token": "new", "refresh_token": "r2"})
+        if req.headers["Authorization"] == "Bearer old":
+            return httpx.Response(401, json={"error": "expired"})
+        return httpx.Response(200, json={"ops": [{"name": "list_users"}]})
+
+    client = Brain2Client("http://x", "svc", transport=httpx.MockTransport(handler))
+    out = authed_list_ops(client, sessions, 1)
+    assert out["ops"] == [{"name": "list_users"}]
+    assert sessions.get(1)["token"] == "new"
