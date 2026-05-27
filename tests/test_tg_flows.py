@@ -81,3 +81,40 @@ def test_main_menu_text_mentions_role_and_commands():
     from brain2_telegram.handlers.start import main_menu_text
     txt = main_menu_text({"role": "owner", "tenant_id": "acme"})
     assert "owner" in txt and "/ops" in txt
+
+
+def test_complete_bootstrap_persists_session(tmp_path):
+    import httpx
+    from brain2_telegram.api_client import Brain2Client
+    from brain2_telegram.handlers.bootstrap import complete_bootstrap
+    from brain2_telegram.session_store import SessionStore
+
+    def handler(req):
+        assert req.url.path == "/api/v1/telegram/bootstrap"
+        return httpx.Response(200, json={"token": "t", "refresh_token": "r",
+                                         "tenant_id": "acme", "user_id": "u1",
+                                         "role": "owner"})
+    client = Brain2Client("http://x", "svc", transport=httpx.MockTransport(handler))
+    sessions = SessionStore(str(tmp_path / "s.sqlite"))
+    complete_bootstrap(client, sessions, chat_id=5, telegram_id=42,
+                       data={"workspace_name": "Acme", "email": "o@a.com",
+                             "password": "longenough", "display_name": "O"})
+    assert sessions.get(5)["role"] == "owner" and sessions.get(5)["tenant_id"] == "acme"
+
+
+def test_complete_link_persists_session(tmp_path):
+    import httpx
+    from brain2_telegram.api_client import Brain2Client
+    from brain2_telegram.handlers.link import complete_link
+    from brain2_telegram.session_store import SessionStore
+
+    def handler(req):
+        assert req.url.path == "/api/v1/telegram/link"
+        return httpx.Response(200, json={"token": "t", "refresh_token": "r",
+                                         "tenant_id": "acme", "user_id": "u2",
+                                         "role": "member"})
+    client = Brain2Client("http://x", "svc", transport=httpx.MockTransport(handler))
+    sessions = SessionStore(str(tmp_path / "s.sqlite"))
+    complete_link(client, sessions, chat_id=6, telegram_id=77,
+                  data={"email": "m@a.com", "password": "longenough"})
+    assert sessions.get(6)["role"] == "member"
