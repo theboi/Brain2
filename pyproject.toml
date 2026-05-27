@@ -11,6 +11,7 @@ dependencies = [
     "fsrs>=6.0",
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    "python-telegram-bot>=21",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +23,7 @@ brain2-api = "brain2.api:main"
 brain2-mcp = "brain2.mcp:main"
 brain2-worker = "brain2.runtime:worker_main"
 brain2-init = "brain2.init_cmd:main"
+brain2-telegram = "brain2_telegram.__main__:main"
 
 [build-system]
 requires = ["setuptools>=68"]
