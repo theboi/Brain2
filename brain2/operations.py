@@ -6,7 +6,7 @@ live in `AddonRegistry`; core operations live here. Both are reachable through
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from brain2.auth.authorize import authorize
@@ -15,19 +15,25 @@ from brain2.store.base import Store
 
 Handler = Callable[[RequestContext, dict], object]
 
+ParamSpec = dict          # {"name": str, "type": str, "required": bool, "choices"?: list}
+
 
 @dataclass
 class Operation:
     action: str                  # authorize() action key (tenant or project scoped)
     handler: Handler
+    summary: str = ""
+    params: list[ParamSpec] = field(default_factory=list)
 
 
 class OperationRegistry:
     def __init__(self) -> None:
         self._ops: dict[str, Operation] = {}
 
-    def register(self, name: str, *, action: str, handler: Handler) -> None:
-        self._ops[name] = Operation(action=action, handler=handler)
+    def register(self, name: str, *, action: str, handler: Handler,
+                 summary: str = "", params: list[ParamSpec] | None = None) -> None:
+        self._ops[name] = Operation(action=action, handler=handler,
+                                    summary=summary, params=params or [])
 
     def get(self, name: str) -> Operation | None:
         return self._ops.get(name)

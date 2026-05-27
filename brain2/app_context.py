@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from brain2.addons.registry import AddonRegistry
 from brain2.auth.passwords import PasswordManager
 from brain2.auth.tokens import TokenManager
-from brain2.config import load_config
+from brain2.config import Config, load_config
 from brain2.events.registry_events import EventRegistry
 from brain2.operations import OperationRegistry
 from brain2.secrets import SecretManager
@@ -31,6 +31,7 @@ class AppContext:
     tasks: TaskRegistry
     events: EventRegistry           # P04 outbox subscribers (worker drains via dispatch_one)
     connector_factory: object       # Callable[[tenant_id, datasource_id], connector]
+    config: Config
 
 
 def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext:
@@ -49,11 +50,12 @@ def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext
     if gateway is None:
         gateway = _build_gateway()
 
-    _register_core_operations(operations, store, connector_factory)
+    _register_core_operations(operations, store, passwords, connector_factory)
     _register_addons(addons, tasks, store, gateway, connector_factory)
     return AppContext(store=store, secrets=secrets, tokens=tokens, passwords=passwords,
                       gateway=gateway, operations=operations, addons=addons,
-                      tasks=tasks, events=events, connector_factory=connector_factory)
+                      tasks=tasks, events=events, connector_factory=connector_factory,
+                      config=cfg)
 
 
 def _build_connector_factory(store: Store, secrets: SecretManager):
@@ -78,7 +80,9 @@ def _build_gateway():
     return LLMGateway(OllamaProvider())   # Ollama is the always-available local tier
 
 
-def _register_core_operations(ops: OperationRegistry, store, connector_factory):
+def _register_core_operations(ops: OperationRegistry, store, passwords, connector_factory):
+    from brain2.admin_ops import (make_create_user, make_list_users,
+                                  make_set_user_role, make_transfer_ownership)
     from brain2.knowledge.query_engine import QueryBounds, run_query
 
     def _run_query(ctx, params):
@@ -87,8 +91,31 @@ def _register_core_operations(ops: OperationRegistry, store, connector_factory):
         return {"rows": result.rows, "truncated": result.truncated,
                 "row_count": result.row_count}
 
-    ops.register("run_query", action="run_query", handler=_run_query)
-    # Additional core ops (ingest, wiki read, datasource catalog, list_*) register here.
+    ops.register("run_query", action="run_query", handler=_run_query,
+                 summary="Run a read-only query against a data source",
+                 params=[{"name": "data_source_id", "type": "str", "required": True},
+                         {"name": "query", "type": "str", "required": True}])
+    ops.register("create_user", action="manage_users",
+                 handler=make_create_user(store, passwords),
+                 summary="Create a user (admin/member) in your tenant",
+                 params=[{"name": "email", "type": "str", "required": True},
+                         {"name": "password", "type": "str", "required": True},
+                         {"name": "display_name", "type": "str", "required": False},
+                         {"name": "role", "type": "str", "required": True,
+                          "choices": ["admin", "member"]}])
+    ops.register("list_users", action="manage_users",
+                 handler=make_list_users(store), summary="List tenant users")
+    ops.register("set_user_role", action="manage_users",
+                 handler=make_set_user_role(store),
+                 summary="Set a user's role (admin/member)",
+                 params=[{"name": "user_id", "type": "str", "required": True},
+                         {"name": "role", "type": "str", "required": True,
+                          "choices": ["admin", "member"]}])
+    ops.register("transfer_ownership", action="manage_ownership",
+                 handler=make_transfer_ownership(store),
+                 summary="Transfer tenant ownership to another user",
+                 params=[{"name": "target_user_id", "type": "str", "required": True},
+                         {"name": "step_down", "type": "bool", "required": False}])
 
 
 def _register_addons(addons: AddonRegistry, tasks: TaskRegistry, store, gateway,
