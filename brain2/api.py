@@ -160,8 +160,8 @@ def create_app(actx: AppContext) -> FastAPI:
         from brain2.provisioning import provision_tenant
         tenant_id, user_id = provision_tenant(
             actx.store, actx.passwords, body["workspace_name"], body["email"],
-            body["password"], body.get("display_name"))
-        actx.store.link_telegram(tenant_id, user_id, body["telegram_id"])
+            body["password"], body.get("display_name"),
+            telegram_id=body["telegram_id"])
         return _issue_for(tenant_id, user_id)
 
     @app.post("/api/v1/telegram/link", dependencies=[Depends(_service_auth)])

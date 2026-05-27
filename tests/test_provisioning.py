@@ -33,3 +33,26 @@ def test_provision_is_atomic_on_failure(monkeypatch):
     with pytest.raises(Conflict):
         provision_tenant(s, pw, "My Brain", "me@x.com", "pw", "Me")
     assert s.count_tenants() == 0
+
+
+def test_provision_links_telegram_atomically():
+    s = _store()
+    pw = PasswordManager(s)
+    tenant_id, user_id = provision_tenant(s, pw, "My Brain", "me@x.com", "hunter2",
+                                          "Me", telegram_id=42)
+    assert s.get_user_by_telegram(42) == (tenant_id, user_id)
+
+
+def test_provision_rolls_back_tenant_when_link_fails():
+    s = _store()
+    pw = PasswordManager(s)
+    # Pre-link telegram_id 42 to a separate existing account.
+    s.create_tenant("other", "Other")
+    s.create_user("other", "u0", "u0@x.com", "owner")
+    s.link_telegram("other", "u0", 42)
+    before = s.count_tenants()
+    # Provisioning a new workspace that tries to claim the same telegram_id must
+    # fail AND leave no new tenant/user behind (link is inside the txn).
+    with pytest.raises(Conflict):
+        provision_tenant(s, pw, "My Brain", "me@x.com", "pw", "Me", telegram_id=42)
+    assert s.count_tenants() == before
