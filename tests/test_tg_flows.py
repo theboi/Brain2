@@ -139,3 +139,22 @@ def test_complete_create_user_calls_op(tmp_path):
                                data={"email": "n@a.com", "password": "longenough",
                                      "display_name": "N", "role": "member"})
     assert out["user_id"] == "u9"
+
+
+def test_run_named_op_parses_kv_and_dispatches(tmp_path):
+    import httpx
+    from brain2_telegram.api_client import Brain2Client
+    from brain2_telegram.handlers.ops import run_named_op
+    from brain2_telegram.session_store import SessionStore
+
+    def handler(req):
+        assert req.url.path == "/api/v1/ops/set_user_role"
+        import json
+        body = json.loads(req.content)
+        assert body == {"user_id": "u2", "role": "admin"}
+        return httpx.Response(200, json={"user_id": "u2", "role": "admin"})
+    client = Brain2Client("http://x", "svc", transport=httpx.MockTransport(handler))
+    sessions = SessionStore(str(tmp_path / "s.sqlite"))
+    sessions.put(1, tenant_id="t", user_id="u", role="admin", token="tok", refresh_token="r")
+    out = run_named_op(client, sessions, 1, "set_user_role", "user_id=u2 role=admin")
+    assert out["role"] == "admin"
