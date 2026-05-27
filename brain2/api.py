@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hmac
 import logging
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -109,6 +110,83 @@ def create_app(actx: AppContext) -> FastAPI:
         if ctx.idempotency_key:
             actx.store.remember_idempotent(ctx.tenant_id, ctx.idempotency_key, 200, body)
         return body
+
+    # --- telegram server surface (service-key authenticated) ---
+    def _service_auth(x_telegram_service_key: str | None = Header(default=None)):
+        key = actx.config.telegram_service_key
+        if key is None:
+            raise HTTPException(status_code=503, detail="telegram integration not configured")
+        if not x_telegram_service_key or not hmac.compare_digest(
+                x_telegram_service_key.encode(), key):
+            raise HTTPException(status_code=401, detail="invalid service key")
+
+    def _resolve_tenant_id(body: dict) -> str:
+        tid = body.get("tenant_id")
+        if tid:
+            return tid
+        if actx.store.count_tenants() == 1:
+            row = actx.store._conn.execute(
+                "SELECT tenant_id FROM tenants WHERE deleted_at IS NULL LIMIT 1").fetchone()
+            return row["tenant_id"]
+        raise HTTPException(status_code=400, detail="specify workspace (tenant_id)")
+
+    def _issue_for(tenant_id: str, user_id: str) -> dict:
+        access, refresh = actx.tokens.issue(tenant_id, user_id)
+        user = actx.store.get_user(tenant_id, user_id)
+        return {"token": access, "refresh_token": refresh, "tenant_id": tenant_id,
+                "user_id": user_id, "role": user.role if user else "member"}
+
+    @app.get("/api/v1/telegram/status", dependencies=[Depends(_service_auth)])
+    def tg_status():
+        return {"bootstrapped": actx.store.count_tenants() > 0,
+                "owner_id": actx.config.telegram_owner_id}
+
+    @app.get("/api/v1/telegram/resolve/{telegram_id}", dependencies=[Depends(_service_auth)])
+    def tg_resolve(telegram_id: int):
+        found = actx.store.get_user_by_telegram(telegram_id)
+        if found is None:
+            return {"linked": False}
+        tenant_id, user_id = found
+        user = actx.store.get_user(tenant_id, user_id)
+        return {"linked": True, "tenant_id": tenant_id, "user_id": user_id,
+                "role": user.role if user else "member"}
+
+    @app.post("/api/v1/telegram/bootstrap", dependencies=[Depends(_service_auth)])
+    def tg_bootstrap(body: dict):
+        if body["telegram_id"] != actx.config.telegram_owner_id:
+            raise HTTPException(status_code=403, detail="not the configured owner")
+        if actx.store.count_tenants() > 0:
+            raise HTTPException(status_code=409, detail="already bootstrapped")
+        from brain2.provisioning import provision_tenant
+        tenant_id, user_id = provision_tenant(
+            actx.store, actx.passwords, body["workspace_name"], body["email"],
+            body["password"], body.get("display_name"))
+        actx.store.link_telegram(tenant_id, user_id, body["telegram_id"])
+        return _issue_for(tenant_id, user_id)
+
+    @app.post("/api/v1/telegram/link", dependencies=[Depends(_service_auth)])
+    def tg_link(body: dict):
+        tenant_id = _resolve_tenant_id(body)
+        uid = actx.store.get_user_id_by_email(tenant_id, body["email"])
+        if uid is None:
+            raise HTTPException(status_code=401, detail="invalid credentials")
+        try:
+            actx.passwords.verify_password(tenant_id, uid, body["password"])
+        except Exception:
+            raise HTTPException(status_code=401, detail="invalid credentials")
+        actx.store.link_telegram(tenant_id, uid, body["telegram_id"])
+        return _issue_for(tenant_id, uid)
+
+    @app.post("/api/v1/telegram/link-owner", dependencies=[Depends(_service_auth)])
+    def tg_link_owner(body: dict):
+        if body["telegram_id"] != actx.config.telegram_owner_id:
+            raise HTTPException(status_code=403, detail="not the configured owner")
+        tenant_id = _resolve_tenant_id(body)
+        uid = actx.store.get_user_id_by_email(tenant_id, body["email"])
+        if uid is None:
+            raise HTTPException(status_code=404, detail="no such account")
+        actx.store.link_telegram(tenant_id, uid, body["telegram_id"])
+        return _issue_for(tenant_id, uid)
 
     return app
 
