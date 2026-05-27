@@ -60,3 +60,56 @@ def test_cross_tenant_roles_are_isolated(two_tenants):
     s.grant_access("t1", "p1", "user", "u1", "editor")
     assert s.effective_project_role("t1", "p1", "u1") == "editor"
     assert s.effective_project_role("t2", "p1", "u1") == "viewer"  # unaffected
+
+
+def test_telegram_link_roundtrip(store):
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "u1", "a@b.com", "owner")
+    store.link_telegram("t1", "u1", 12345)
+    assert store.get_user_by_telegram(12345) == ("t1", "u1")
+    assert store.get_user_by_telegram(99999) is None
+
+
+def test_telegram_link_duplicate_telegram_id_conflict(store):
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "u1", "a@b.com", "owner")
+    store.create_user("t1", "u2", "c@d.com", "member")
+    store.link_telegram("t1", "u1", 12345)
+    with pytest.raises(Conflict):
+        store.link_telegram("t1", "u2", 12345)
+
+
+def test_count_tenants_and_owners(store):
+    assert store.count_tenants() == 0
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "u1", "a@b.com", "owner")
+    store.create_user("t1", "u2", "c@d.com", "admin")
+    assert store.count_tenants() == 1
+    assert store.count_owners("t1") == 1
+
+
+def test_set_user_role_and_count_owners(store):
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "u1", "a@b.com", "owner")
+    store.create_user("t1", "u2", "c@d.com", "member")
+    store.set_user_role("t1", "u2", "owner")
+    assert store.count_owners("t1") == 2
+    assert store.get_user("t1", "u2").role == "owner"
+
+
+def test_create_user_with_display_name(store):
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "u1", "a@b.com", "owner", display_name="Ada")
+    assert store.get_user("t1", "u1").display_name == "Ada"
+
+
+def test_list_users_reports_telegram_linked(store):
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "u1", "a@b.com", "owner")
+    store.create_user("t1", "u2", "c@d.com", "member")
+    store.link_telegram("t1", "u1", 12345)
+    rows = store.list_users("t1")
+    by_id = {r["user_id"]: r for r in rows}
+    assert by_id["u1"]["telegram_linked"] is True
+    assert by_id["u2"]["telegram_linked"] is False
+    assert by_id["u1"]["role"] == "owner"

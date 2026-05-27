@@ -94,17 +94,19 @@ class LocalStore:
         return Tenant(id=row["tenant_id"], name=row["name"]) if row else None
 
     # --- users ---
-    def create_user(self, tenant_id: str, user_id: str, email: str, role: str) -> User:
+    def create_user(self, tenant_id: str, user_id: str, email: str, role: str,
+                    display_name: str | None = None) -> User:
         with self.transaction() as cx:
             try:
                 cx.execute(
-                    "INSERT INTO users(user_id, tenant_id, email, role, created_at) "
-                    "VALUES (?,?,?,?,?)",
-                    (user_id, tenant_id, email, role, _now_iso()),
+                    "INSERT INTO users(user_id, tenant_id, email, role, display_name, created_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (user_id, tenant_id, email, role, display_name, _now_iso()),
                 )
             except sqlite3.IntegrityError as exc:
                 raise Conflict(f"user {user_id} conflict: {exc}") from exc
-        return User(id=user_id, tenant_id=tenant_id, email=email, role=role)
+        return User(id=user_id, tenant_id=tenant_id, email=email, role=role,
+                    display_name=display_name)
 
     def get_user(self, tenant_id: str, user_id: str) -> User | None:
         row = self._conn.execute(
@@ -114,13 +116,70 @@ class LocalStore:
             return None
         return User(id=row["user_id"], tenant_id=row["tenant_id"], email=row["email"],
                     role=row["role"], status=row["status"],
-                    locked_until=row["locked_until"])
+                    locked_until=row["locked_until"],
+                    display_name=row["display_name"] if "display_name" in row.keys() else None)
 
     def get_user_id_by_email(self, tenant_id: str, email: str) -> str | None:
         row = self._conn.execute(
             "SELECT user_id FROM users WHERE tenant_id=? AND email=?",
             (tenant_id, email)).fetchone()
         return row["user_id"] if row else None
+
+    # --- telegram identity + user management (P15) ---
+    def link_telegram(self, tenant_id: str, user_id: str, telegram_id: int) -> None:
+        with self.transaction() as cx:
+            try:
+                cx.execute(
+                    "INSERT INTO telegram_links(telegram_id, tenant_id, user_id, created_at) "
+                    "VALUES (?,?,?,?)",
+                    (telegram_id, tenant_id, user_id, _now_iso()),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise Conflict(f"telegram link conflict: {exc}") from exc
+
+    def get_user_by_telegram(self, telegram_id: int) -> tuple[str, str] | None:
+        row = self._conn.execute(
+            "SELECT tenant_id, user_id FROM telegram_links WHERE telegram_id=?",
+            (telegram_id,)).fetchone()
+        return (row["tenant_id"], row["user_id"]) if row else None
+
+    def count_tenants(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM tenants WHERE deleted_at IS NULL").fetchone()
+        return row["n"]
+
+    def count_owners(self, tenant_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE tenant_id=? AND role='owner'",
+            (tenant_id,)).fetchone()
+        return row["n"]
+
+    def set_user_role(self, tenant_id: str, user_id: str, role: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("UPDATE users SET role=? WHERE tenant_id=? AND user_id=?",
+                       (role, tenant_id, user_id))
+
+    def list_users(self, tenant_id: str, limit: int = 50,
+                   cursor: str | None = None) -> list[dict]:
+        if cursor:
+            rows = self._conn.execute(
+                "SELECT u.user_id, u.email, u.role, u.display_name, "
+                "       (tl.telegram_id IS NOT NULL) AS linked "
+                "FROM users u LEFT JOIN telegram_links tl "
+                "  ON tl.tenant_id=u.tenant_id AND tl.user_id=u.user_id "
+                "WHERE u.tenant_id=? AND u.user_id > ? ORDER BY u.user_id LIMIT ?",
+                (tenant_id, cursor, limit)).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT u.user_id, u.email, u.role, u.display_name, "
+                "       (tl.telegram_id IS NOT NULL) AS linked "
+                "FROM users u LEFT JOIN telegram_links tl "
+                "  ON tl.tenant_id=u.tenant_id AND tl.user_id=u.user_id "
+                "WHERE u.tenant_id=? ORDER BY u.user_id LIMIT ?",
+                (tenant_id, limit)).fetchall()
+        return [{"user_id": r["user_id"], "email": r["email"], "role": r["role"],
+                 "display_name": r["display_name"], "telegram_linked": bool(r["linked"])}
+                for r in rows]
 
     # --- groups ---
     def create_group(self, tenant_id: str, group_id: str, name: str) -> None:
