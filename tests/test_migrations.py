@@ -71,3 +71,18 @@ def test_failed_migration_is_atomic(conn, tmp_path):
         "CREATE TABLE good1 (id TEXT);\nCREATE TABLE good2 (id TEXT);\n"
     )
     assert run_migrations(conn, tmp_path) == [1]
+
+
+def test_migration_0010_adds_telegram_links_and_display_name():
+    import sqlite3
+    from brain2.store.migrations.runner import run_migrations
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    run_migrations(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    assert "display_name" in cols
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "telegram_links" in tables
+    tl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(telegram_links)")}
+    assert {"telegram_id", "tenant_id", "user_id", "created_at"} <= tl_cols
