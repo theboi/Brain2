@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "python-telegram-bot>=21",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

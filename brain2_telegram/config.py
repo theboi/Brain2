@@ -6,6 +6,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from brain2_telegram.errors import ConfigError
 
 _REQUIRED = ["TELEGRAM_BOT_TOKEN", "BRAIN2_API_URL",
