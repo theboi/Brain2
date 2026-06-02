@@ -27,6 +27,7 @@ class Config:
     secret_key: bytes            # 32-byte key for symmetric encryption
     telegram_service_key: bytes | None
     telegram_owner_id: int | None
+    blobs_root: Path             # filesystem root for uploaded source blobs (Phase D)
 
 
 def _load_secret_key() -> bytes:
@@ -57,4 +58,5 @@ def load_config() -> Config:
         secret_key=_load_secret_key(),
         telegram_service_key=svc.encode() if svc else None,
         telegram_owner_id=int(owner) if owner else None,
+        blobs_root=Path(os.environ.get("BRAIN2_BLOBS_ROOT", str(root / "blobs"))),
     )

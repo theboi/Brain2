@@ -3,6 +3,8 @@
 it immediately; ops with params prompt the user to use /op <name> key=value."""
 from __future__ import annotations
 
+import html
+
 from telegram import Update
 from telegram.ext import (ContextTypes, CommandHandler, CallbackQueryHandler)
 
@@ -55,9 +57,10 @@ async def ops_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     meta = _op_index(context, update.effective_chat.id).get(name, {})
     required = [p["name"] for p in meta.get("params", []) if p.get("required")]
     if required:
+        esc = html.escape
         await query.edit_message_text(
-            f"`{name}` needs params. Run: /op {name} "
-            + " ".join(f"{p}=…" for p in required), parse_mode="Markdown")
+            f"<code>{esc(name)}</code> needs params. Run: /op {esc(name)} "
+            + " ".join(f"{esc(p)}=…" for p in required), parse_mode="HTML")
         return
     try:
         out = authed_run_op(context.bot_data["client"], context.bot_data["sessions"],

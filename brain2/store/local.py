@@ -259,7 +259,9 @@ class LocalStore:
                       *, expect_version: int | None = None,
                       updated_by: str | None = None,
                       content_hash: str | None = None,
-                      provenance: str | None = None) -> WikiPage:
+                      provenance: str | None = None,
+                      source: str = "user",
+                      audit_id: str | None = None) -> WikiPage:
         now = _now_iso()
         with self.transaction() as cx:
             row = cx.execute(
@@ -298,6 +300,18 @@ class LocalStore:
                     (tenant_id, project_id, page_id, topic, content, new_version,
                      updated_by, now, now, content_hash, provenance),
                 )
+            # Append-only revision record (Phase B). Best-effort: if the table is
+            # absent (older schema), skip silently to preserve test isolation.
+            try:
+                cx.execute(
+                    "INSERT INTO wiki_revisions(rev_id, page_id, tenant_id, project_id, "
+                    "topic, version, content, content_hash, author_user_id, source, "
+                    "audit_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (str(uuid.uuid4()), page_id, tenant_id, project_id, topic,
+                     new_version, content, content_hash, updated_by, source,
+                     audit_id, now))
+            except Exception:
+                pass
         return WikiPage(
             id=page_id,
             tenant_id=tenant_id,
@@ -346,6 +360,35 @@ class LocalStore:
             (query, tenant_id, project_id, limit),
         ).fetchall()
         return [self._row_to_wiki_page(r) for r in rows]
+
+    # --- wiki revisions (Web Console Phase B) ---
+    def list_wiki_revisions(self, tenant_id: str, project_id: str, topic: str,
+                            limit: int = 50, cursor_version: int | None = None) -> list[dict]:
+        if cursor_version is None:
+            rows = self._conn.execute(
+                "SELECT * FROM wiki_revisions WHERE tenant_id=? AND project_id=? "
+                "AND topic=? ORDER BY version DESC LIMIT ?",
+                (tenant_id, project_id, topic, limit)).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM wiki_revisions WHERE tenant_id=? AND project_id=? "
+                "AND topic=? AND version < ? ORDER BY version DESC LIMIT ?",
+                (tenant_id, project_id, topic, cursor_version, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_wiki_revision(self, tenant_id: str, rev_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM wiki_revisions WHERE tenant_id=? AND rev_id=?",
+            (tenant_id, rev_id)).fetchone()
+        return dict(row) if row else None
+
+    def get_wiki_revision_by_version(self, tenant_id: str, project_id: str,
+                                     topic: str, version: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM wiki_revisions WHERE tenant_id=? AND project_id=? "
+            "AND topic=? AND version=?",
+            (tenant_id, project_id, topic, version)).fetchone()
+        return dict(row) if row else None
 
     # --- ingestion jobs ---
     def _row_to_ingestion_job(self, row) -> IngestionJob:

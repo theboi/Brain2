@@ -16,6 +16,12 @@ TENANT_ACTION_ROLES: dict[str, str] = {
     "manage_addons": "admin",
     "view_audit_logs": "admin",
     "manage_ownership": "owner",      # owner-only (transfer_ownership)
+    "view_stats":     "member",       # anyone in the tenant can see their stats
+    "view_activity":  "member",       # anyone in the tenant can read the activity feed
+    "manage_agents":  "admin",        # create/update/delete agents
+    "use_agents":     "member",       # chat / list agents / list conversations
+    "review_concepts": "member",      # spaced-repetition (per-user state)
+    "view_reports":   "member",       # list reports (filtered to accessible projects)
 }
 
 PROJECT_ACTION_ROLES: dict[str, str] = {

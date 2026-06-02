@@ -10,8 +10,8 @@ import dataclasses
 import hmac
 import logging
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from brain2.app_context import AppContext
 from brain2.auth.authorize import authorize
@@ -176,6 +176,290 @@ def create_app(actx: AppContext) -> FastAPI:
             raise HTTPException(status_code=401, detail="invalid credentials")
         actx.store.link_telegram(tenant_id, uid, body["telegram_id"])
         return _issue_for(tenant_id, uid)
+
+    # --- sources upload / raw / from_url / from_text (Phase D) ---
+    def _project_authorize(ctx: RequestContext, project_id: str, action: str) -> None:
+        authorize(actx.store, ctx, action, project_id)
+
+    @app.post("/api/v1/sources/upload")
+    async def upload_source(
+        project_id: str = Form(...),
+        topic: str | None = Form(default=None),
+        file: UploadFile = File(...),
+        ctx: RequestContext = Depends(_auth),
+    ):
+        if actx.blob_store is None:
+            raise HTTPException(status_code=503, detail="blob store not configured")
+        _project_authorize(ctx, project_id, "ingest")
+        content = await file.read()
+        blob_hash, blob_path = actx.blob_store.put(ctx.tenant_id, content)
+        from brain2.source_ops import create_source_row, set_source_extracted, set_source_failed
+        from brain2.knowledge.extract import extract_to_markdown
+        from pathlib import Path
+        source_id = create_source_row(
+            actx.store, tenant_id=ctx.tenant_id, project_id=project_id, kind="file",
+            filename=file.filename, mime=file.content_type,
+            size_bytes=len(content), blob_hash=blob_hash, blob_path=blob_path,
+            topic=topic, uploaded_by=ctx.user_id)
+        try:
+            md = extract_to_markdown(Path(blob_path), mime=file.content_type)
+            set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
+                                  source_id=source_id, extracted_md=md)
+            status = "extracted"
+        except Exception as exc:
+            set_source_failed(actx.store, tenant_id=ctx.tenant_id,
+                               source_id=source_id, error=str(exc))
+            status = "failed"
+        return {"source_id": source_id, "blob_hash": blob_hash,
+                "size_bytes": len(content), "status": status}
+
+    @app.post("/api/v1/sources/from_url")
+    def source_from_url(body: dict, ctx: RequestContext = Depends(_auth)):
+        if actx.blob_store is None:
+            raise HTTPException(status_code=503, detail="blob store not configured")
+        project_id = body["project_id"]
+        url = body["url"]
+        _project_authorize(ctx, project_id, "ingest")
+        # SSRF guard
+        from brain2.knowledge.blobs import ssrf_check_url
+        try:
+            ssrf_check_url(url)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"url rejected: {exc}")
+        from brain2.source_ops import create_source_row, set_source_extracted, set_source_failed
+        from brain2.knowledge.extract import extract_url_to_markdown
+        source_id = create_source_row(
+            actx.store, tenant_id=ctx.tenant_id, project_id=project_id, kind="url",
+            url=url, topic=body.get("topic"), uploaded_by=ctx.user_id)
+        try:
+            md = extract_url_to_markdown(url)
+            set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
+                                  source_id=source_id, extracted_md=md)
+            status = "extracted"
+        except Exception as exc:
+            set_source_failed(actx.store, tenant_id=ctx.tenant_id,
+                               source_id=source_id, error=str(exc))
+            status = "failed"
+        return {"source_id": source_id, "url": url, "status": status}
+
+    @app.post("/api/v1/sources/from_text")
+    def source_from_text(body: dict, ctx: RequestContext = Depends(_auth)):
+        if actx.blob_store is None:
+            raise HTTPException(status_code=503, detail="blob store not configured")
+        project_id = body["project_id"]
+        content = body["content"]
+        topic = body.get("topic")
+        _project_authorize(ctx, project_id, "ingest")
+        data = content.encode("utf-8")
+        blob_hash, blob_path = actx.blob_store.put(ctx.tenant_id, data)
+        from brain2.source_ops import create_source_row, set_source_extracted
+        source_id = create_source_row(
+            actx.store, tenant_id=ctx.tenant_id, project_id=project_id, kind="text",
+            mime=body.get("mime", "text/markdown"), size_bytes=len(data),
+            blob_hash=blob_hash, blob_path=blob_path, topic=topic,
+            uploaded_by=ctx.user_id)
+        set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
+                              source_id=source_id, extracted_md=content)
+        return {"source_id": source_id, "status": "extracted"}
+
+    # --- wiki audit kickoff + stream (Phase G) ---
+    @app.post("/api/v1/wiki/{topic}/audit/stream")
+    def wiki_audit_stream(topic: str, body: dict,
+                           ctx: RequestContext = Depends(_auth)):
+        from brain2.wiki_audit_ops import (create_audit_row, insert_suggestion,
+                                            set_audit_status)
+        from brain2.chat_providers import build_provider, complete_once
+        from brain2.auth.authorize import authorize as _authz
+        project_id = body["project_id"]
+        _authz(actx.store, ctx, "read_wiki", project_id)
+
+        page = actx.store.get_wiki_page(ctx.tenant_id, project_id, topic)
+        if page is None:
+            raise HTTPException(status_code=404, detail="page not found")
+        agent_row = actx.store._conn.execute(
+            "SELECT * FROM agents WHERE tenant_id=? AND agent_id=?",
+            (ctx.tenant_id, body["agent_id"])).fetchone()
+        if agent_row is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+
+        audit_id = create_audit_row(
+            actx.store, tenant_id=ctx.tenant_id, project_id=project_id,
+            topic=topic, agent_id=body["agent_id"],
+            instructions=body.get("instructions", ""),
+            scope=body.get("scope", "page"),
+            selection=body.get("selection"),
+            citation_policy=body.get("citation_policy", "must_cite"),
+            created_by=ctx.user_id)
+
+        # System prompt: tell the model to emit JSON suggestions.
+        system = ("You are a wiki auditor. Given a wiki page and instructions, "
+                  "emit one or more suggestions. Each suggestion is a JSON object on "
+                  "its own line of the form: "
+                  "SUGGESTION: {\"section\": \"...\", \"proposed_content\": \"...\", "
+                  "\"rationale\": \"...\", \"sources_cited\": [\"src1\"]}. "
+                  "End with 'DONE'.")
+        prompt = (f"Page topic: {topic}\nPage content:\n{page.content}\n\n"
+                  f"Instructions: {body.get('instructions','')}\n")
+
+        def _events():
+            import json
+            import re
+            try:
+                provider = build_provider(ctx.tenant_id, agent_row, actx.secrets)
+                resp = complete_once(provider, prompt, system=system)
+                text = resp.text
+                pattern = re.compile(r"^SUGGESTION:\s+(\{.*\})\s*$", re.MULTILINE)
+                count = 0
+                for m in pattern.finditer(text):
+                    try:
+                        obj = json.loads(m.group(1))
+                    except Exception:
+                        continue
+                    sid = insert_suggestion(
+                        actx.store, tenant_id=ctx.tenant_id, audit_id=audit_id,
+                        section=obj.get("section"),
+                        proposed_content=obj.get("proposed_content", ""),
+                        rationale=obj.get("rationale", ""),
+                        sources_cited=obj.get("sources_cited", []))
+                    count += 1
+                    yield "data: " + json.dumps({
+                        "type": "suggestion", "suggestion_id": sid,
+                        "section": obj.get("section"),
+                        "proposed_content": obj.get("proposed_content", ""),
+                        "rationale": obj.get("rationale", ""),
+                        "sources_cited": obj.get("sources_cited", [])}) + "\n\n"
+                set_audit_status(actx.store, tenant_id=ctx.tenant_id,
+                                  audit_id=audit_id, status="done")
+                yield "data: " + json.dumps({"type": "done", "audit_id": audit_id,
+                                              "suggestions_emitted": count}) + "\n\n"
+            except Exception as exc:
+                set_audit_status(actx.store, tenant_id=ctx.tenant_id,
+                                  audit_id=audit_id, status="failed", error=str(exc))
+                yield "data: " + json.dumps({"type": "error", "message": str(exc)}) + "\n\n"
+
+        return StreamingResponse(_events(), media_type="text/event-stream")
+
+    # --- chat streaming (Phase F) ---
+    # In-process stop registry: set by /stop, polled by the generator loop.
+    _stop_flags: dict[str, bool] = {}
+
+    @app.post("/api/v1/conversations/{cid}/messages/stream")
+    def chat_post_and_stream(cid: str, body: dict,
+                              ctx: RequestContext = Depends(_auth)):
+        """Send a user message and stream the assistant's reply as SSE.
+
+        Body: {"content": "...", "tools_override": [...optional...]}.
+        Returns text/event-stream lines: data: <json>\\n\\n.
+        """
+        from brain2.chat import run_turn
+        from brain2.auth.authorize import authorize as _authz
+        _authz(actx.store, ctx, "use_agents")
+
+        convo = actx.store._conn.execute(
+            "SELECT * FROM conversations WHERE tenant_id=? AND conversation_id=? "
+            "AND deleted=0", (ctx.tenant_id, cid)).fetchone()
+        if convo is None:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        agent_row = actx.store._conn.execute(
+            "SELECT * FROM agents WHERE tenant_id=? AND agent_id=?",
+            (ctx.tenant_id, convo["agent_id"])).fetchone()
+        if agent_row is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+
+        run_id = str(__import__("uuid").uuid4())
+        _stop_flags[run_id] = False
+
+        def _events():
+            try:
+                for ev, payload in run_turn(
+                        actx.store, actx.operations, actx.secrets, ctx, cid,
+                        agent_row, body["content"],
+                        stop_check=lambda: _stop_flags.get(run_id, False)):
+                    line = "data: " + __import__("json").dumps(
+                        {"type": ev, **payload, "run_id": run_id}) + "\n\n"
+                    yield line
+            finally:
+                _stop_flags.pop(run_id, None)
+
+        return StreamingResponse(_events(), media_type="text/event-stream")
+
+    @app.post("/api/v1/conversations/{cid}/stream/{run_id}/stop")
+    def chat_stop(cid: str, run_id: str, ctx: RequestContext = Depends(_auth)):
+        from brain2.auth.authorize import authorize as _authz
+        _authz(actx.store, ctx, "use_agents")
+        _stop_flags[run_id] = True
+        return {"stopped": True}
+
+    # --- agents local runtime probes (Phase E) ---
+    @app.get("/api/v1/agents/local/runtime")
+    def agents_local_runtime(ctx: RequestContext = Depends(_auth)):
+        info: dict = {"free_ram_bytes": None, "total_ram_bytes": None,
+                      "ollama_ok": False, "ollama_base_url": "http://localhost:11434"}
+        try:
+            import psutil
+            vm = psutil.virtual_memory()
+            info["free_ram_bytes"] = int(vm.available)
+            info["total_ram_bytes"] = int(vm.total)
+        except Exception:
+            pass
+        import httpx
+        try:
+            with httpx.Client(timeout=2.0) as h:
+                r = h.get(f"{info['ollama_base_url']}/api/tags")
+                info["ollama_ok"] = r.status_code == 200
+        except Exception:
+            info["ollama_ok"] = False
+        return info
+
+    @app.get("/api/v1/agents/local/models")
+    def agents_local_models(ctx: RequestContext = Depends(_auth)):
+        base = "http://localhost:11434"
+        import httpx
+        try:
+            with httpx.Client(timeout=4.0) as h:
+                r = h.get(f"{base}/api/tags")
+                r.raise_for_status()
+                return {"models": r.json().get("models", []), "base_url": base}
+        except Exception as exc:
+            return {"models": [], "base_url": base, "error": str(exc)}
+
+    @app.post("/api/v1/agents/local/pull")
+    def agents_local_pull(body: dict, ctx: RequestContext = Depends(_auth)):
+        # Fire-and-forget: hand off to Ollama; client polls /agents/local/models.
+        # Authorization: only admins can pull (large download / disk).
+        authorize(actx.store, ctx, "manage_agents")
+        model = body["model"]
+        base = body.get("base_url", "http://localhost:11434")
+        import httpx
+        try:
+            with httpx.Client(timeout=5.0) as h:
+                h.post(f"{base}/api/pull", json={"name": model, "stream": False})
+            return {"started": True, "model": model}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"ollama pull failed: {exc}")
+
+    @app.get("/api/v1/sources/{source_id}/raw")
+    def source_raw(source_id: str, ctx: RequestContext = Depends(_auth)):
+        row = actx.store._conn.execute(
+            "SELECT project_id, blob_hash, mime, filename FROM sources "
+            "WHERE tenant_id=? AND source_id=?",
+            (ctx.tenant_id, source_id)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="source not found")
+        _project_authorize(ctx, row["project_id"], "read_wiki")
+        if actx.blob_store is None or not row["blob_hash"]:
+            raise HTTPException(status_code=404, detail="blob not available")
+        path = actx.blob_store.get_path(ctx.tenant_id, row["blob_hash"])
+        if path is None:
+            raise HTTPException(status_code=404, detail="blob not found on disk")
+
+        def _iter():
+            with open(path, "rb") as f:
+                while chunk := f.read(64 * 1024):
+                    yield chunk
+        headers = {"Content-Disposition": f"attachment; filename=\"{row['filename'] or source_id}\""}
+        return StreamingResponse(_iter(), media_type=row["mime"] or "application/octet-stream",
+                                  headers=headers)
 
     @app.post("/api/v1/telegram/link-owner", dependencies=[Depends(_service_auth)])
     def tg_link_owner(body: dict):
