@@ -38,10 +38,11 @@ def test_watcher_indexes_new_wiki_file(tmp_path):
 
 def test_watcher_drops_row_when_file_deleted(tmp_path):
     s, root = _setup(tmp_path)
-    write_text_atomic(root / "wiki" / "concepts" / "a.md", "a")
     w = VaultWatcher(s, debounce_s=0.1)
     w.watch_project("p1")
     try:
+        time.sleep(0.1)
+        write_text_atomic(root / "wiki" / "concepts" / "a.md", "a")
         assert _wait_indexed(s, "p1", "wiki/concepts/a.md")
         (root / "wiki" / "concepts" / "a.md").unlink()
         deadline = time.monotonic() + 8.0
