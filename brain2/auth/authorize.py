@@ -31,6 +31,9 @@ PROJECT_ACTION_ROLES: dict[str, str] = {
     "register_datasource": "editor",
     "manage_access": "admin",
     "delete_project": "admin",
+    "read_vault":   "viewer",
+    "ingest_vault": "editor",
+    "manage_vault": "admin",
 }
 
 _ROLE_RANK = {"viewer": 1, "editor": 2, "admin": 3}
