@@ -62,22 +62,6 @@ def test_cross_tenant_roles_are_isolated(two_tenants):
     assert s.effective_project_role("t2", "p1", "u1") == "viewer"  # unaffected
 
 
-def test_telegram_link_roundtrip(store):
-    store.create_tenant("t1", "Acme")
-    store.create_user("t1", "u1", "a@b.com", "owner")
-    store.link_telegram("t1", "u1", 12345)
-    assert store.get_user_by_telegram(12345) == ("t1", "u1")
-    assert store.get_user_by_telegram(99999) is None
-
-
-def test_telegram_link_duplicate_telegram_id_conflict(store):
-    store.create_tenant("t1", "Acme")
-    store.create_user("t1", "u1", "a@b.com", "owner")
-    store.create_user("t1", "u2", "c@d.com", "member")
-    store.link_telegram("t1", "u1", 12345)
-    with pytest.raises(Conflict):
-        store.link_telegram("t1", "u2", 12345)
-
 
 def test_count_tenants_and_owners(store):
     assert store.count_tenants() == 0
@@ -103,13 +87,11 @@ def test_create_user_with_display_name(store):
     assert store.get_user("t1", "u1").display_name == "Ada"
 
 
-def test_list_users_reports_telegram_linked(store):
+def test_list_users_reports_roles(store):
     store.create_tenant("t1", "Acme")
     store.create_user("t1", "u1", "a@b.com", "owner")
     store.create_user("t1", "u2", "c@d.com", "member")
-    store.link_telegram("t1", "u1", 12345)
     rows = store.list_users("t1")
     by_id = {r["user_id"]: r for r in rows}
-    assert by_id["u1"]["telegram_linked"] is True
-    assert by_id["u2"]["telegram_linked"] is False
     assert by_id["u1"]["role"] == "owner"
+    assert by_id["u2"]["role"] == "member"

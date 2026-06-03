@@ -25,8 +25,6 @@ class Config:
     db_path: Path                # SQLite file for LocalStore
     wiki_page_max_bytes: int     # Phase 4 §9.1 page ceiling
     secret_key: bytes            # 32-byte key for symmetric encryption
-    telegram_service_key: bytes | None
-    telegram_owner_id: int | None
     blobs_root: Path             # filesystem root for uploaded source blobs (Phase D)
 
 
@@ -47,8 +45,6 @@ def _load_secret_key() -> bytes:
 
 def load_config() -> Config:
     root = Path(os.environ.get("BRAIN2_ROOT", str(Path.home() / "Knowledge" / "Brain2")))
-    svc = os.environ.get("BRAIN2_TELEGRAM_SERVICE_KEY")
-    owner = os.environ.get("BRAIN2_TELEGRAM_OWNER_ID")
     return Config(
         storage_type=os.environ.get("BRAIN2_STORAGE_TYPE", "local"),
         default_tenant=os.environ.get("BRAIN2_DEFAULT_TENANT", "default"),
@@ -56,7 +52,5 @@ def load_config() -> Config:
         db_path=Path(os.environ.get("BRAIN2_DB_PATH", str(root / "brain2.sqlite"))),
         wiki_page_max_bytes=int(os.environ.get("BRAIN2_WIKI_PAGE_MAX_BYTES", 262_144)),
         secret_key=_load_secret_key(),
-        telegram_service_key=svc.encode() if svc else None,
-        telegram_owner_id=int(owner) if owner else None,
         blobs_root=Path(os.environ.get("BRAIN2_BLOBS_ROOT", str(root / "blobs"))),
     )

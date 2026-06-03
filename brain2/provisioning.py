@@ -21,11 +21,8 @@ def _slug(name: str) -> str:
 
 def provision_tenant(store: Store, passwords: PasswordManager, workspace_name: str,
                      owner_email: str, owner_password: str,
-                     display_name: str | None = None,
-                     telegram_id: int | None = None) -> tuple[str, str]:
+                     display_name: str | None = None) -> tuple[str, str]:
     """Create the owner user + tenant atomically; set the owner's password.
-    If `telegram_id` is given, link it in the SAME transaction so a failed link
-    rolls back the whole provisioning (spec §4.4: nothing persists on failure).
     Returns (tenant_id, user_id)."""
     tenant_id = _slug(workspace_name)
     if store.get_tenant(tenant_id) is not None:
@@ -35,7 +32,5 @@ def provision_tenant(store: Store, passwords: PasswordManager, workspace_name: s
         store.create_tenant(tenant_id, workspace_name)
         store.create_user(tenant_id, user_id, owner_email, "owner",
                           display_name=display_name)
-        if telegram_id is not None:
-            store.link_telegram(tenant_id, user_id, telegram_id)
     passwords.set_password(tenant_id, user_id, owner_password)
     return tenant_id, user_id

@@ -41,20 +41,3 @@ def test_secret_key_generates_when_absent(monkeypatch):
     assert len(cfg.secret_key) == 32
     assert any("BRAIN2_SECRET_KEY" in str(warning.message) for warning in w)
 
-
-def test_telegram_config_from_env(monkeypatch):
-    monkeypatch.setenv("BRAIN2_TELEGRAM_SERVICE_KEY", "svc-secret")
-    monkeypatch.setenv("BRAIN2_TELEGRAM_OWNER_ID", "424242")
-    from brain2.config import load_config
-    cfg = load_config()
-    assert cfg.telegram_service_key == b"svc-secret"
-    assert cfg.telegram_owner_id == 424242
-
-
-def test_telegram_config_absent_defaults_none(monkeypatch):
-    monkeypatch.delenv("BRAIN2_TELEGRAM_SERVICE_KEY", raising=False)
-    monkeypatch.delenv("BRAIN2_TELEGRAM_OWNER_ID", raising=False)
-    from brain2.config import load_config
-    cfg = load_config()
-    assert cfg.telegram_service_key is None
-    assert cfg.telegram_owner_id is None
