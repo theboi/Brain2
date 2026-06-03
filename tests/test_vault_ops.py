@@ -1,0 +1,108 @@
+import pytest
+from fastapi.testclient import TestClient
+from brain2.api import create_app
+from brain2.app_context import build_app_context
+from brain2.store.local import LocalStore
+from brain2.vault.fs import write_text_atomic
+from brain2.vault.git import git_init_vault
+from brain2.vault.indexer import index_file
+from brain2.vault.init import init_vault_tree
+
+
+@pytest.fixture
+def vault_client(tmp_path):
+    s = LocalStore(":memory:"); s.migrate()
+    s.create_tenant("t1", "Acme")
+    s.create_user("t1", "u1", "u1@t1.com", "member")
+    s.create_project("t1", "p1", "AI")
+    s.grant_access("t1", "p1", "user", "u1", "editor")
+    root = tmp_path / "v"
+    init_vault_tree(root)
+    git_init_vault(root, project_name="AI", tenant_id="t1", project_id="p1")
+    s.set_project_vault_path("t1", "p1", str(root))
+
+    write_text_atomic(root / "wiki" / "concepts" / "softmax.md", "softmax page")
+    write_text_atomic(root / "wiki" / "concepts" / "attention.md",
+                      "# attention\n\nUses [[softmax]]. Also [[ghost]].\n")
+    index_file(s, "p1", root, root / "wiki" / "concepts" / "softmax.md")
+    index_file(s, "p1", root, root / "wiki" / "concepts" / "attention.md")
+
+    actx = build_app_context(store=s, gateway=object())
+    actx.passwords.set_password("t1", "u1", "pw")
+    c = TestClient(create_app(actx))
+    tok = c.post("/api/v1/auth/tokens",
+                 json={"tenant_id": "t1", "email": "u1@t1.com", "password": "pw"}).json()["token"]
+    return c, tok, s, root
+
+
+def _h(t): return {"Authorization": f"Bearer {t}"}
+
+
+def test_vault_read_index(vault_client):
+    c, tok, _, _ = vault_client
+    r = c.post("/api/v1/ops/vault:read_index", json={"project_id": "p1"}, headers=_h(tok))
+    assert r.status_code == 200, r.text
+    assert "Index" in r.json().get("content", "")
+
+
+def test_vault_read_page_by_topic(vault_client):
+    c, tok, _, _ = vault_client
+    r = c.post("/api/v1/ops/vault:read_page",
+               json={"project_id": "p1", "topic": "attention"}, headers=_h(tok))
+    assert r.status_code == 200, r.text
+    assert "[[softmax]]" in r.json()["content"]
+
+
+def test_vault_backlinks(vault_client):
+    c, tok, _, _ = vault_client
+    r = c.post("/api/v1/ops/vault:backlinks",
+               json={"project_id": "p1", "topic": "softmax"}, headers=_h(tok))
+    assert r.status_code == 200, r.text
+    sources = [b["source_path"] for b in r.json()["backlinks"]]
+    assert "wiki/concepts/attention.md" in sources
+
+
+def test_vault_neighbors(vault_client):
+    c, tok, _, _ = vault_client
+    r = c.post("/api/v1/ops/vault:neighbors",
+               json={"project_id": "p1", "topic": "attention"}, headers=_h(tok))
+    assert r.status_code == 200
+    targets = [n["topic"] for n in r.json()["neighbors"]]
+    assert "softmax" in targets and "ghost" in targets
+
+
+def test_vault_graph_returns_nodes_and_edges(vault_client):
+    c, tok, _, _ = vault_client
+    r = c.post("/api/v1/ops/vault:graph", json={"project_id": "p1"}, headers=_h(tok))
+    body = r.json()
+    assert {n["topic"] for n in body["nodes"]} >= {"attention", "softmax"}
+    assert any(e["source"] == "attention" and e["target"] == "softmax" for e in body["edges"])
+
+
+def test_vault_orphans(vault_client):
+    c, tok, _, _ = vault_client
+    r = c.post("/api/v1/ops/vault:orphans", json={"project_id": "p1"}, headers=_h(tok))
+    topics = {p["topic"] for p in r.json()["orphans"]}
+    assert "attention" in topics
+    assert "softmax" not in topics
+
+
+def test_vault_unresolved(vault_client):
+    c, tok, _, _ = vault_client
+    r = c.post("/api/v1/ops/vault:unresolved", json={"project_id": "p1"}, headers=_h(tok))
+    targets = {l["target_topic"] for l in r.json()["unresolved"]}
+    assert "ghost" in targets
+
+
+def test_vault_history_lists_init_commit(vault_client):
+    c, tok, _, _ = vault_client
+    r = c.post("/api/v1/ops/vault:history", json={"project_id": "p1", "limit": 5}, headers=_h(tok))
+    commits = r.json()["commits"]
+    assert any("init: vault for project AI" in c["message"] for c in commits)
+
+
+def test_vault_read_page_missing(vault_client):
+    c, tok, _, _ = vault_client
+    r = c.post("/api/v1/ops/vault:read_page",
+               json={"project_id": "p1", "topic": "does-not-exist"}, headers=_h(tok))
+    assert r.status_code == 404

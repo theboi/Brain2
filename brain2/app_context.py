@@ -144,6 +144,11 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
         from brain2.wiki_audit_ops import register_wiki_audit_ops
         register_wiki_audit_ops(ops, store, gateway)
 
+    from brain2.vault_ops import register_vault_ops
+    register_vault_ops(ops, store)
+    from brain2.static_ops import register_static_ops
+    register_static_ops(ops, store)
+
 
 # Map add-on op name -> (authorize action, signature adapter).
 # Bridges AddonRegistry handlers into the OperationRegistry so REST `/ops` can reach them.
