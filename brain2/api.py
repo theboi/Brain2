@@ -371,6 +371,28 @@ def create_app(actx: AppContext) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"ollama pull failed: {exc}")
 
+    @app.post("/api/v1/raw/upload")
+    async def raw_upload(
+        project_id: str = Form(...),
+        type: str = Form(...),
+        filename: str = Form(...),
+        file: UploadFile = File(...),
+        ctx: RequestContext = Depends(_auth),
+    ):
+        if type not in ("wiki", "static", "dynamic"):
+            raise HTTPException(status_code=400, detail=f"unknown type {type!r}")
+        authorize(actx.store, ctx, "ingest_vault", project_id)
+        proj = actx.store.get_project(ctx.tenant_id, project_id)
+        if proj is None or not proj.vault_path:
+            raise HTTPException(status_code=404, detail="project has no vault")
+        from pathlib import Path
+        from brain2.vault.fs import write_bytes_atomic
+        target = Path(proj.vault_path) / "raw" / type / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        body = await file.read()
+        write_bytes_atomic(target, body)
+        return {"path": str(target.relative_to(proj.vault_path)), "size": len(body)}
+
     @app.get("/api/v1/sources/{source_id}/raw")
     def source_raw(source_id: str, ctx: RequestContext = Depends(_auth)):
         row = actx.store._conn.execute(
