@@ -185,7 +185,26 @@ class LocalStore:
             "SELECT * FROM projects WHERE tenant_id=? AND project_id=?",
             (tenant_id, project_id)).fetchone()
         return Project(id=row["project_id"], tenant_id=row["tenant_id"],
-                       name=row["name"]) if row else None
+                       name=row["name"],
+                       vault_path=row["vault_path"] if "vault_path" in row.keys() else None) if row else None
+
+    def set_project_vault_path(self, tenant_id: str, project_id: str, vault_path: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE projects SET vault_path=? WHERE tenant_id=? AND project_id=?",
+                (vault_path, tenant_id, project_id))
+
+    def find_project_by_vault_path(self, abs_path: str) -> Project | None:
+        """Return the project whose vault_path is a prefix of abs_path."""
+        rows = self._conn.execute(
+            "SELECT tenant_id, project_id, name, vault_path FROM projects "
+            "WHERE vault_path IS NOT NULL").fetchall()
+        for row in rows:
+            vp = row["vault_path"]
+            if abs_path == vp or abs_path.startswith(vp.rstrip("/") + "/"):
+                return Project(id=row["project_id"], tenant_id=row["tenant_id"],
+                               name=row["name"], vault_path=vp)
+        return None
 
     # --- access ---
     def grant_access(self, tenant_id: str, project_id: str, principal_type: str,
