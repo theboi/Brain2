@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from brain2.errors import Conflict
-from brain2.models import IngestionJob, Project, Tenant, User, WikiPage
+from brain2.models import IngestionJob, Project, Tenant, User, VaultCommit, VaultLink, VaultPage, WikiPage
 from brain2.store.migrations.runner import (
     SQLITE_MIGRATIONS_DIR,
     applied_version,
@@ -951,6 +951,58 @@ class LocalStore:
                 "SELECT * FROM addons WHERE tenant_id=? ORDER BY addon_id",
                 (tenant_id,)).fetchall()
         return [self._row_to_addon(r) for r in rows]
+
+    # --- vault pages ---
+    def _row_to_vault_page(self, r) -> VaultPage:
+        return VaultPage(
+            project_id=r["project_id"],
+            path=r["path"],
+            zone=r["zone"],
+            topic=r["topic"],
+            tldr=r["tldr"],
+            content_hash=r["content_hash"],
+            mtime=r["mtime"],
+            source_type=r["source_type"],
+        )
+
+    def upsert_vault_page(self, page: VaultPage) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO vault_pages(project_id, path, zone, topic, tldr, content_hash, mtime, source_type) "
+                "VALUES (?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(project_id, path) DO UPDATE SET "
+                "zone=excluded.zone, topic=excluded.topic, tldr=excluded.tldr, "
+                "content_hash=excluded.content_hash, mtime=excluded.mtime, source_type=excluded.source_type",
+                (page.project_id, page.path, page.zone, page.topic, page.tldr,
+                 page.content_hash, page.mtime, page.source_type))
+
+    def get_vault_page(self, project_id: str, path: str) -> VaultPage | None:
+        row = self._conn.execute(
+            "SELECT * FROM vault_pages WHERE project_id=? AND path=?",
+            (project_id, path)).fetchone()
+        return self._row_to_vault_page(row) if row else None
+
+    def get_vault_page_by_topic(self, project_id: str, topic: str) -> VaultPage | None:
+        row = self._conn.execute(
+            "SELECT * FROM vault_pages WHERE project_id=? AND topic=? AND zone='wiki' LIMIT 1",
+            (project_id, topic)).fetchone()
+        return self._row_to_vault_page(row) if row else None
+
+    def delete_vault_page(self, project_id: str, path: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("DELETE FROM vault_pages WHERE project_id=? AND path=?",
+                       (project_id, path))
+
+    def list_vault_pages(self, project_id: str, *, zone: str | None = None) -> list[VaultPage]:
+        if zone:
+            rows = self._conn.execute(
+                "SELECT * FROM vault_pages WHERE project_id=? AND zone=? ORDER BY path",
+                (project_id, zone)).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM vault_pages WHERE project_id=? ORDER BY path",
+                (project_id,)).fetchall()
+        return [self._row_to_vault_page(r) for r in rows]
 
     def _row_to_addon(self, row):
         from brain2.models import Addon
