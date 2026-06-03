@@ -145,6 +145,8 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
     register_vault_ops(ops, store)
     from brain2.static_ops import register_static_ops
     register_static_ops(ops, store)
+    from brain2.vault_lint_ops import register_lint_ops
+    register_lint_ops(ops, store)
 
 
 # Map add-on op name -> (authorize action, signature adapter).
