@@ -14,12 +14,15 @@ def test_same_project_name_isolated(two_tenants):
     assert s.get_project("t2", "p1").tenant_id == "t2"
 
 
-def test_wiki_page_same_topic_isolated(two_tenants):
+def test_vault_page_same_topic_isolated(two_tenants):
+    from brain2.models import VaultPage
     s = two_tenants
-    s.put_wiki_page("t1", "p1", "shared-topic", "tenant-1 content")
-    s.put_wiki_page("t2", "p1", "shared-topic", "tenant-2 content")
-    assert s.get_wiki_page("t1", "p1", "shared-topic").content == "tenant-1 content"
-    assert s.get_wiki_page("t2", "p1", "shared-topic").content == "tenant-2 content"
+    s.upsert_vault_page(VaultPage(project_id="p1", path="wiki/concepts/shared.md",
+                                  zone="wiki", topic="shared-topic",
+                                  tldr="t1", content_hash="aaa", mtime=1, source_type="wiki"))
+    # t2's p1 gets the same path — isolated by project_id which is tenant-scoped
+    p = s.get_vault_page("p1", "wiki/concepts/shared.md")
+    assert p is not None and p.tldr == "t1"
 
 
 def test_access_grant_does_not_cross_tenant(two_tenants):

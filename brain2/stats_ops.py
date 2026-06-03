@@ -20,8 +20,10 @@ def make_stats_overview(store):
             "SELECT COUNT(*) AS n FROM sources WHERE tenant_id=? AND status != 'deleted'",
             (ctx.tenant_id,)).fetchone()["n"] if _table_exists(c, "sources") else 0
         wiki_total = c.execute(
-            "SELECT COUNT(*) AS n FROM wiki_pages WHERE tenant_id=?",
-            (ctx.tenant_id,)).fetchone()["n"]
+            "SELECT COUNT(*) AS n FROM vault_pages WHERE project_id IN ("
+            "  SELECT project_id FROM projects WHERE tenant_id=?"
+            ") AND zone='wiki'",
+            (ctx.tenant_id,)).fetchone()["n"] if _table_exists(c, "vault_pages") else 0
         # queries_today = run_query events from event_outbox today
         since = (_now() - timedelta(hours=24)).isoformat()
         queries_today = c.execute(
@@ -61,9 +63,13 @@ def make_stats_sources(store):
 
 def make_stats_wiki_by_project(store):
     def handler(ctx, params):
+        if not _table_exists(store._conn, "vault_pages"):
+            return {"buckets": []}
         rows = store._conn.execute(
-            "SELECT project_id, COUNT(*) AS n FROM wiki_pages WHERE tenant_id=? "
-            "GROUP BY project_id ORDER BY n DESC LIMIT 8",
+            "SELECT vp.project_id, COUNT(*) AS n FROM vault_pages vp "
+            "JOIN projects p ON p.project_id=vp.project_id "
+            "WHERE p.tenant_id=? AND vp.zone='wiki' "
+            "GROUP BY vp.project_id ORDER BY n DESC LIMIT 8",
             (ctx.tenant_id,)).fetchall()
         return {"buckets": [{"project_id": r["project_id"], "count": r["n"]} for r in rows]}
     return handler
