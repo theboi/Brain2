@@ -53,6 +53,7 @@ class Project(_Base):
     id: str
     tenant_id: str
     name: str
+    vault_path: str | None = None
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -119,3 +120,31 @@ class Addon(_Base):
     removed_at: datetime | None = None
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
+
+
+class VaultPage(_Base):
+    project_id: str
+    path: str
+    zone: str
+    topic: str
+    tldr: str | None = None
+    content_hash: str
+    mtime: int
+    source_type: str | None = None
+
+
+class VaultLink(_Base):
+    project_id: str
+    source_path: str
+    target_topic: str
+    target_zone: str | None = None
+
+
+class VaultCommit(_Base):
+    project_id: str
+    sha: str
+    kind: str
+    message: str
+    source_file: str | None = None
+    agent_id: str | None = None
+    created_at: str
