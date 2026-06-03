@@ -126,9 +126,6 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
     from brain2.project_ops import register_project_ops
     register_project_ops(ops, store)
 
-    from brain2.wiki_ops import register_wiki_ops
-    register_wiki_ops(ops, store, gateway)
-
     from brain2.stats_ops import register_stats_ops
     register_stats_ops(ops, store)
 
