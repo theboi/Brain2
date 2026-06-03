@@ -176,17 +176,11 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
     from brain2.stats_ops import register_stats_ops
     register_stats_ops(ops, store)
 
-    if blob_store is not None:
-        from brain2.source_ops import register_source_ops
-        register_source_ops(ops, store, blob_store)
-
     if secrets is not None:
         from brain2.agent_ops import register_agent_ops
         register_agent_ops(ops, store, secrets)
         from brain2.chat_ops import register_chat_ops
         register_chat_ops(ops, store, secrets)
-        from brain2.wiki_audit_ops import register_wiki_audit_ops
-        register_wiki_audit_ops(ops, store, gateway)
 
     from brain2.vault_ops import register_vault_ops
     register_vault_ops(ops, store)

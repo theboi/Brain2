@@ -68,10 +68,26 @@ def _compose_section(gateway, tenant_id: str, user_id: str, title: str,
 
 def _writeback(store, gateway, tenant_id: str, template: ReportTemplate,
                content_md: str) -> None:
-    from brain2.knowledge.wiki import merge_page
-    provenance = json.dumps({
-        "source": "report", "template_id": template.template_id,
-        "generated_at": datetime.now(timezone.utc).isoformat()})
-    merge_page(store, tenant_id, template.project_id, f"report/{template.name}",
-               sanitize_markdown(content_md), updated_by=template.exec_identity_id,
-               llm_gateway=gateway, provenance=provenance)
+    """Write report output into the vault as a wiki page (vault-first path)."""
+    from pathlib import Path
+    from brain2.vault.fs import write_text_atomic
+    from brain2.vault.git import CommitBatch, commit_batch
+    from brain2.vault.indexer import index_file
+
+    proj = store.get_project(tenant_id, template.project_id)
+    if proj is None or not proj.vault_path:
+        logger.warning("writeback skipped: no vault for project %s", template.project_id)
+        return
+
+    root = Path(proj.vault_path)
+    rel = f"wiki/synthesis/report-{template.name}.md"
+    abs_path = root / rel
+    write_text_atomic(abs_path, sanitize_markdown(content_md))
+    batch = CommitBatch(root)
+    batch.touched(abs_path)
+    commit_batch(store, batch, project_id=template.project_id,
+                 tenant_id=tenant_id, kind="ingest",
+                 message=f"ingest(report): {template.name}",
+                 agent_id=template.exec_identity_id,
+                 source_file=None)
+    index_file(store, template.project_id, root, abs_path)

@@ -1,0 +1,123 @@
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--ui-font);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+input::placeholder {
+  color: var(--fg-faint);
+}
+
+::selection {
+  background: rgba(124, 140, 255, 0.28);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.26);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* ── Animations ─────────────────────────────────────────────────── */
+@keyframes b2pulse {
+  0% { transform: scale(0.7); opacity: 0.55; }
+  70% { transform: scale(2); opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes b2spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Dropdown / popover: scale up from 97% + fade in */
+@keyframes b2popIn {
+  from { opacity: 0; transform: scale(0.97) translateY(-4px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+
+/* Modal content: slide up from 12px + fade in */
+@keyframes b2slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Backdrop: plain fade */
+@keyframes b2fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Dropup (bottom nav More): slide up from bottom */
+@keyframes b2dropUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.b2-pulse { animation: b2pulse 1.8s ease-out infinite; }
+.b2-spin  { animation: b2spin  1s   linear   infinite; }
+
+/* Reusable animation helper classes */
+.b2-anim-pop    { animation: b2popIn   140ms cubic-bezier(0.16,1,0.3,1) both; }
+.b2-anim-slide  { animation: b2slideUp 200ms cubic-bezier(0.16,1,0.3,1) both; }
+.b2-anim-fade   { animation: b2fadeIn  180ms ease both; }
+.b2-anim-dropup { animation: b2dropUp  160ms cubic-bezier(0.16,1,0.3,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .b2-pulse, .b2-spin,
+  .b2-anim-pop, .b2-anim-slide, .b2-anim-fade, .b2-anim-dropup {
+    animation: none;
+  }
+}
+
+/* Responsive helpers */
+.b2-hide-sm {
+  display: flex;
+}
+.b2-show-sm {
+  display: none !important;
+}
+
+@media (max-width: 820px) {
+  .b2-hide-sm {
+    display: none !important;
+  }
+  .b2-show-sm {
+    display: flex !important;
+  }
+}

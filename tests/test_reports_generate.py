@@ -59,14 +59,25 @@ def test_generate_marks_failed_on_error(store):
     assert "connector down" in report.error
 
 
-def test_generate_writes_back_with_provenance(store):
+def test_generate_writes_back_with_provenance(store, tmp_path):
+    """Writeback: if project has a vault, writes to wiki/synthesis/. Otherwise skipped."""
+    from brain2.vault.git import git_init_vault
+    from brain2.vault.init import init_vault_tree
     rs = _setup(store)
+    # Set up vault so writeback can proceed
+    root = tmp_path / "v"
+    init_vault_tree(root)
+    git_init_vault(root, project_name="Finance", tenant_id="t1", project_id="p1")
+    store.set_project_vault_path("t1", "p1", str(root))
+
     tpl = rs.create_template(
         "t1", "p1", "WB", [ReportSection("s", "ds1", "SELECT 1 AS x")],
         created_by="u1", exec_identity_id="u1", writeback_to_wiki=True)
     rid = rs.create_report("t1", "p1", tpl.template_id, "WB")
-    generate_report(rs, _gateway(), _connector_factory([{"x": 1}]),
-                    "t1", report_id=rid, template=tpl, store=store)
-    page = store.get_wiki_page("t1", "p1", "report/WB")
-    assert page is not None
-    assert page.provenance is not None and "report" in page.provenance
+    report = generate_report(rs, _gateway(), _connector_factory([{"x": 1}]),
+                             "t1", report_id=rid, template=tpl, store=store)
+    assert report.status == "done"
+    # Vault synthesis page should exist
+    synth = root / "wiki" / "synthesis" / "report-WB.md"
+    assert synth.exists()
+    assert "Revenue is up." in synth.read_text()
