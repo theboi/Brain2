@@ -52,3 +52,35 @@ def sync_page_update(conn, tenant_id: str, project_id: str,
         (page_id, page_version, tenant_id, datetime.now(timezone.utc).isoformat()))
     conn.commit()
     return affected
+
+
+def read_concepts_for_topic(store, tenant_id: str, project_id: str, topic: str) -> list[dict]:
+    """Read concept list from wiki/concepts/<topic>.md frontmatter."""
+    proj = store.get_project(tenant_id, project_id)
+    if proj is None or not proj.vault_path:
+        return []
+    from pathlib import Path
+    from brain2.vault.parser import parse_frontmatter
+    p = Path(proj.vault_path) / "wiki" / "concepts" / f"{topic}.md"
+    if not p.exists():
+        return []
+    fm, _ = parse_frontmatter(p.read_text(encoding="utf-8"))
+    return list(fm.get("concepts") or [])
+
+
+def write_concepts_for_topic(store, tenant_id: str, project_id: str, topic: str,
+                              concepts: list[dict]) -> None:
+    """Write concept list into wiki/concepts/<topic>.md frontmatter."""
+    import yaml
+    proj = store.get_project(tenant_id, project_id)
+    if proj is None or not proj.vault_path:
+        return
+    from pathlib import Path
+    from brain2.vault.fs import write_text_atomic
+    from brain2.vault.parser import parse_frontmatter
+    p = Path(proj.vault_path) / "wiki" / "concepts" / f"{topic}.md"
+    existing = p.read_text(encoding="utf-8") if p.exists() else ""
+    fm, body = parse_frontmatter(existing)
+    fm["concepts"] = concepts
+    new_text = "---\n" + yaml.safe_dump(fm, sort_keys=False).rstrip() + "\n---\n" + body
+    write_text_atomic(p, new_text)
