@@ -33,6 +33,7 @@ class AppContext:
     connector_factory: object       # Callable[[tenant_id, datasource_id], connector]
     config: Config
     blob_store: object = None       # LocalBlobStore (Phase D)
+    vault_watcher: object = None    # VaultWatcher (Phase 7)
 
 
 def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext:
@@ -57,10 +58,56 @@ def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext
     _register_core_operations(operations, store, passwords, connector_factory, gateway,
                               blob_store, secrets)
     _register_addons(addons, tasks, store, gateway, connector_factory, operations)
-    return AppContext(store=store, secrets=secrets, tokens=tokens, passwords=passwords,
+    actx = AppContext(store=store, secrets=secrets, tokens=tokens, passwords=passwords,
                       gateway=gateway, operations=operations, addons=addons,
                       tasks=tasks, events=events, connector_factory=connector_factory,
                       config=cfg, blob_store=blob_store)
+
+    # Start VaultWatcher for all projects with vault paths
+    import logging as _logging
+    _logger = _logging.getLogger(__name__)
+    try:
+        from brain2.vault.runners import build_runners
+        from brain2.vault.watcher import VaultWatcher
+        from brain2.vault.ingest import IngestRequest, dispatch_ingest
+        from pathlib import Path as _Path
+
+        _runners = build_runners(store, gateway)
+
+        def _raw_handler(project_id: str, abs_path):
+            parts = _Path(abs_path).parts
+            if "raw" not in parts:
+                return
+            idx = parts.index("raw")
+            if idx + 1 >= len(parts):
+                return
+            source_type = parts[idx + 1]
+            proj = store.get_project_for_watch(project_id)
+            if proj is None:
+                return
+            req = IngestRequest(project_id=project_id, tenant_id=proj.tenant_id,
+                                source_type=source_type, raw_path=_Path(abs_path),
+                                uploaded_by=None)
+            try:
+                dispatch_ingest(req, _runners)
+            except Exception as exc:
+                _logger.exception("ingest failed for %s: %s", abs_path, exc)
+
+        _watcher = VaultWatcher(store, debounce_s=0.5, raw_handler=_raw_handler)
+        with store.transaction() as cx:
+            rows = cx.execute(
+                "SELECT project_id FROM projects WHERE vault_path IS NOT NULL"
+            ).fetchall()
+        for r in rows:
+            try:
+                _watcher.watch_project(r["project_id"])
+            except Exception:
+                _logger.exception("failed to watch project %s", r["project_id"])
+        actx.vault_watcher = _watcher
+    except Exception:
+        _logger.exception("failed to start VaultWatcher")
+
+    return actx
 
 
 def _build_connector_factory(store: Store, secrets: SecretManager):
