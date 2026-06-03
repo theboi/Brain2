@@ -206,6 +206,18 @@ class LocalStore:
                                name=row["name"], vault_path=vp)
         return None
 
+    def get_project_for_watch(self, project_id: str) -> Project | None:
+        """Return the Project for this id from any tenant. Used by VaultWatcher."""
+        with self.transaction() as cx:
+            r = cx.execute(
+                "SELECT tenant_id, project_id, name, vault_path FROM projects "
+                "WHERE project_id = ? LIMIT 1",
+                (project_id,)).fetchone()
+        if not r:
+            return None
+        return Project(id=r["project_id"], tenant_id=r["tenant_id"],
+                       name=r["name"], vault_path=r["vault_path"])
+
     # --- access ---
     def grant_access(self, tenant_id: str, project_id: str, principal_type: str,
                      principal_id: str, role: str) -> None:
