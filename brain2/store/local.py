@@ -1004,6 +1004,57 @@ class LocalStore:
                 (project_id,)).fetchall()
         return [self._row_to_vault_page(r) for r in rows]
 
+    # --- vault links ---
+    def _row_to_link(self, r) -> VaultLink:
+        return VaultLink(
+            project_id=r["project_id"],
+            source_path=r["source_path"],
+            target_topic=r["target_topic"],
+            target_zone=r["target_zone"],
+        )
+
+    def replace_links_for_source(self, project_id: str, source_path: str,
+                                  links: list[VaultLink]) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "DELETE FROM vault_links WHERE project_id=? AND source_path=?",
+                (project_id, source_path))
+            for link in links:
+                cx.execute(
+                    "INSERT INTO vault_links(project_id, source_path, target_topic, target_zone) "
+                    "VALUES (?,?,?,?)",
+                    (link.project_id, link.source_path, link.target_topic, link.target_zone))
+
+    def get_outgoing_links(self, project_id: str, source_path: str) -> list[VaultLink]:
+        rows = self._conn.execute(
+            "SELECT * FROM vault_links WHERE project_id=? AND source_path=?",
+            (project_id, source_path)).fetchall()
+        return [self._row_to_link(r) for r in rows]
+
+    def get_backlinks(self, project_id: str, target_topic: str) -> list[VaultLink]:
+        rows = self._conn.execute(
+            "SELECT * FROM vault_links WHERE project_id=? AND target_topic=?",
+            (project_id, target_topic)).fetchall()
+        return [self._row_to_link(r) for r in rows]
+
+    def list_unresolved_links(self, project_id: str) -> list[VaultLink]:
+        rows = self._conn.execute(
+            "SELECT * FROM vault_links WHERE project_id=? AND target_zone IS NULL",
+            (project_id,)).fetchall()
+        return [self._row_to_link(r) for r in rows]
+
+    def list_orphan_pages(self, project_id: str) -> list[VaultPage]:
+        """Return wiki-zone pages that have no inbound links."""
+        rows = self._conn.execute(
+            "SELECT vp.* FROM vault_pages vp "
+            "WHERE vp.project_id=? AND vp.zone='wiki' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM vault_links vl "
+            "  WHERE vl.project_id=vp.project_id AND vl.target_topic=vp.topic"
+            ") ORDER BY vp.path",
+            (project_id,)).fetchall()
+        return [self._row_to_vault_page(r) for r in rows]
+
     def _row_to_addon(self, row):
         from brain2.models import Addon
         return Addon(
