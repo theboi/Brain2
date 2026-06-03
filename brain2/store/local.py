@@ -1055,6 +1055,40 @@ class LocalStore:
             (project_id,)).fetchall()
         return [self._row_to_vault_page(r) for r in rows]
 
+    # --- vault commits ---
+    def _row_to_vault_commit(self, r) -> VaultCommit:
+        return VaultCommit(
+            project_id=r["project_id"],
+            sha=r["sha"],
+            kind=r["kind"],
+            message=r["message"],
+            source_file=r["source_file"],
+            agent_id=r["agent_id"],
+            created_at=r["created_at"],
+        )
+
+    def record_vault_commit(self, commit: VaultCommit) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO vault_commits(project_id, sha, kind, message, source_file, agent_id, created_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (commit.project_id, commit.sha, commit.kind, commit.message,
+                 commit.source_file, commit.agent_id, commit.created_at))
+
+    def list_vault_commits(self, project_id: str, *, limit: int = 50,
+                            cursor_created_at: str | None = None) -> list[VaultCommit]:
+        if cursor_created_at:
+            rows = self._conn.execute(
+                "SELECT * FROM vault_commits WHERE project_id=? AND created_at < ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (project_id, cursor_created_at, limit)).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM vault_commits WHERE project_id=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (project_id, limit)).fetchall()
+        return [self._row_to_vault_commit(r) for r in rows]
+
     def _row_to_addon(self, row):
         from brain2.models import Addon
         return Addon(
