@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Brain2 Console — Sources</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: #0B0D10; overflow: hidden; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  #root { height: 100vh; }
+  button, input, select { font-family: inherit; }
+  input::placeholder { color: var(--fg-faint); }
+  ::selection { background: rgba(124,140,255,0.28); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.26); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+  .b2-rz > div { transition: background .12s, width .12s; }
+  .b2-rz:hover > div { background: var(--accent); width: 2px; }
+  @keyframes b2pulse { 0% { transform: scale(0.7); opacity: 0.55; } 70% { transform: scale(2); opacity: 0; } 100% { opacity: 0; } }
+  .b2-pulse { animation: b2pulse 1.8s ease-out infinite; }
+  @keyframes b2spin { to { transform: rotate(360deg); } }
+  @keyframes b2slide { from { transform: translateX(30px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .b2-pulse, [style*="b2slide"] { animation: none !important; } }
+  .b2-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: #8B8F98; font-family: system-ui, sans-serif; font-size: 14px; }
+  .b2-tabscroll::-webkit-scrollbar { display: none; }
+  .b2-tabscroll { scrollbar-width: none; }
+  .b2-show-sm { display: none !important; }
+  @media (max-width: 820px) {
+    .b2-hide-sm { display: none !important; }
+    .b2-show-sm { display: flex !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"><div class="b2-loading">Loading Sources…</div></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="tokens.js"></script>
+<script src="sources-data.js"></script>
+<script type="text/babel" src="components.jsx"></script>
+<script type="text/babel" src="md.jsx"></script>
+<script type="text/babel" src="sources.jsx"></script>
+<script type="text/babel" src="app-sources.jsx"></script>
+</body>
+</html>
