@@ -16,6 +16,7 @@ const ICONS = {
   chevDown: <path d="M5 8.5 12 15l7-6.5" />,
   chevRight: <path d="M9 5l7 7-7 7" />,
   arrowRight: <><path d="M4 12h15" /><path d="M13 5l7 7-7 7" /></>,
+  arrowLeft: <><path d="M20 12H5" /><path d="M11 5l-7 7 7 7" /></>,
   sun: <><circle cx="12" cy="12" r="4.5" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" /></>,
   moon: <path d="M21 13.5A8.5 8.5 0 1 1 10.5 3 6.6 6.6 0 0 0 21 13.5Z" />,
   command: <path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3Z" />,
@@ -70,6 +71,7 @@ const ICONS = {
   layers: <><path d="M12 3l9 5-9 5-9-5 9-5Z" /><path d="M3.5 12.5 12 17l8.5-4.5" /></>,
   wand: <><path d="M5 19 14 10M14.5 5.5 16 4M19 9l1.5-1.5M9.5 4.5 11 3M15 9.5l1 1" /></>,
   clipboard: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M9 11h6M9 15h4" /></>,
+  graph: <><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="17" r="2.4" /><circle cx="14" cy="6" r="2.4" /><path d="M7.7 16.3 12.4 7.7M15.9 15.4 8.1 17.4M12.6 7.9 16.7 14.9" /></>,
 };
 
 function Icon({ name, size = 18, sw = 1.75, style, color }) {

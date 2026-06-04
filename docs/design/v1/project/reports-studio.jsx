@@ -87,11 +87,11 @@ function ScheduleDropdown({ value, onChange }) {
   );
 }
 
-// Action button whose verb flips with the schedule mode.
-function ActionButton({ scheduled, size = 'md', full = false }) {
+// Action button whose verb flips with the schedule mode. Opens the Generate overlay.
+function ActionButton({ scheduled, size = 'md', full = false, onClick }) {
   const h = size === 'sm' ? 34 : 40;
   return (
-    <button style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: h, width: full ? '100%' : 'auto', padding: '0 16px', borderRadius: 9, flexShrink: 0,
+    <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: h, width: full ? '100%' : 'auto', padding: '0 16px', borderRadius: 9, flexShrink: 0,
       border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'var(--ui-font)', fontSize: size === 'sm' ? 12.5 : 13.5, fontWeight: 600, cursor: 'pointer' }}>
       <Icon name={scheduled ? 'calendar' : 'wand'} size={size === 'sm' ? 14 : 16} color="#fff" />
       {scheduled ? 'Schedule' : 'Generate'}
@@ -99,11 +99,16 @@ function ActionButton({ scheduled, size = 'md', full = false }) {
   );
 }
 
-// ── Suggestion panel (B layout; one small format chip; Generate/Schedule) ──
-function SuggestCard({ r, scheduled }) {
-  const [fmt, setFmt] = React.useState(r.best);
+// ── Suggestion panel — whole card opens the Generate overlay ───────────────
+function SuggestCard({ r, scheduled, schedule }) {
+  const [gen, setGen] = React.useState(false);
+  const [hover, setHover] = React.useState(false);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 11, padding: 16, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', boxShadow: 'var(--shadow-card)', minWidth: 0 }}>
+    <React.Fragment>
+    <div onClick={() => setGen(true)} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{ display: 'flex', flexDirection: 'column', gap: 11, padding: 16, borderRadius: 12, cursor: 'pointer', minWidth: 0,
+        border: `1px solid ${hover ? 'var(--accent-line)' : 'var(--border)'}`, background: 'var(--surface)',
+        boxShadow: hover ? '0 8px 24px rgba(0,0,0,0.18)' : 'var(--shadow-card)', transform: hover ? 'translateY(-1px)' : 'none', transition: 'border-color .14s, box-shadow .14s, transform .14s' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: RTONE_SOFT[r.tone], color: RTONE[r.tone] }}><Icon name={r.icon} size={17} /></span>
         {r.isNew && <span style={{ fontSize: 9.5, fontWeight: 700, fontFamily: 'var(--mono-font)', color: 'var(--warning)', background: 'var(--warning-soft)', borderRadius: 5, padding: '2px 6px', letterSpacing: '0.04em' }}>NEW</span>}
@@ -111,18 +116,27 @@ function SuggestCard({ r, scheduled }) {
       </div>
       <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--fg)', fontFamily: 'var(--display-font)', letterSpacing: 'var(--display-track)' }}>{r.title}</div>
       <p style={{ margin: 0, fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.45, flex: 1, textWrap: 'pretty' }}>{r.desc}</p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <FormatChipSelect value={fmt} onChange={setFmt} recommended={r.formats} />
-        <span style={{ marginLeft: 'auto' }}><ActionButton scheduled={scheduled} size="sm" /></span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontFamily: 'var(--mono-font)', color: 'var(--fg-faint)' }}>
+          <Icon name="sources" size={12} /> {r.sources} sources · {r.est}
+        </span>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, color: hover ? 'var(--accent)' : 'var(--fg-muted)' }}>
+          {scheduled ? 'Schedule' : 'Configure'} <Icon name="arrowRight" size={14} color={hover ? 'var(--accent)' : 'var(--fg-muted)'} />
+        </span>
       </div>
     </div>
+    {gen && <GenerateOverlay action={reportActionConfig(r, r.best)} schedule={schedule} onClose={() => setGen(false)} />}
+    </React.Fragment>
   );
 }
 
 // ── Custom prompt card (relocated composer — last option under suggested) ──
-function CustomPromptCard({ scheduled }) {
+function CustomPromptCard({ scheduled, schedule }) {
   const [fmt, setFmt] = React.useState('doc');
+  const [text, setText] = React.useState('');
+  const [gen, setGen] = React.useState(false);
   return (
+    <React.Fragment>
     <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 12, padding: 16, borderRadius: 12, border: '1px dashed var(--border-strong)', background: 'var(--surface-2)', minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--accent-soft)', color: 'var(--accent)' }}><Icon name="wand" size={17} /></span>
@@ -131,14 +145,16 @@ function CustomPromptCard({ scheduled }) {
           <div style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>Describe any report in plain language — cited back to your sources.</div>
         </div>
       </div>
-      <input placeholder="e.g. Q2 burn vs. plan for the board, with a hiring breakdown…"
+      <input value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Q2 burn vs. plan for the board, with a hiring breakdown…"
+        onKeyDown={(e) => { if (e.key === 'Enter') setGen(true); }}
         style={{ width: '100%', height: 42, padding: '0 14px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13.5, outline: 'none' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <FormatChipSelect value={fmt} onChange={setFmt} recommended={['doc', 'deck', 'video']} />
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontFamily: 'var(--mono-font)', color: 'var(--fg-faint)' }}><Icon name="sources" size={12} /> 12 sources</span>
-        <span style={{ marginLeft: 'auto' }}><ActionButton scheduled={scheduled} size="sm" /></span>
+        <span style={{ marginLeft: 'auto' }}><ActionButton scheduled={scheduled} size="sm" onClick={() => setGen(true)} /></span>
       </div>
     </div>
+    {gen && <GenerateOverlay action={customReportConfig(text, fmt)} schedule={schedule} onClose={() => setGen(false)} />}
+    </React.Fragment>
   );
 }
 

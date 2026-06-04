@@ -39,49 +39,91 @@ function DiffView({ hunks, compact = false }) {
   );
 }
 
-// ── Tree pane ────────────────────────────────────────────────────────────────
-function WikiTree({ selected, onSelect }) {
+// ── Filter dropdown defs + helpers (shared by sidebar + mobile picker) ───────
+const WIKI_PAGES_FLAT = WIKI_TREE.flatMap((g) => g.pages.map((p) => ({ ...p, project: g.project })));
+function wikiChipDefs(wf, setWf) {
+  const projOpts = [{ value: 'all', label: 'All projects', icon: 'layers', count: WIKI_PAGES_FLAT.length }, ...WIKI_TREE.map((g) => ({ value: g.project, label: g.project, icon: 'folder', count: g.pages.length }))];
+  const filterOpts = [
+    { value: 'all', label: 'All pages', icon: 'layers' },
+    { value: 'audit', label: 'Has open audit', icon: 'alert', tone: 'warning', count: WIKI_PAGES_FLAT.filter((p) => p.audits).length },
+    { value: 'recent', label: 'Edited last 7d', icon: 'clock', count: WIKI_PAGES_FLAT.filter((p) => p.isNew || p.v >= 4).length },
+  ];
+  const proj = WIKI_TREE.find((g) => g.project === wf.project);
+  const fil = filterOpts.find((o) => o.value === wf.filter);
+  return [
+    { key: 'project', icon: 'folder', label: proj ? proj.project : 'All projects', active: wf.project !== 'all', title: 'Project', options: projOpts, value: wf.project, onPick: (v) => setWf({ ...wf, project: v }) },
+    { key: 'filter', icon: 'sliders', label: wf.filter === 'all' ? 'Filters' : fil.label, tone: fil && fil.tone, active: wf.filter !== 'all', title: 'Filter', options: filterOpts, value: wf.filter, onPick: (v) => setWf({ ...wf, filter: v }), menuWidth: 200 },
+  ];
+}
+function wikiPageMatches(p, wf, q) {
+  if (wf.filter === 'audit' && !p.audits) return false;
+  if (wf.filter === 'recent' && !(p.isNew || p.v >= 4)) return false;
+  if (q && !p.topic.toLowerCase().includes(q.toLowerCase())) return false;
+  return true;
+}
+
+// ── Desktop sidebar: filter chip · search · collapsible project folders ──────
+function WikiSidebar({ wf, setWf, selected, onSelect, width = 264 }) {
   const [q, setQ] = React.useState('');
+  const [openF, setOpenF] = React.useState({ default: true, 'research-q3': true, 'launch-docs': true });
+  const defs = wikiChipDefs(wf, setWf).filter((d) => d.key !== 'project'); // project = folder tree
+  const groups = WIKI_TREE.filter((g) => wf.project === 'all' || wf.project === g.project);
   return (
-    <div style={{ width: 264, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)' }}>
+    <div style={{ width, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <FilterChips defs={defs} size="s" />
+        <SidebarSearch value={q} onChange={setQ} placeholder="Search wiki…" />
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+        {groups.map((g) => {
+          const rows = g.pages.filter((p) => wikiPageMatches(p, wf, q));
+          return (
+            <Folder key={g.project} label={g.project} count={rows.length} open={openF[g.project]} onToggle={() => setOpenF((o) => ({ ...o, [g.project]: !o[g.project] }))}>
+              {rows.map((p) => <NestRow key={p.topic} icon="wiki" label={p.topic} active={p.topic === selected} badge={p.isNew ? 'NEW' : null} meta={'v' + p.v} onClick={() => onSelect(p.topic)} />)}
+              {!rows.length && <div style={{ padding: '4px 10px 8px 27px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No matching pages</div>}
+            </Folder>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Mobile picker: the FIRST screen on the wiki tab — choose a page ───────────
+function WikiPageRow({ p, onClick }) {
+  return (
+    <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', textAlign: 'left', border: 'none', borderBottom: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', padding: '11px 16px', fontFamily: 'var(--ui-font)' }}>
+      <span style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-2)', color: 'var(--fg-muted)' }}><Icon name="wiki" size={15} /></span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.topic}</span>
+          {p.isNew && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-soft)', borderRadius: 5, padding: '1px 5px', letterSpacing: '0.04em', flexShrink: 0 }}>NEW</span>}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, fontSize: 11, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)' }}>
+          {p.project} · v{p.v}{p.audits ? <span style={{ color: 'var(--warning)' }}> · {p.audits} audits</span> : null}
+        </span>
+      </span>
+      <Icon name="chevRight" size={15} color="var(--fg-faint)" />
+    </button>
+  );
+}
+function WikiPicker({ wf, setWf, onSelect }) {
+  const [q, setQ] = React.useState('');
+  const groups = WIKI_TREE.filter((g) => wf.project === 'all' || wf.project === g.project);
+  const rows = WIKI_PAGES_FLAT.filter((p) => (wf.project === 'all' || p.project === wf.project) && wikiPageMatches(p, wf, q));
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
+      <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <FilterChips defs={wikiChipDefs(wf, setWf)} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)' }}>
           <Icon name="search" size={15} color="var(--fg-muted)" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search wiki…" style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--fg)', fontSize: 13, fontFamily: 'var(--ui-font)' }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search wiki…" style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', color: 'var(--fg)', fontSize: 13, fontFamily: 'var(--ui-font)' }} />
         </div>
+        <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{rows.length} pages</div>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-        {WIKI_TREE.map((grp) => (
-          <div key={grp.project} style={{ marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', color: 'var(--fg-muted)' }}>
-              <Icon name="chevDown" size={12} />
-              <span style={{ fontSize: 12, fontWeight: 600 }}>{grp.project}</span>
-            </div>
-            {grp.pages.filter((p) => p.topic.toLowerCase().includes(q.toLowerCase())).map((p) => {
-              const on = p.topic === selected;
-              return (
-                <button key={p.topic} onClick={() => onSelect(p.topic)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', height: 32, padding: '0 10px 0 22px', border: 'none', borderRadius: 7,
-                  background: on ? 'var(--accent-soft)' : 'transparent', cursor: 'pointer', fontFamily: 'var(--ui-font)' }}>
-                  <Icon name="file" size={14} color={on ? 'var(--accent)' : 'var(--fg-faint)'} />
-                  <span style={{ fontSize: 13, fontWeight: on ? 600 : 500, color: on ? 'var(--fg)' : 'var(--fg-muted)', flex: 1, textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.topic}</span>
-                  {p.isNew && <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-soft)', borderRadius: 5, padding: '1px 5px', letterSpacing: '0.04em' }}>NEW</span>}
-                  <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>v{p.v}</span>
-                </button>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-      <div style={{ borderTop: '1px solid var(--border)', padding: 12 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', marginBottom: 8 }}>Filters</div>
-        {['Has open audit', 'Edited last 7d', 'With provenance'].map((f, i) => (
-          <label key={f} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '5px 2px', fontSize: 12.5, color: 'var(--fg-muted)', cursor: 'pointer' }}>
-            <span style={{ width: 15, height: 15, borderRadius: 4, border: '1.5px solid var(--border-strong)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: i === 0 ? 'var(--accent)' : 'transparent' }}>
-              {i === 0 && <Icon name="check" size={11} color="#fff" />}
-            </span>
-            {f}
-          </label>
-        ))}
+      <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 'calc(72px + env(safe-area-inset-bottom, 0px))' }}>
+        {rows.map((p) => <WikiPageRow key={p.topic} p={p} onClick={() => onSelect(p.topic)} />)}
+        {!rows.length && <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>No pages match these filters.</div>}
       </div>
     </div>
   );
@@ -250,4 +292,4 @@ function SourcesTab() {
 function wbtnGhost() { return { display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 500, cursor: 'pointer' }; }
 function wbtnPrimary() { return { display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 12px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }; }
 
-Object.assign(window, { DiffView, WikiTree, WikiTabBtn, ReadTab, EditTab, HistoryTab, SourcesTab, wbtnGhost, wbtnPrimary, WTONE, useStored, useIsMobile });
+Object.assign(window, { DiffView, WikiSidebar, WikiPicker, wikiChipDefs, wikiPageMatches, WIKI_PAGES_FLAT, WikiTabBtn, ReadTab, EditTab, HistoryTab, SourcesTab, wbtnGhost, wbtnPrimary, WTONE, useStored, useIsMobile });

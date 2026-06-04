@@ -7,53 +7,64 @@ function useStored(key, init) {
 }
 const TONE = { accent: 'var(--accent)', success: 'var(--success)', warning: 'var(--warning)', destructive: 'var(--destructive)', muted: 'var(--fg-muted)' };
 
-// ── Tree pane ───────────────────────────────────────────────────────────────
-function TreeGroup({ title, children }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '0 10px', marginBottom: 6 }}>{title}</div>
-      {children}
-    </div>
-  );
-}
-function TreeRow({ icon, label, count, tone, active, onClick, indent = 0 }) {
-  return (
-    <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', height: 32, padding: `0 10px 0 ${10 + indent * 14}px`, border: 'none', borderRadius: 7,
-      background: active ? 'var(--accent-soft)' : 'transparent', cursor: 'pointer', fontFamily: 'var(--ui-font)', color: active ? 'var(--fg)' : 'var(--fg-muted)' }}>
-      {icon && <Icon name={icon} size={15} color={tone ? TONE[tone] : 'currentColor'} />}
-      <span style={{ fontSize: 13, fontWeight: active ? 600 : 500, flex: 1, textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
-      {count != null && <span style={{ fontSize: 11.5, color: 'var(--fg-faint)', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--mono-font)' }}>{count}</span>}
-    </button>
-  );
-}
-function TreePane({ filter, setFilter, width = 244, onIngest }) {
+// ── Filter dropdown defs (shared by desktop sidebar + mobile list) ───────────
+function sourceChipDefs(f, setF) {
   const t = SOURCE_TREE;
+  const projOpts = [{ value: 'all', label: 'All projects', icon: 'layers', count: t.total }, ...t.projects.map((p) => ({ value: p.label, label: p.label, icon: 'folder', count: p.count }))];
+  const tagOpts = [{ value: 'all', label: 'All tags', icon: 'tag' }, ...t.tags.map((x) => ({ value: x.label, label: x.label, icon: 'tag', count: x.count }))];
+  const statOpts = [{ value: 'all', label: 'All status', icon: 'layers' }, ...t.status.map((x) => ({ value: x.id, label: x.label, icon: x.icon, count: x.count, tone: x.tone }))];
+  const proj = t.projects.find((p) => p.label === f.project);
+  const tag = t.tags.find((x) => x.label === f.tag);
+  const st = t.status.find((x) => x.id === f.status);
+  return [
+    { key: 'project', icon: 'folder', label: proj ? proj.label : 'All projects', active: f.project !== 'all', title: 'Project', options: projOpts, value: f.project, onPick: (v) => setF({ ...f, project: v }) },
+    { key: 'tag', icon: 'tag', label: tag ? tag.label : 'All tags', active: f.tag !== 'all', title: 'Tag', options: tagOpts, value: f.tag, onPick: (v) => setF({ ...f, tag: v }) },
+    { key: 'status', icon: st ? st.icon : 'layers', tone: st ? st.tone : undefined, label: st ? st.label : 'All status', active: f.status !== 'all', title: 'Status', options: statOpts, value: f.status, onPick: (v) => setF({ ...f, status: v }) },
+  ];
+}
+function filterSources(f) {
+  return SOURCES.filter((s) =>
+    (f.project === 'all' || s.project === f.project) &&
+    (f.tag === 'all' || s.tags.includes(f.tag) || (f.tag === 'untagged' && !s.tags.length)) &&
+    (f.status === 'all' || s.status === f.status));
+}
+
+// ── Desktop sidebar: Ingest · filter chips (Tags/Status) · project folders ────
+function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, width = 268 }) {
+  const [q, setQ] = React.useState('');
+  const [openF, setOpenF] = React.useState({ default: true, 'research-q3': true, 'launch-docs': true });
+  const defs = sourceChipDefs(f, setF).filter((d) => d.key !== 'project'); // project = the folder tree
+  const items = filterSources(f).filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
+  const projects = SOURCE_TREE.projects.filter((p) => f.project === 'all' || f.project === p.label);
   return (
     <div style={{ width, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '12px 10px 0' }}>
+      <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
         <button onClick={onIngest} style={{ ...btnPrimary(), width: '100%', height: 36, justifyContent: 'center', fontSize: 13 }}>
           <Icon name="plus" size={15} color="#fff" /> Ingest sources
         </button>
+        <FilterChips defs={defs} size="s" />
+        <SidebarSearch value={q} onChange={setQ} placeholder="Search sources…" />
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 8px 8px' }}>
-        <TreeGroup title="Projects">
-          {t.projects.map((p) => <TreeRow key={p.label} icon="folder" label={p.label} count={p.count} active={filter === 'p:' + p.label} onClick={() => setFilter('p:' + p.label)} />)}
-        </TreeGroup>
-        <TreeGroup title="Tags">
-          {t.tags.map((p) => <TreeRow key={p.label} icon="tag" label={p.label} count={p.count} active={filter === 't:' + p.label} onClick={() => setFilter('t:' + p.label)} />)}
-        </TreeGroup>
-        <TreeGroup title="Status">
-          {t.status.map((p) => <TreeRow key={p.id} icon={p.icon} tone={p.tone} label={p.label} count={p.count} active={filter === 's:' + p.id} onClick={() => setFilter('s:' + p.id)} />)}
-        </TreeGroup>
-      </div>
-      <div style={{ borderTop: '1px solid var(--border)', padding: 8 }}>
-        <TreeRow icon="plus" label="New folder" onClick={() => {}} />
+      <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+        {projects.map((p) => {
+          const rows = items.filter((s) => s.project === p.label);
+          return (
+            <Folder key={p.label} label={p.label} count={rows.length} open={openF[p.label]} onToggle={() => setOpenF((o) => ({ ...o, [p.label]: !o[p.label] }))}>
+              {rows.map((s) => {
+                const chip = STATUS_CHIP[s.status];
+                return <NestRow key={s.id} icon={TYPE_ICON[s.type] || 'file'} label={s.name} active={s.id === selectedId} onClick={() => onSelect(s.id)}
+                  rightIcon={s.status !== 'done' ? chip.icon : null} rightTone={s.status !== 'done' ? chip.tone : undefined} />;
+              })}
+              {!rows.length && <div style={{ padding: '4px 10px 8px 27px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No matching sources</div>}
+            </Folder>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// ── List pane ────────────────────────────────────────────────────────────────
+// ── List pane (mobile) ───────────────────────────────────────────────────────
 function SourceRow({ s, selected, onClick, mobile = false }) {
   const chip = STATUS_CHIP[s.status];
   const hi = selected && !mobile; // no selected-highlight in mobile single-pane mode
@@ -77,22 +88,19 @@ function SourceRow({ s, selected, onClick, mobile = false }) {
     </button>
   );
 }
-function ListPane({ items, selectedId, onSelect, width = 340, mobile = false, onOpenTree }) {
+function ListPane({ items, selectedId, onSelect, width = 340, mobile = false, chips, onIngest }) {
   const [q, setQ] = React.useState('');
   const filtered = items.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
   return (
     <div style={{ ...(mobile ? { flex: 1, width: '100%', minWidth: 0 } : { width, flexShrink: 0, borderRight: '1px solid var(--border)' }), background: 'var(--bg)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {chips && <div style={{ margin: '0 -12px', padding: '0 12px' }}>{chips}</div>}
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          {onOpenTree && (
-            <button onClick={onOpenTree} aria-label="Browse sources" style={{ ...btnGhost(), height: 34, width: 38, padding: 0, justifyContent: 'center', flexShrink: 0 }}>
-              <Icon name="sources" size={16} />
-            </button>
-          )}
           <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)' }}>
             <Icon name="search" size={15} color="var(--fg-muted)" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search sources…" style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', color: 'var(--fg)', fontSize: 13, fontFamily: 'var(--ui-font)' }} />
           </div>
+          {onIngest && <button onClick={onIngest} aria-label="Ingest sources" style={{ ...btnPrimary(), height: 34, padding: '0 12px', flexShrink: 0 }}><Icon name="plus" size={15} color="#fff" /> Ingest</button>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{filtered.length} sources</span>
@@ -103,7 +111,8 @@ function ListPane({ items, selectedId, onSelect, width = 340, mobile = false, on
       </div>
       <div style={{ flex: 1, overflowY: 'auto', paddingBottom: mobile ? 'calc(68px + env(safe-area-inset-bottom, 0px))' : undefined }}>
         {filtered.map((s) => <SourceRow key={s.id} s={s} selected={s.id === selectedId} onClick={() => onSelect(s.id)} mobile={mobile} />)}
-        <button style={{ width: '100%', padding: '14px', border: 'none', background: 'transparent', color: 'var(--fg-muted)', fontSize: 12.5, cursor: 'pointer', fontFamily: 'var(--ui-font)' }}>Load more (382 more)…</button>
+        {!filtered.length && <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>No sources match these filters.</div>}
+        {!!filtered.length && <button style={{ width: '100%', padding: '14px', border: 'none', background: 'transparent', color: 'var(--fg-muted)', fontSize: 12.5, cursor: 'pointer', fontFamily: 'var(--ui-font)' }}>Load more…</button>}
       </div>
     </div>
   );
@@ -274,4 +283,4 @@ function btnGhost() { return { display: 'inline-flex', alignItems: 'center', gap
 function btnPrimary() { return { display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 12px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }; }
 function tagChip() { return { fontSize: 11.5, fontFamily: 'var(--mono-font)', color: 'var(--fg-muted)', background: 'var(--surface-2)', borderRadius: 6, padding: '2px 7px' }; }
 
-Object.assign(window, { TreePane, ListPane, PreviewPane, Resizer, useStored, btnGhost, btnPrimary });
+Object.assign(window, { SourcesSidebar, sourceChipDefs, filterSources, ListPane, PreviewPane, Resizer, useStored, btnGhost, btnPrimary });

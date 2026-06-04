@@ -5,16 +5,83 @@ const WIKI_TREE = [
     { topic: 'Micrographia', v: 3 },
     { topic: 'Cell theory', v: 7, isNew: true, audits: 3 },
     { topic: 'Bacteria', v: 2 },
+    { topic: 'Robert Hooke', v: 2 },
+    { topic: 'Microscopy', v: 4 },
+    { topic: 'Cell membrane', v: 3 },
+    { topic: 'Organelles', v: 2 },
+    { topic: 'Mitochondria', v: 1, isNew: true },
+    { topic: 'Schwann & Schleiden', v: 2 },
+    { topic: 'Prokaryotes', v: 1 },
+    { topic: 'DNA', v: 5 },
     { topic: 'Constitutional AI', v: 1 },
   ] },
   { project: 'research-q3', pages: [
     { topic: 'Q3 themes', v: 1 },
     { topic: 'User research Q3', v: 4 },
+    { topic: 'Personas', v: 2 },
+    { topic: 'Churn analysis', v: 3 },
+    { topic: 'Pricing study', v: 1 },
+    { topic: 'Onboarding friction', v: 2 },
+    { topic: 'Survey results', v: 1 },
   ] },
   { project: 'launch-docs', pages: [
     { topic: 'LLM Gateway', v: 5 },
+    { topic: 'Rate limiting', v: 2 },
+    { topic: 'Auth & keys', v: 3 },
+    { topic: 'Routing', v: 1 },
+    { topic: 'Failover', v: 1 },
+    { topic: 'Observability', v: 2 },
+    { topic: 'Python SDK', v: 4 },
   ] },
 ];
+
+// ── Wikilink graph: [[A]] ↔ [[B]] edges within each vault (Obsidian-style) ───
+// Vaults are isolated: links never cross projects. Node = wiki page; an edge
+// means one page wiki-links the other. Constitutional AI is intentionally an
+// orphan (no links yet) to show how unconnected notes render.
+const WIKI_GRAPH_LINKS = {
+  'default': [
+    ['Cell theory', 'Micrographia'],
+    ['Cell theory', 'Bacteria'],
+    ['Cell theory', 'Organelles'],
+    ['Cell theory', 'Cell membrane'],
+    ['Cell theory', 'Schwann & Schleiden'],
+    ['Cell theory', 'Prokaryotes'],
+    ['Micrographia', 'Robert Hooke'],
+    ['Micrographia', 'Microscopy'],
+    ['Robert Hooke', 'Microscopy'],
+    ['Bacteria', 'Prokaryotes'],
+    ['Bacteria', 'Cell membrane'],
+    ['Organelles', 'Mitochondria'],
+    ['Organelles', 'Cell membrane'],
+    ['Mitochondria', 'DNA'],
+    ['Prokaryotes', 'DNA'],
+  ],
+  'research-q3': [
+    ['Q3 themes', 'User research Q3'],
+    ['Q3 themes', 'Personas'],
+    ['Q3 themes', 'Churn analysis'],
+    ['Q3 themes', 'Pricing study'],
+    ['User research Q3', 'Survey results'],
+    ['User research Q3', 'Onboarding friction'],
+    ['User research Q3', 'Personas'],
+    ['Churn analysis', 'Pricing study'],
+    ['Personas', 'Onboarding friction'],
+    ['Survey results', 'Churn analysis'],
+  ],
+  'launch-docs': [
+    ['LLM Gateway', 'Rate limiting'],
+    ['LLM Gateway', 'Auth & keys'],
+    ['LLM Gateway', 'Routing'],
+    ['LLM Gateway', 'Failover'],
+    ['LLM Gateway', 'Observability'],
+    ['LLM Gateway', 'Python SDK'],
+    ['Routing', 'Failover'],
+    ['Auth & keys', 'Python SDK'],
+    ['Observability', 'Rate limiting'],
+    ['Routing', 'Observability'],
+  ],
+};
 
 const WIKI_PAGE = {
   topic: 'Cell theory',
@@ -107,4 +174,4 @@ const AUDIT_LOG = [
   { t: '2d ago', who: 'alice', agent: 'Researcher', accepted: 1, dismissed: 0 },
 ];
 
-Object.assign(window, { WIKI_TREE, WIKI_PAGE, WIKI_REVISIONS, WIKI_DIFFS, AUDIT_SUGGESTIONS, WIKI_PAGE_SOURCES, AUDIT_LOG });
+Object.assign(window, { WIKI_TREE, WIKI_GRAPH_LINKS, WIKI_PAGE, WIKI_REVISIONS, WIKI_DIFFS, AUDIT_SUGGESTIONS, WIKI_PAGE_SOURCES, AUDIT_LOG });

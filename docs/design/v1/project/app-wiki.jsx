@@ -130,36 +130,34 @@ function WikiApp() {
   const [tab, setTab] = React.useState('Read');
   const [audit, setAudit] = React.useState(false);
   const isMobile = useIsMobile();
-  const [treeOpen, setTreeOpen] = React.useState(false);
+  const [wf, setWf] = React.useState({ project: 'all', filter: 'all' });
+  const [mobilePage, setMobilePage] = React.useState(null); // null = show picker first
   const page = WIKI_PAGE;
+  const curProj = (WIKI_PAGES_FLAT.find((p) => p.topic === topic) || {}).project || page.project;
   const pad = isMobile ? '12px 16px 0' : '16px 28px 0';
   const bodyPad = isMobile ? '18px 16px 48px' : '22px 28px 40px';
   const editH = isMobile ? 'calc(100vh - 330px)' : 'calc(100vh - 260px)';
+  const openPage = (t) => { setTopic(t); setTab('Read'); setMobilePage(t); };
 
   return (
     <div style={{ ...vars, height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 14 }}>
       <TopBar theme={theme} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
         <LeftRail active="wiki" />
-        {!isMobile && <WikiTree selected={topic} onSelect={setTopic} />}
-        {isMobile && treeOpen && (
-          <React.Fragment>
-            <div onClick={() => setTreeOpen(false)} style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(8,9,12,0.45)' }} />
-            <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, zIndex: 41, display: 'flex', boxShadow: '10px 0 36px rgba(0,0,0,0.4)', animation: 'b2slide 0.2s ease-out' }}>
-              <WikiTree selected={topic} onSelect={(t) => { setTopic(t); setTreeOpen(false); }} />
-            </div>
-          </React.Fragment>
-        )}
+        {!isMobile && <WikiSidebar wf={wf} setWf={setWf} selected={topic} onSelect={setTopic} />}
+        {isMobile && !mobilePage ? (
+          <WikiPicker wf={wf} setWf={setWf} onSelect={openPage} />
+        ) : (
         <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
           {/* header */}
           <div style={{ padding: pad, borderBottom: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--fg-muted)' }}>
-              {isMobile && <button onClick={() => setTreeOpen(true)} style={{ ...wbtnGhost(), width: 30, padding: 0, justifyContent: 'center', marginRight: 2 }}><Icon name="panelLeft" size={15} /></button>}
-              <a href="#" style={{ color: 'var(--fg-muted)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>Wiki</a>
-              <span>›</span><span>{page.project}</span><span>›</span><span style={{ color: 'var(--fg)' }}>{page.topic}</span>
+              {isMobile && <button onClick={() => setMobilePage(null)} aria-label="Back to wiki pages" style={{ ...wbtnGhost(), width: 30, padding: 0, justifyContent: 'center', marginRight: 2 }}><Icon name="chevLeft" size={16} /></button>}
+              <a href="#" onClick={(e) => { e.preventDefault(); if (isMobile) setMobilePage(null); }} style={{ color: 'var(--fg-muted)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>Wiki</a>
+              <span>›</span><span>{page.project}</span><span>›</span><span style={{ color: 'var(--fg)' }}>{topic}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
-              <h1 style={{ margin: 0, fontFamily: 'var(--display-font)', fontSize: isMobile ? 22 : 26, fontWeight: 700, letterSpacing: 'var(--display-track)', color: 'var(--fg)' }}>{page.topic}</h1>
+              <h1 style={{ margin: 0, fontFamily: 'var(--display-font)', fontSize: isMobile ? 22 : 26, fontWeight: 700, letterSpacing: 'var(--display-track)', color: 'var(--fg)' }}>{topic}</h1>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
                 {!isMobile && <button style={wbtnGhost()}><Icon name="chats" size={14} /> Open in chat</button>}
                 <button onClick={() => setAudit(true)} style={{ ...wbtnGhost(), color: 'var(--accent)', borderColor: 'var(--accent-line)' }}><Icon name="sparkles" size={14} color="var(--accent)" /> Audit <span style={{ fontFamily: 'var(--mono-font)', fontSize: 11, background: 'var(--accent)', color: '#fff', borderRadius: 6, padding: '1px 6px' }}>{page.audits}</span></button>
@@ -168,18 +166,25 @@ function WikiApp() {
             </div>
             <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginTop: 6, fontFamily: 'var(--mono-font)' }}>v{page.version} · updated {page.updated} by {page.updatedBy} · {page.sources} sources</div>
             <div className="b2-tabscroll" style={{ display: 'flex', gap: 20, marginTop: 8, overflowX: 'auto' }}>
-              {['Read', 'Edit', 'History', 'Sources'].map((t) => <WikiTabBtn key={t} label={t} active={tab === t} onClick={() => setTab(t)} />)}
+              {['Read', 'Edit', 'History', 'Sources', 'Graph'].map((t) => <WikiTabBtn key={t} label={t} active={tab === t} onClick={() => setTab(t)} />)}
               <WikiTabBtn label="Audit" active={false} badge={page.audits} onClick={() => setAudit(true)} />
             </div>
           </div>
           {/* body */}
+          {tab === 'Graph' ? (
+            <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+              <GraphView project={curProj} selected={topic} onSelect={setTopic} isMobile={isMobile} />
+            </div>
+          ) : (
           <div style={{ flex: 1, overflowY: 'auto', padding: bodyPad, paddingBottom: isMobile ? 'calc(72px + env(safe-area-inset-bottom, 0px))' : undefined }}>
             {tab === 'Read' && <ReadTab page={page} onAudit={() => setAudit(true)} onAsk={() => setAudit(true)} />}
             {tab === 'Edit' && (isMobile ? <EditTab page={page} mobile /> : <div style={{ height: editH }}><EditTab page={page} /></div>)}
             {tab === 'History' && (isMobile ? <HistoryTab mobile /> : <div style={{ height: editH }}><HistoryTab /></div>)}
             {tab === 'Sources' && <SourcesTab />}
           </div>
+          )}
         </main>
+        )}
       </div>
       <AuditDrawer open={audit} onClose={() => setAudit(false)} />
       <BottomNav active="wiki" />

@@ -26,13 +26,15 @@ function SeeAllButton({ onClick }) {
 }
 
 // ── Full-catalog overlay, grouped by category ──────────────────────────────
-function CatalogOverlay({ onClose }) {
+function CatalogOverlay({ onClose, schedule }) {
+  const [gen, setGen] = React.useState(null);
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
+    <React.Fragment>
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(8,10,13,0.55)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '6vh 16px 16px' }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 760, maxHeight: '88vh', display: 'flex', flexDirection: 'column', borderRadius: 16, border: '1px solid var(--border)', background: 'var(--bg)', boxShadow: '0 24px 60px rgba(0,0,0,0.45)', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '18px 22px', borderBottom: '1px solid var(--border)' }}>
@@ -49,7 +51,7 @@ function CatalogOverlay({ onClose }) {
               <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-faint)', marginBottom: 10 }}>{c.category}</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
                 {c.types.map((t) => (
-                  <button key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 11, textAlign: 'left', padding: '11px 13px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontFamily: 'var(--ui-font)' }}>
+                  <button key={t.id} onClick={() => setGen(reportActionConfig({ ...t, desc: t.desc, tone: 'accent' }, t.formats[0]))} style={{ display: 'flex', alignItems: 'center', gap: 11, textAlign: 'left', padding: '11px 13px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontFamily: 'var(--ui-font)' }}>
                     <span style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-2)', color: 'var(--accent)' }}><Icon name={t.icon} size={15} /></span>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{t.title}</span>
                     <Icon name="chevRight" size={14} color="var(--fg-faint)" />
@@ -61,6 +63,8 @@ function CatalogOverlay({ onClose }) {
         </div>
       </div>
     </div>
+    {gen && <GenerateOverlay action={gen} schedule={schedule} onClose={() => setGen(null)} />}
+    </React.Fragment>
   );
 }
 
@@ -114,8 +118,8 @@ function ReportsStudio() {
                 )}
 
                 <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0,1fr))', gap: 14 }}>
-                  {SUGGESTED_REPORTS.map((r) => <SuggestCard key={r.id} r={r} scheduled={scheduled} />)}
-                  <CustomPromptCard scheduled={scheduled} />
+                  {SUGGESTED_REPORTS.map((r) => <SuggestCard key={r.id} r={r} scheduled={scheduled} schedule={schedule} />)}
+                  <CustomPromptCard scheduled={scheduled} schedule={schedule} />
                 </div>
               </div>
 
@@ -130,7 +134,7 @@ function ReportsStudio() {
         </main>
       </div>
       <BottomNav active="reports" />
-      {catalogOpen && <CatalogOverlay onClose={() => setCatalogOpen(false)} />}
+      {catalogOpen && <CatalogOverlay schedule={schedule} onClose={() => setCatalogOpen(false)} />}
     </div>
   );
 }
