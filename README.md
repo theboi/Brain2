@@ -62,6 +62,36 @@ network, or an LLM goes through an interface — never raw drivers.
 All dependencies are wired exactly once in the **composition root**
 ([brain2/app_context.py](brain2/app_context.py)); both servers and the worker share it.
 
+### Domain hierarchy
+
+Everything user-facing fits one nesting:
+
+```
+Tenant  >  Workspace  >  Vault  >  Files (wiki pages, static, dynamic)
+                                    e.g. ACME > Finance > Project Starlight > files
+```
+
+- **Tenant** — hard isolation boundary; first argument to every `Store` method.
+- **Workspace** — a grouping of vaults within a tenant (e.g. a department). Surfaced
+  in the Web Console top bar as the workspace switcher.
+- **Vault** — an Obsidian-style markdown vault on disk. In the schema each vault is a
+  `projects` row with a non-null `vault_path`; the API still calls this `project_id`.
+  *Wiki content lives in the vault*, not in the database (see "Wiki storage" below).
+- **Files** — markdown pages plus assets inside the vault directory. The wiki is the
+  set of pages; sources are uploaded artefacts associated to a project/vault.
+
+### Wiki storage: vault-first (post-migration 0017)
+
+Wiki pages are **markdown files on disk** indexed into `vault_pages` / `vault_links`,
+not rows in a `wiki_pages` table. Reads go through `vault:read_index`,
+`vault:read_page`, `vault:graph`, `vault:backlinks`, `vault:history` in
+[brain2/vault_ops.py](brain2/vault_ops.py). The legacy DB-backed wiki ops
+(`brain2/wiki_ops.py`, the `wiki_pages` / `wiki_revisions` / `wiki_fts` tables) are
+being removed — treat them as deprecated; new code should target `vault:*`.
+
+Each project owns one vault (`projects.vault_path`). Vault changes on disk are picked
+up by [brain2/vault/watcher.py](brain2/vault/watcher.py) and re-indexed automatically.
+
 Key invariants the code enforces (checked in tests on every task):
 
 - **Tenant is explicit, never defaulted in logic** — `tenant_id` is the first argument to
@@ -330,8 +360,14 @@ brain2/                     # the headless core
 ├── models.py / errors.py   # domain models, typed errors → HTTP status
 ├── store/
 │   ├── base.py             # Store protocol + transaction contract
-│   ├── local.py            # LocalStore — SQLite, all state incl. wiki content
+│   ├── local.py            # LocalStore — SQLite (metadata, index, events); wiki
+│   │                       #   content lives in vaults on disk, not here
 │   └── migrations/         # ordered, checksummed .sql + runner (brain2-migrate)
+├── vault/                  # vault-first wiki: watcher, indexer, git history
+├── vault_ops.py            # vault:* ops (read_index, read_page, graph, history…)
+├── source_ops.py           # sources:* ops (list/get/extract/tag/reingest/delete)
+├── wiki_audit_ops.py       # LLM audit suggestions over wiki pages
+├── provider_ops.py         # providers:* — tenant-level LLM credentials
 ├── secrets.py              # SecretManager (AES-256-GCM), per-subject data keys
 ├── auth/                   # argon2id passwords, sha256 indexable tokens, authorize()
 ├── events/                 # transactional outbox + dispatch + subscriptions
@@ -360,9 +396,52 @@ brain2_telegram/            # Telegram bot add-on (brain2-telegram)
     ├── ops.py              # /ops inline menu + /op direct dispatch
     └── admin.py            # /create_user, /list_users
 
+brain2-web/                 # Web Console (React + Vite + TypeScript)
+├── src/
+│   ├── App.tsx             # Router; pages mounted inside AppShell
+│   ├── components/
+│   │   ├── layout/         # AppShell, TopBar (workspace switcher), LeftRail, BottomNav
+│   │   ├── browse/         # shared Sources/Wiki two-pane chrome (Browse, MiniMD, DiffView)
+│   │   └── ui/             # Icon, primitives
+│   ├── pages/
+│   │   ├── Home/  Settings/  Inbox/
+│   │   ├── Sources/        # list/detail + IngestModal
+│   │   └── Wiki/           # Read/Edit/History/Sources/Graph + AuditDrawer + GraphView
+│   ├── lib/                # data layer — sources.ts / wiki.ts / inbox.ts
+│   │                       #   (currently mock; live REST wiring is in flight,
+│   │                       #    see docs/superpowers/specs/ for the design)
+│   ├── styles/             # global.css + tokens.css (theme + accent)
+│   └── hooks/              # useTheme, useMedia
+└── package.json            # react-router-dom only; intentionally minimal deps
+
+docs/design/v1/             # authoritative visual prototypes (HTML/JSX) the Web
+                            #   Console is recreated from pixel-for-pixel
+
 tests/                      # one module per source module + isolation suite
 docs/superpowers/           # the authoritative specs and the build plan
 ```
+
+### Working in this repo as an agent
+
+A few things that aren't obvious from the tree:
+
+- **Specs are the source of truth.** Before writing code, check
+  [docs/superpowers/specs/](docs/superpowers/specs/) for an existing design — the
+  Sources/Wiki/Ingest UI work, the missing-API audit, and the vault-first migration
+  all have specs there. Build/implementation plans live alongside under `plans/`.
+- **Visual fidelity for the Web Console** is anchored to
+  [docs/design/v1/](docs/design/v1/) — the README in that folder instructs agents to
+  recreate the HTML/JSX prototypes faithfully. Don't redesign; port.
+- **Vault is canonical for wiki content.** If you find yourself reaching for
+  `wiki:list` / `wiki:get` / `put_wiki_page`, you're on the deprecated path — use
+  `vault:*` ops and let the watcher reindex from disk.
+- **Operations are dispatched, not routed.** Every business call goes through
+  `POST /api/v1/ops/{name}` → `dispatch()` → `authorize()` → handler. Add new
+  capabilities by registering an op in [brain2/app_context.py](brain2/app_context.py),
+  not by adding a FastAPI route. Direct routes are reserved for multipart, SSE, and
+  raw binary.
+- **Tenant is never defaulted in business logic.** `RequestContext.tenant_id` is the
+  first argument to every Store call; isolation tests will catch ambient access.
 
 The authoritative design lives under [docs/superpowers/](docs/superpowers/) — start with
 the **[master plan](docs/superpowers/plans/2026-05-24-brain2-master-plan.md)** (build
