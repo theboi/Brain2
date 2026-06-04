@@ -11,7 +11,7 @@ import {
   Paperclip, Pause, Pencil, Pin, Play, Plug, Plus, Presentation,
   RefreshCw, Search, Send, Settings, Shield, Slash, Sliders,
   Sparkles, Square, Star, Sun, Tag, Trash2, TrendingUp, User,
-  Users, Wand2, X, Zap, MessageSquare,
+  Users, Wand2, X, Zap, MessageSquare, Circle, Share2,
 } from 'lucide-react';
 import type { LucideProps } from 'lucide-react';
 
@@ -83,6 +83,8 @@ const ICON_MAP = {
   wand: Wand2,
   clipboard: Paperclip,
   edit: Edit3,
+  dot: Circle,
+  graph: Share2,
 } as const;
 
 export type IconName = keyof typeof ICON_MAP;

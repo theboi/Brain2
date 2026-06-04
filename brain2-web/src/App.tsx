@@ -3,6 +3,9 @@ import { AppShell } from '@/components/layout/AppShell';
 import { useTheme } from '@/hooks/useTheme';
 import { HomePage } from '@/pages/Home';
 import { SettingsPage } from '@/pages/Settings';
+import { InboxPage } from '@/pages/Inbox';
+import { SourcesPage } from '@/pages/Sources';
+import { WikiPage } from '@/pages/Wiki';
 
 function App() {
   const { theme, accent, setTheme, setAccent, toggleTheme } = useTheme();
@@ -23,9 +26,11 @@ function App() {
               />
             }
           />
-          {/* Stub routes — pages to be built in subsequent phases */}
-          <Route path="/sources/*" element={<StubPage title="Sources" />} />
-          <Route path="/wiki/*" element={<StubPage title="Wiki" />} />
+          <Route path="/inbox" element={<InboxPage />} />
+          <Route path="/sources" element={<SourcesPage />} />
+          <Route path="/sources/:id" element={<SourcesPage />} />
+          <Route path="/wiki" element={<WikiPage />} />
+          <Route path="/wiki/:topic" element={<WikiPage />} />
           <Route path="/chats/*" element={<StubPage title="Chats" />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

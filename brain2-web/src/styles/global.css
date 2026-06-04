@@ -89,8 +89,24 @@ input::placeholder {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Audit drawer: slide in from the right edge */
+@keyframes b2slide {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
 .b2-pulse { animation: b2pulse 1.8s ease-out infinite; }
 .b2-spin  { animation: b2spin  1s   linear   infinite; }
+
+/* Horizontal tab / chip strip: scrollable but no visible scrollbar */
+.b2-tabscroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.b2-tabscroll::-webkit-scrollbar { display: none; }
+
+/* Pane resizer: hairline brightens to accent on hover/drag */
+.b2-rz:hover > div { background: var(--accent-line); }
 
 /* Reusable animation helper classes */
 .b2-anim-pop    { animation: b2popIn   140ms cubic-bezier(0.16,1,0.3,1) both; }
@@ -100,8 +116,9 @@ input::placeholder {
 
 @media (prefers-reduced-motion: reduce) {
   .b2-pulse, .b2-spin,
-  .b2-anim-pop, .b2-anim-slide, .b2-anim-fade, .b2-anim-dropup {
-    animation: none;
+  .b2-anim-pop, .b2-anim-slide, .b2-anim-fade, .b2-anim-dropup,
+  [style*="b2slide"] {
+    animation: none !important;
   }
 }
 
