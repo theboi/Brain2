@@ -77,3 +77,44 @@ def test_reindex_vault_processes_all_files(tmp_path):
     assert "static/policy.md" in paths
     links = s.get_outgoing_links("p1", "wiki/concepts/a.md")
     assert {l.target_topic: l.target_zone for l in links} == {"b": "wiki"}
+
+
+def test_reindex_path_updates_single_file(tmp_path):
+    from brain2.store.local import LocalStore
+    from brain2.vault.fs import write_text_atomic
+    from brain2.vault.indexer import reindex_path, reindex_vault
+
+    s = LocalStore(":memory:"); s.migrate()
+    s.create_tenant("t1", "X"); s.create_project("t1", "p1", "V")
+    root = tmp_path / "v"
+    (root / "wiki" / "concepts").mkdir(parents=True)
+    write_text_atomic(root / "wiki" / "concepts" / "a.md", "# A\n\n[[B]]\n")
+    write_text_atomic(root / "wiki" / "concepts" / "b.md", "# B\n")
+    reindex_vault(s, "p1", root)
+    assert s.get_vault_page_by_topic("p1", "a") is not None
+
+    # Edit a.md on disk; reindex only that path.
+    write_text_atomic(root / "wiki" / "concepts" / "a.md", "# A v2\n")
+    reindex_path(s, "p1", root, "wiki/concepts/a.md")
+    a = s.get_vault_page_by_topic("p1", "a")
+    assert "v2" in (root / "wiki" / "concepts" / "a.md").read_text()
+    # And b.md must be untouched.
+    assert s.get_vault_page_by_topic("p1", "b") is not None
+
+
+def test_reindex_path_deletes_when_file_missing(tmp_path):
+    from brain2.store.local import LocalStore
+    from brain2.vault.fs import write_text_atomic
+    from brain2.vault.indexer import reindex_path, reindex_vault
+
+    s = LocalStore(":memory:"); s.migrate()
+    s.create_tenant("t1", "X"); s.create_project("t1", "p1", "V")
+    root = tmp_path / "v"
+    (root / "wiki").mkdir(parents=True)
+    write_text_atomic(root / "wiki" / "a.md", "x")
+    reindex_vault(s, "p1", root)
+    assert s.get_vault_page_by_topic("p1", "a") is not None
+
+    (root / "wiki" / "a.md").unlink()
+    reindex_path(s, "p1", root, "wiki/a.md")
+    assert s.get_vault_page_by_topic("p1", "a") is None

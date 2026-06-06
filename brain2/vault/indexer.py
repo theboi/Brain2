@@ -124,6 +124,19 @@ def _walk_files(vault_root: Path):
         yield p
 
 
+def reindex_path(store, project_id: str, vault_root: Path, rel_path: str) -> None:
+    """(Re)index one file by relative path. Missing file = drop its rows.
+
+    Used by vault:write_page and the file watcher for single-file events.
+    """
+    vault_root = Path(vault_root)
+    abs_path = vault_root / rel_path
+    index_file(store, project_id, vault_root, abs_path)
+    # After any wikilink change, re-resolve targets that may now point to
+    # (or away from) this page.
+    _reresolve_links(store, project_id)
+
+
 def _reresolve_links(store, project_id: str) -> None:
     unresolved = store.list_unresolved_links(project_id)
     by_source: dict[str, list] = {}
