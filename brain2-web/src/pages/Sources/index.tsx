@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Icon } from '@/components/ui/Icon';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import {
-  SOURCES, SOURCE_TREE, TYPE_ICON, STATUS_CHIP, DROPPED, filterSources,
+  SOURCE_TREE, TYPE_ICON, STATUS_CHIP, DROPPED,
   type Source, type SourceFilter,
 } from '@/lib/sources';
 import {
@@ -18,6 +18,46 @@ import {
 } from '@/components/browse/Browse';
 import { MiniMD } from '@/components/browse/MiniMD';
 import { IngestModal } from './IngestModal';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { useProjects } from '@/hooks/useWorkspaces';
+import {
+  useSources, useExtracted,
+  usePutExtracted, useReingest, useDeleteSource,
+  useSourceEvents, useDownloadSource,
+} from '@/hooks/useSources';
+import type { SourceRow } from '@/lib/types';
+
+// ── Adapter: SourceRow (API) → Source (display) ────────────────────────────────
+function toDisplaySource(r: SourceRow): Source {
+  const typeMap: Record<string, Source['type']> = {
+    pdf: 'pdf', md: 'md', url: 'url', image: 'img', code: 'code', audio: 'audio',
+  };
+  const ext = r.filename?.split('.').pop()?.toLowerCase() ?? '';
+  const detectedType = typeMap[ext] ?? (r.kind === 'url' ? 'url' : 'pdf');
+  const statusMap: Record<string, Source['status']> = {
+    pending: 'pending', extracting: 'running', extracted: 'done', failed: 'failed',
+  };
+  return {
+    id: r.source_id,
+    project: r.project_id,
+    name: r.filename ?? r.source_id,
+    type: detectedType,
+    size: r.size_bytes ? `${(r.size_bytes / 1024 / 1024).toFixed(1)} MB` : '—',
+    status: statusMap[r.status] ?? 'pending',
+    topic: r.topic,
+    tags: [],
+    provenance: r.kind === 'url' ? 'URL capture' : 'File upload',
+    uploader: '',
+    created: new Date(r.created_at).toLocaleDateString(),
+    updated: new Date(r.updated_at).toLocaleDateString(),
+    mime: r.mime ?? '',
+    words: 0,
+    tokens: 0,
+    extracted: '',
+    error: r.extraction_error ?? undefined,
+    url: r.kind === 'url' ? (r.filename ?? undefined) : undefined,
+  };
+}
 
 // ── Filter chip defs (Tags / Status) — shared by desktop sidebar + mobile list ─
 function sourceChipDefs(f: SourceFilter, setF: (f: SourceFilter) => void): ChipDef[] {
@@ -36,14 +76,15 @@ function sourceChipDefs(f: SourceFilter, setF: (f: SourceFilter) => void): ChipD
 }
 
 // ── Desktop sidebar ────────────────────────────────────────────────────────────
-function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, width = 268 }: {
-  f: SourceFilter; setF: (f: SourceFilter) => void; selectedId: string; onSelect: (id: string) => void; onIngest: () => void; width?: number;
+function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, width = 268 }: {
+  f: SourceFilter; setF: (f: SourceFilter) => void; selectedId: string; onSelect: (id: string) => void; onIngest: () => void; items: Source[]; width?: number;
 }) {
   const [q, setQ] = useState('');
-  const [openF, setOpenF] = useState<Record<string, boolean>>({ default: true, 'research-q3': true, 'launch-docs': true });
+  const [openF, setOpenF] = useState<Record<string, boolean>>({ default: true });
   const defs = sourceChipDefs(f, setF).filter((d) => d.key !== 'project'); // project = the folder tree
-  const items = filterSources(f).filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
-  const projects = SOURCE_TREE.projects.filter((p) => f.project === 'all' || f.project === p.label);
+  const filtered = items.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
+  // Group by project_id
+  const projectLabels = Array.from(new Set(items.map((s) => s.project)));
   return (
     <div style={{ width, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -54,10 +95,10 @@ function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, width = 268 }
         <SidebarSearch value={q} onChange={setQ} placeholder="Search sources…" />
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
-        {projects.map((p) => {
-          const rows = items.filter((s) => s.project === p.label);
+        {projectLabels.map((proj) => {
+          const rows = filtered.filter((s) => s.project === proj);
           return (
-            <Folder key={p.label} label={p.label} count={rows.length} open={!!openF[p.label]} onToggle={() => setOpenF((o) => ({ ...o, [p.label]: !o[p.label] }))}>
+            <Folder key={proj} label={proj} count={rows.length} open={!!openF[proj]} onToggle={() => setOpenF((o) => ({ ...o, [proj]: !o[proj] }))}>
               {rows.map((s) => {
                 const chip = STATUS_CHIP[s.status];
                 return <NestRow key={s.id} icon={TYPE_ICON[s.type] || 'file'} label={s.name} active={s.id === selectedId} onClick={() => onSelect(s.id)}
@@ -67,6 +108,7 @@ function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, width = 268 }
             </Folder>
           );
         })}
+        {!projectLabels.length && <div style={{ padding: '4px 10px 8px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No sources yet</div>}
       </div>
     </div>
   );
@@ -157,12 +199,12 @@ const tagChip = (): CSSProperties => ({ fontSize: 11.5, fontFamily: 'var(--mono-
 
 function EmptyBody({ label }: { label: string }) { return <div style={{ color: 'var(--fg-faint)', fontSize: 13, padding: '40px 0', textAlign: 'center' }}>{label}</div>; }
 
-function RawBody({ s }: { s: Source }) {
+function RawBody({ s, onDownload }: { s: Source; onDownload?: () => void }) {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <span style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>Original {s.type.toUpperCase()} · {s.size.trim()}</span>
-        <button style={btnGhost()}><Icon name="download" size={14} /> Download</button>
+        <button style={btnGhost()} onClick={onDownload}><Icon name="download" size={14} /> Download</button>
       </div>
       <div style={{ height: 360, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: 'var(--fg-faint)' }}>
         <Icon name={TYPE_ICON[s.type] || 'file'} size={34} />
@@ -173,16 +215,21 @@ function RawBody({ s }: { s: Source }) {
   );
 }
 
-function ExtractedBody({ s }: { s: Source }) {
-  const [text, setText] = useState(s.extracted);
-  useEffect(() => { setText(s.extracted); }, [s.id, s.extracted]);
+function ExtractedBody({ s, extractedText, extractedVersion, onSave }: {
+  s: Source;
+  extractedText: string;
+  extractedVersion: number;
+  onSave?: (text: string, version: number) => void;
+}) {
+  const [text, setText] = useState(extractedText);
+  useEffect(() => { setText(extractedText); }, [s.id, extractedText]);
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <span style={{ fontSize: 12, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)' }}>{s.words} words · {s.tokens} tokens · markitdown</span>
         <span style={{ display: 'flex', gap: 8 }}>
-          <button style={btnGhost()} onClick={() => setText(s.extracted)}>Reset to extracted</button>
-          <button style={btnPrimary()}>Save</button>
+          <button style={btnGhost()} onClick={() => setText(extractedText)}>Reset to extracted</button>
+          <button style={btnPrimary()} onClick={() => onSave?.(text, extractedVersion)}>Save</button>
         </span>
       </div>
       <textarea value={text || ''} onChange={(e) => setText(e.target.value)} spellCheck={false}
@@ -213,12 +260,12 @@ function HistoryBody({ s }: { s: Source }) {
   );
 }
 
-function DetailsBody({ s }: { s: Source }) {
+function DetailsBody({ s, onDelete }: { s: Source; onDelete?: () => void }) {
   return (
     <div style={{ maxWidth: 560 }}>
       <h3 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Details</h3>
       <InfoRow label="Source ID"><span style={{ fontFamily: 'var(--mono-font)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>{s.id} <Icon name="copy" size={12} color="var(--fg-faint)" /></span></InfoRow>
-      <InfoRow label="Uploader">{s.uploader}</InfoRow>
+      <InfoRow label="Uploader">{s.uploader || '—'}</InfoRow>
       <InfoRow label="Created">{s.created}</InfoRow>
       <InfoRow label="Updated">{s.updated}</InfoRow>
       <InfoRow label="Size">{s.size.trim()}</InfoRow>
@@ -234,14 +281,42 @@ function DetailsBody({ s }: { s: Source }) {
         </span>
       </InfoRow>
       <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
-      <button style={{ ...btnGhost(), color: 'var(--destructive)' }}><Icon name="x" size={14} /> Delete source</button>
+      <button style={{ ...btnGhost(), color: 'var(--destructive)' }} onClick={onDelete}><Icon name="x" size={14} /> Delete source</button>
     </div>
   );
 }
 
-function PreviewPane({ s, mobile = false, onBack }: { s: Source; mobile?: boolean; onBack?: () => void }) {
+function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
+  s: Source; projectId: string | null; mobile?: boolean; onBack?: () => void; onDeleted?: () => void;
+}) {
   const [tab, setTab] = useState<SourceTab>('Preview');
   useEffect(() => { setTab(s.status === 'failed' ? 'Extracted text' : 'Preview'); }, [s.id, s.status]);
+
+  const { data: extractedData } = useExtracted(projectId, s.id);
+  const putExtracted = usePutExtracted(projectId);
+  const reingest = useReingest(projectId);
+  const deleteSource = useDeleteSource(projectId);
+  const downloadSource = useDownloadSource();
+
+  const extractedText = extractedData?.extracted_md ?? s.extracted ?? '';
+  const extractedVersion = extractedData?.version ?? 0;
+
+  function handleSave(text: string, version: number) {
+    putExtracted.mutate({ source_id: s.id, extracted_md: text, expect_version: version });
+  }
+
+  function handleReingest() {
+    reingest.mutate({ source_id: s.id });
+  }
+
+  function handleDelete() {
+    deleteSource.mutate({ source_id: s.id }, { onSuccess: onDeleted });
+  }
+
+  function handleDownload() {
+    downloadSource.mutate({ source_id: s.id, filename: s.name });
+  }
+
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
       {/* header */}
@@ -255,8 +330,8 @@ function PreviewPane({ s, mobile = false, onBack }: { s: Source; mobile?: boolea
           <Icon name={TYPE_ICON[s.type] || 'file'} size={18} color="var(--fg-muted)" />
           <span style={{ fontFamily: 'var(--display-font)', fontSize: mobile ? 15 : 17, fontWeight: 600, color: 'var(--fg)', letterSpacing: 'var(--display-track)', flex: mobile ? 1 : 'none', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</span>
           <span style={{ marginLeft: mobile ? 0 : 'auto', display: 'flex', gap: 8, flexShrink: 0 }}>
-            {!mobile && <button style={btnGhost()}><Icon name="refresh" size={14} /> Re-ingest</button>}
-            <button style={btnPrimary()}><Icon name="pencil" size={14} color="#fff" /> {mobile ? '' : 'Edit MD'}</button>
+            {!mobile && <button style={btnGhost()} onClick={handleReingest} disabled={reingest.isPending}><Icon name="refresh" size={14} /> Re-ingest</button>}
+            <button style={btnPrimary()} onClick={() => setTab('Extracted text')}><Icon name="pencil" size={14} color="#fff" /> {mobile ? '' : 'Edit MD'}</button>
           </span>
         </div>
         <div className="b2-tabscroll" style={{ display: 'flex', gap: 18, marginTop: 6, overflowX: mobile ? 'auto' : 'visible' }}>
@@ -273,14 +348,21 @@ function PreviewPane({ s, mobile = false, onBack }: { s: Source; mobile?: boolea
                 <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 3 }}>Extraction failed</div>
                 <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.5 }}>{s.error}</div>
               </div>
-              <button style={btnGhost()}><Icon name="refresh" size={14} /> Retry</button>
+              <button style={btnGhost()} onClick={handleReingest} disabled={reingest.isPending}><Icon name="refresh" size={14} /> Retry</button>
             </div>
           )}
-          {tab === 'Preview' && (s.extracted ? <MiniMD text={s.extracted} /> : <EmptyBody label="Nothing to preview yet." />)}
-          {tab === 'Raw source' && <RawBody s={s} />}
-          {tab === 'Extracted text' && <ExtractedBody s={s} />}
+          {tab === 'Preview' && (extractedText ? <MiniMD text={extractedText} /> : <EmptyBody label="Nothing to preview yet." />)}
+          {tab === 'Raw source' && <RawBody s={s} onDownload={handleDownload} />}
+          {tab === 'Extracted text' && (
+            <ExtractedBody
+              s={s}
+              extractedText={extractedText}
+              extractedVersion={extractedVersion}
+              onSave={handleSave}
+            />
+          )}
           {tab === 'History' && <HistoryBody s={s} />}
-          {tab === 'Details' && <DetailsBody s={s} />}
+          {tab === 'Details' && <DetailsBody s={s} onDelete={handleDelete} />}
         </div>
       </div>
     </div>
@@ -291,11 +373,31 @@ function PreviewPane({ s, mobile = false, onBack }: { s: Source; mobile?: boolea
 export function SourcesPage() {
   const isMobile = useMedia(MOBILE_QUERY);
   const [f, setF] = useState<SourceFilter>({ project: 'all', tag: 'all', status: 'all' });
-  const [selectedId, setSelectedId] = useState(SOURCES[0].id);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [modal, setModal] = useState(false);
   const [dragging, setDragging] = useState(false);
   const dragCount = useRef(0);
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
+
+  const { workspaceId, projectId, setProjectId } = useWorkspace();
+  const { data: projects = [] } = useProjects(workspaceId);
+
+  useEffect(() => {
+    if (!projectId && projects.length > 0) setProjectId(projects[0].project_id);
+  }, [projectId, projects, setProjectId]);
+
+  const { data: sourceRows = [], isLoading } = useSources(projectId, {
+    status: f.status !== 'all' ? f.status : undefined,
+    tag: f.tag !== 'all' ? f.tag : undefined,
+  });
+  useSourceEvents(projectId);
+
+  const items: Source[] = sourceRows.map(toDisplaySource);
+
+  // Auto-select first source when list loads and nothing is selected
+  useEffect(() => {
+    if (!selectedId && items.length > 0) setSelectedId(items[0].id);
+  }, [items, selectedId]);
 
   useEffect(() => {
     const onEnter = (e: DragEvent) => { e.preventDefault(); if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragCount.current++; setDragging(true); } };
@@ -307,9 +409,16 @@ export function SourcesPage() {
     return () => { window.removeEventListener('dragenter', onEnter); window.removeEventListener('dragover', onOver); window.removeEventListener('dragleave', onLeave); window.removeEventListener('drop', onDrop); };
   }, []);
 
-  const items = filterSources(f);
-  const selected = SOURCES.find((s) => s.id === selectedId) || SOURCES[0];
+  const selected = items.find((s) => s.id === selectedId) ?? items[0] ?? null;
   const mobileChips = <FilterChips defs={sourceChipDefs(f, setF)} />;
+
+  if (!projectId) {
+    return <div style={{ padding: 24, color: 'var(--fg-muted)' }}>Pick a vault.</div>;
+  }
+
+  if (isLoading) {
+    return <div style={{ padding: 24, color: 'var(--fg-muted)' }}>Loading sources…</div>;
+  }
 
   return (
     <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
@@ -317,12 +426,16 @@ export function SourcesPage() {
         <div style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
           {mobileView === 'list'
             ? <ListPane items={items} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setMobileView('detail'); }} chips={mobileChips} onIngest={() => setModal(true)} />
-            : <PreviewPane s={selected} mobile onBack={() => setMobileView('list')} />}
+            : selected
+              ? <PreviewPane s={selected} projectId={projectId} mobile onBack={() => setMobileView('list')} onDeleted={() => { setSelectedId(''); setMobileView('list'); }} />
+              : <div style={{ padding: 24, color: 'var(--fg-muted)' }}>No source selected.</div>}
         </div>
       ) : (
         <>
-          <SourcesSidebar f={f} setF={setF} selectedId={selectedId} onSelect={setSelectedId} onIngest={() => setModal(true)} />
-          <PreviewPane s={selected} />
+          <SourcesSidebar f={f} setF={setF} selectedId={selectedId} onSelect={setSelectedId} onIngest={() => setModal(true)} items={items} />
+          {selected
+            ? <PreviewPane s={selected} projectId={projectId} onDeleted={() => setSelectedId('')} />
+            : <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>Select a source to preview.</div>}
         </>
       )}
 
