@@ -22,6 +22,7 @@ TENANT_ACTION_ROLES: dict[str, str] = {
     "use_agents":     "member",       # chat / list agents / list conversations
     "review_concepts": "member",      # spaced-repetition (per-user state)
     "view_reports":   "member",       # list reports (filtered to accessible projects)
+    "manage_workspace": "admin",       # create/rename/delete workspaces (admin+owner)
 }
 
 PROJECT_ACTION_ROLES: dict[str, str] = {
