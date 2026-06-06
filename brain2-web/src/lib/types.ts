@@ -1,0 +1,58 @@
+// brain2-web/src/lib/types.ts
+
+export interface Workspace {
+  workspace_id: string;
+  name: string;
+  created_at: string;
+  vault_count: number;
+}
+
+export interface Project {
+  project_id: string;
+  name: string;
+  workspace_id: string | null;
+  vault_path: string | null;
+}
+
+export interface VaultPage {
+  path: string;
+  topic: string;
+  zone: 'wiki' | 'static' | 'dynamic' | 'control' | 'raw';
+  tldr: string | null;
+  content: string;
+}
+
+export interface VaultGraphNode { topic: string; zone: string; tldr: string | null; }
+export interface VaultGraphEdge { source: string; target: string; target_zone: string; }
+export interface VaultGraph { nodes: VaultGraphNode[]; edges: VaultGraphEdge[]; }
+
+export interface VaultCommit {
+  sha: string;
+  author: string;
+  date: string;
+  message: string;
+}
+
+export interface SourceRow {
+  source_id: string;
+  project_id: string;
+  kind: 'file' | 'url' | 'text';
+  filename: string | null;
+  mime: string | null;
+  size_bytes: number;
+  topic: string | null;
+  folder_id: string | null;
+  status: 'pending' | 'extracting' | 'extracted' | 'failed' | 'deleted';
+  extraction_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SourceEvent {
+  type: 'source_status' | 'source_created' | 'heartbeat';
+  source_id?: string;
+  status?: SourceRow['status'];
+  filename?: string;
+  kind?: SourceRow['kind'];
+  progress?: number;
+}
