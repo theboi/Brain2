@@ -498,3 +498,16 @@ New add-ons register operations / events / storage through
 [brain2/addons/registry.py](brain2/addons/registry.py) rather than modifying core — see
 [addons/concepts/](addons/concepts/) and [addons/report_generation/](addons/report_generation/)
 for worked examples, and follow the cross-cutting invariants in the master plan.
+
+### Dev DB reset after pulling this branch
+
+This branch rewrites migration `0019` in place (the legacy wiki tables were
+restored by accident in an earlier draft; they're now gone for good). If you
+already applied the old 0019 to a dev DB, the checksum check will refuse to
+re-migrate. Reset with:
+
+```bash
+rm "$BRAIN2_DB_PATH"           # or wherever your dev sqlite lives
+.venv/bin/brain2-migrate       # reapply all migrations cleanly
+.venv/bin/python scripts/seed_dev_vault.py    # repopulate the dev vault
+```
