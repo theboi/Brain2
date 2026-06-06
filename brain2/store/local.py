@@ -172,12 +172,22 @@ class LocalStore:
 
     # --- projects ---
     def create_project(self, tenant_id: str, project_id: str, name: str) -> Project:
+        now = _now_iso()
         with self.transaction() as cx:
             try:
-                cx.execute("INSERT INTO projects(project_id, tenant_id, name, created_at) "
-                           "VALUES (?,?,?,?)", (project_id, tenant_id, name, _now_iso()))
+                cx.execute(
+                    "INSERT INTO projects(project_id, tenant_id, name, created_at, workspace_id) "
+                    "VALUES (?,?,?,?,'default')",
+                    (project_id, tenant_id, name, now),
+                )
             except sqlite3.IntegrityError as exc:
                 raise Conflict(f"project {project_id} conflict: {exc}") from exc
+            # Ensure a "Default" workspace exists for this tenant.
+            cx.execute(
+                "INSERT OR IGNORE INTO workspaces(tenant_id, workspace_id, name, created_at) "
+                "VALUES (?, 'default', 'Default', ?)",
+                (tenant_id, now),
+            )
         return Project(id=project_id, tenant_id=tenant_id, name=name)
 
     def get_project(self, tenant_id: str, project_id: str) -> Project | None:
