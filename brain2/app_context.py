@@ -175,8 +175,6 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
 
     from brain2.stats_ops import register_stats_ops
     register_stats_ops(ops, store)
-    from brain2.wiki_ops import register_wiki_ops
-    register_wiki_ops(ops, store)
 
     if secrets is not None:
         from brain2.agent_ops import register_agent_ops

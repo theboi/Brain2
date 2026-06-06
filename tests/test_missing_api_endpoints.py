@@ -113,8 +113,10 @@ def test_split_chat_message_create_stream_and_replay(tmp_path, monkeypatch):
 def test_split_wiki_audit_and_wiki_sources(tmp_path, monkeypatch):
     client, store = _make_client(tmp_path, monkeypatch)
     tok = _login(client)
-    store.put_wiki_page("t1", "p1", "topic-a", "Current content",
-                        updated_by="u1", provenance=json.dumps(["src-provenance"]))
+    from brain2.models import VaultPage
+    store.upsert_vault_page(VaultPage(
+        project_id="p1", path="wiki/topic-a.md", zone="wiki",
+        topic="topic-a", content_hash="abc123", mtime=0))
     with store.transaction() as cx:
         cx.execute(
             "INSERT INTO sources(source_id, tenant_id, project_id, kind, filename, topic, "

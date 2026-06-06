@@ -296,9 +296,16 @@ def create_app(actx: AppContext) -> FastAPI:
         project_id = body["project_id"]
         _authz(actx.store, ctx, "read_wiki", project_id)
 
-        page = actx.store.get_wiki_page(ctx.tenant_id, project_id, topic)
-        if page is None:
-            raise HTTPException(status_code=404, detail="page not found")
+        from brain2.vault.parser import canonical_topic as _ct
+        vault_page = actx.store.get_vault_page_by_topic(project_id, _ct(topic))
+        proj = actx.store.get_project(ctx.tenant_id, project_id)
+        page_content = ""
+        if vault_page is not None and proj and proj.vault_path:
+            from pathlib import Path as _Path
+            try:
+                page_content = (_Path(proj.vault_path) / vault_page.path).read_text(encoding="utf-8")
+            except (FileNotFoundError, UnicodeDecodeError):
+                page_content = vault_page.tldr or ""
         agent_row = actx.store._conn.execute(
             "SELECT * FROM agents WHERE tenant_id=? AND agent_id=?",
             (ctx.tenant_id, body["agent_id"])).fetchone()
@@ -321,7 +328,7 @@ def create_app(actx: AppContext) -> FastAPI:
                   "SUGGESTION: {\"section\": \"...\", \"proposed_content\": \"...\", "
                   "\"rationale\": \"...\", \"sources_cited\": [\"src1\"]}. "
                   "End with 'DONE'.")
-        prompt = (f"Page topic: {topic}\nPage content:\n{page.content}\n\n"
+        prompt = (f"Page topic: {topic}\nPage content:\n{page_content}\n\n"
                   f"Instructions: {body.get('instructions','')}\n")
 
         def _events():
@@ -416,9 +423,16 @@ def create_app(actx: AppContext) -> FastAPI:
                             "suggestions_emitted": count})
             return StreamingResponse(_replay(), media_type="text/event-stream")
 
-        page = actx.store.get_wiki_page(ctx.tenant_id, row["project_id"], row["topic"])
-        if page is None:
-            raise HTTPException(status_code=404, detail="page not found")
+        from brain2.vault.parser import canonical_topic as _ct2
+        _vault_page = actx.store.get_vault_page_by_topic(row["project_id"], _ct2(row["topic"]))
+        _proj = actx.store.get_project(ctx.tenant_id, row["project_id"])
+        _page_content = ""
+        if _vault_page is not None and _proj and _proj.vault_path:
+            from pathlib import Path as _Path2
+            try:
+                _page_content = (_Path2(_proj.vault_path) / _vault_page.path).read_text(encoding="utf-8")
+            except (FileNotFoundError, UnicodeDecodeError):
+                _page_content = _vault_page.tldr or ""
         agent_row = actx.store._conn.execute(
             "SELECT * FROM agents WHERE tenant_id=? AND agent_id=?",
             (ctx.tenant_id, row["agent_id"])).fetchone()
@@ -430,7 +444,7 @@ def create_app(actx: AppContext) -> FastAPI:
                   "SUGGESTION: {\"section\": \"...\", \"proposed_content\": \"...\", "
                   "\"rationale\": \"...\", \"sources_cited\": [\"src1\"]}. "
                   "End with 'DONE'.")
-        prompt = (f"Page topic: {row['topic']}\nPage content:\n{page.content}\n\n"
+        prompt = (f"Page topic: {row['topic']}\nPage content:\n{_page_content}\n\n"
                   f"Instructions: {row['instructions']}\n")
 
         def _events():
