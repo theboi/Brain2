@@ -6,24 +6,27 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Icon } from '@/components/ui/Icon';
-import { WIKI_TREE, WIKI_GRAPH_LINKS } from '@/lib/wiki';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { useVaultGraph } from '@/hooks/useVault';
 
 interface SimNode { id: string; deg: number; r: number; x: number; y: number; vx: number; vy: number; fx: number | null; fy: number | null; }
-interface GraphNode { id: string; v: number; isNew?: boolean; deg: number; }
-interface GraphModel { project: string; nodes: GraphNode[]; links: { s: string; t: string }[]; adj: Record<string, Set<string>>; deg: Record<string, number>; }
+interface GraphNode { id: string; deg: number; }
+interface GraphModel { nodes: GraphNode[]; links: { s: string; t: string }[]; adj: Record<string, Set<string>>; deg: Record<string, number>; }
 
-function buildVaultGraph(project: string): GraphModel {
-  const group = WIKI_TREE.find((g) => g.project === project) || WIKI_TREE[0];
-  const pages = group.pages;
-  const raw = WIKI_GRAPH_LINKS[project] || [];
-  const ids = new Set(pages.map((p) => p.topic));
-  const links = raw.filter(([s, t]) => ids.has(s) && ids.has(t)).map(([s, t]) => ({ s, t }));
+function buildLiveGraph(
+  rawNodes: { topic: string; zone: string }[],
+  rawEdges: { source: string; target: string }[],
+): GraphModel {
+  const ids = new Set(rawNodes.map((n) => n.topic));
+  const links = rawEdges
+    .filter((e) => ids.has(e.source) && ids.has(e.target))
+    .map((e) => ({ s: e.source, t: e.target }));
   const deg: Record<string, number> = {};
   const adj: Record<string, Set<string>> = {};
-  pages.forEach((p) => { deg[p.topic] = 0; adj[p.topic] = new Set(); });
+  rawNodes.forEach((n) => { deg[n.topic] = 0; adj[n.topic] = new Set(); });
   links.forEach(({ s, t }) => { deg[s]++; deg[t]++; adj[s].add(t); adj[t].add(s); });
-  const nodes: GraphNode[] = pages.map((p) => ({ id: p.topic, v: p.v, isNew: p.isNew, deg: deg[p.topic] }));
-  return { project: group.project, nodes, links, adj, deg };
+  const nodes: GraphNode[] = rawNodes.map((n) => ({ id: n.topic, deg: deg[n.topic] }));
+  return { nodes, links, adj, deg };
 }
 
 const nodeRadius = (deg: number) => 5.5 + Math.sqrt(deg) * 3.4;
@@ -36,16 +39,20 @@ const hashStr = (str: string) => { let h = 2166136261; for (let i = 0; i < str.l
 
 const gIconBtn = (): CSSProperties => ({ width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' });
 
-export function GraphView({ project, selected, onSelect, isMobile }: {
-  project: string; selected: string; onSelect: (id: string) => void; isMobile?: boolean;
+export function GraphView({ project: _project, selected, onSelect, isMobile }: {
+  project?: string; selected: string; onSelect: (id: string) => void; isMobile?: boolean;
 }) {
-  const vaults = WIKI_TREE.map((g) => g.project);
-  const [vault, setVault] = useState(project);
+  const { projectId } = useWorkspace();
+  const { data: vaultData, isLoading } = useVaultGraph(projectId);
   const [hover, setHover] = useState<string | null>(null);
-  useEffect(() => { setVault(project); setHover(null); }, [project]);
 
-  const graph = useMemo(() => buildVaultGraph(vault), [vault]);
-  useEffect(() => { setHover(null); }, [vault]);
+  const graph = useMemo(() => {
+    const nodes = vaultData?.nodes ?? [];
+    const edges = vaultData?.edges ?? [];
+    return buildLiveGraph(nodes, edges);
+  }, [vaultData]);
+
+  useEffect(() => { setHover(null); }, [projectId]);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const [size, setSize] = useState({ w: 0, h: 0 });
 
@@ -56,7 +63,7 @@ export function GraphView({ project, selected, onSelect, isMobile }: {
 
   const sim = useRef<{ vault: string | null; nodes: SimNode[]; byId: Record<string, SimNode> }>({ vault: null, nodes: [], byId: {} });
   const graphRef = useRef(graph); graphRef.current = graph;
-  const vaultRef = useRef(vault); vaultRef.current = vault;
+  const vaultRef = useRef(projectId); vaultRef.current = projectId;
   const sizeRef = useRef(size); sizeRef.current = size;
   const viewRef = useRef(view); viewRef.current = view;
   const alpha = useRef(1);
@@ -77,7 +84,7 @@ export function GraphView({ project, selected, onSelect, isMobile }: {
     const { w, h } = sizeRef.current;
     if (s.vault === v && s.nodes.length) return;
     if (!w || !h) return;
-    const rand = makeRand(hashStr(v));
+    const rand = makeRand(hashStr(v ?? 'default'));
     const cx = w / 2, cy = h / 2;
     const R = Math.min(w, h) * 0.32;
     s.nodes = g.nodes.map((n, i) => {
@@ -214,15 +221,7 @@ export function GraphView({ project, selected, onSelect, isMobile }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: isMobile ? '10px 14px' : '12px 20px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
         <Icon name="graph" size={16} color="var(--accent)" />
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>Vault graph</span>
-        {!isMobile && <span style={{ fontSize: 11.5, fontFamily: 'var(--mono-font)', color: 'var(--fg-muted)' }}>{cnt}</span>}
-        <div style={{ display: 'flex', gap: 4, marginLeft: isMobile ? 0 : 8, padding: 3, borderRadius: 9, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
-          {vaults.map((vn) => (
-            <button key={vn} onClick={() => { setVault(vn); setHover(null); }} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 26, padding: '0 10px', borderRadius: 7, border: 'none', cursor: 'pointer', fontFamily: 'var(--ui-font)', fontSize: 12, fontWeight: 600,
-              background: vault === vn ? 'var(--surface)' : 'transparent', color: vault === vn ? 'var(--fg)' : 'var(--fg-muted)', boxShadow: vault === vn ? 'var(--shadow-card)' : 'none' }}>
-              <Icon name="folder" size={12} color={vault === vn ? 'var(--accent)' : 'var(--fg-faint)'} /> {vn}
-            </button>
-          ))}
-        </div>
+        {!isMobile && <span style={{ fontSize: 11.5, fontFamily: 'var(--mono-font)', color: 'var(--fg-muted)' }}>{isLoading ? 'Loading…' : cnt}</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
           {!isMobile && <span style={{ fontSize: 11, color: 'var(--fg-faint)', marginRight: 4 }}>drag nodes · scroll to zoom</span>}
           <button onClick={() => zoomBy(0.83)} title="Zoom out" style={gIconBtn()}><span style={{ fontSize: 17, lineHeight: 1, marginTop: -2 }}>−</span></button>
