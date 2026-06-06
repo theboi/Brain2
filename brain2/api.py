@@ -13,7 +13,7 @@ import re as _re
 import time
 import uuid
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from brain2.app_context import AppContext
@@ -82,11 +82,16 @@ def create_app(actx: AppContext) -> FastAPI:
         })
 
     def _auth(authorization: str | None = Header(default=None),
+              token: str | None = Query(default=None),
               idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
               ) -> RequestContext:
-        if not authorization or not authorization.startswith("Bearer "):
+        raw: str | None = None
+        if authorization and authorization.startswith("Bearer "):
+            raw = authorization.split(" ", 1)[1]
+        elif token:
+            raw = token
+        if not raw:
             raise HTTPException(status_code=401, detail="missing bearer token")
-        raw = authorization.split(" ", 1)[1]
         try:
             ctx = actx.tokens.validate(raw)
         except Exception:
