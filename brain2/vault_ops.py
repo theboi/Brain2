@@ -1,9 +1,12 @@
 """Vault read ops registered into OperationRegistry."""
 from __future__ import annotations
+import hashlib
+import re
 from pathlib import Path
-from brain2.errors import NotFound
-from brain2.vault.indexer import reindex_vault
-from brain2.vault.git import git_log, git_show, git_revert
+from brain2.errors import Conflict, NotFound
+from brain2.vault.fs import write_text_atomic
+from brain2.vault.indexer import reindex_vault, reindex_path
+from brain2.vault.git import git_log, git_show, git_revert, commit_batch, CommitBatch
 
 
 def _vault_root(store, ctx, params) -> Path:
@@ -149,6 +152,67 @@ def make_reindex(store):
     return handler
 
 
+def _slugify_topic(topic: str) -> str:
+    s = re.sub(r"[^a-zA-Z0-9\- ]+", "", topic).strip().lower()
+    s = re.sub(r"\s+", "-", s)
+    return s or "untitled"
+
+
+def _unique_path(root: Path, slug: str) -> str:
+    rel = f"wiki/{slug}.md"
+    n = 2
+    while (root / rel).exists():
+        rel = f"wiki/{slug}-{n}.md"
+        n += 1
+    return rel
+
+
+def make_write_page(store):
+    def handler(ctx, params):
+        project_id = params.get("project_id") or ctx.project_id
+        topic = params["topic"]
+        content = params["content"]
+        commit_message = params.get("commit_message") or f"edit: {topic}"
+        expect_hash = params.get("expect_content_hash")
+
+        root = _vault_root(store, ctx, params)
+        existing = store.get_vault_page_by_topic(project_id, topic)
+        if existing:
+            rel = params.get("path") or existing.path
+            if expect_hash is not None:
+                current = (root / existing.path).read_text(encoding="utf-8")
+                if hashlib.sha256(current.encode()).hexdigest() != expect_hash:
+                    raise Conflict("content has changed since last read")
+        else:
+            rel = params.get("path") or _unique_path(root, _slugify_topic(topic))
+
+        abs_path = root / rel
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        write_text_atomic(abs_path, content)
+
+        reindex_path(store, project_id, root, rel)
+
+        batch = CommitBatch(root)
+        batch.touched(abs_path)
+        commit_sha = commit_batch(
+            store, batch,
+            project_id=project_id, tenant_id=ctx.tenant_id,
+            kind="human", message=commit_message,
+            agent_id=f"user:{ctx.user_id}",
+            source_file=None,
+        )
+
+        page = store.get_vault_page_by_topic(project_id, topic)
+        new_hash = hashlib.sha256(content.encode()).hexdigest()
+        return {
+            "page": {"path": page.path, "topic": page.topic,
+                     "content_hash": new_hash,
+                     "updated_at": page.mtime if hasattr(page, "mtime") else None},
+            "commit_sha": commit_sha,
+        }
+    return handler
+
+
 def register_vault_ops(ops, store):
     pid = {"name": "project_id", "type": "str", "required": True}
     topic = {"name": "topic", "type": "str", "required": True}
@@ -191,3 +255,11 @@ def register_vault_ops(ops, store):
     ops.register("vault:reindex", action="manage_vault",
                  handler=make_reindex(store),
                  summary="Force a full reindex of the vault", params=[pid])
+    ops.register("vault:write_page", action="manage_vault",
+                 handler=make_write_page(store),
+                 summary="Create or update a vault page (writes file, reindexes, commits)",
+                 params=[pid, topic,
+                         {"name": "content", "type": "str", "required": True},
+                         {"name": "path", "type": "str", "required": False},
+                         {"name": "expect_content_hash", "type": "str", "required": False},
+                         {"name": "commit_message", "type": "str", "required": False}])

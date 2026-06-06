@@ -15,7 +15,7 @@ def vault_client(tmp_path):
     s.create_tenant("t1", "Acme")
     s.create_user("t1", "u1", "u1@t1.com", "member")
     s.create_project("t1", "p1", "AI")
-    s.grant_access("t1", "p1", "user", "u1", "editor")
+    s.grant_access("t1", "p1", "user", "u1", "admin")
     root = tmp_path / "v"
     init_vault_tree(root)
     git_init_vault(root, project_name="AI", tenant_id="t1", project_id="p1")
@@ -106,3 +106,51 @@ def test_vault_read_page_missing(vault_client):
     r = c.post("/api/v1/ops/vault:read_page",
                json={"project_id": "p1", "topic": "does-not-exist"}, headers=_h(tok))
     assert r.status_code == 404
+
+
+def test_vault_write_page_creates_new_topic(vault_client):
+    c, tok, s, root = vault_client
+    r = c.post("/api/v1/ops/vault:write_page",
+               json={"project_id": "p1", "topic": "new-topic",
+                     "content": "# New\n\nHello [[softmax]]\n"},
+               headers=_h(tok))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["page"]["topic"] == "new-topic"
+    assert body["commit_sha"]
+    # File on disk.
+    assert (root / body["page"]["path"]).exists()
+    # Indexed.
+    assert s.get_vault_page_by_topic("p1", "new-topic") is not None
+
+
+def test_vault_write_page_updates_existing(vault_client):
+    c, tok, s, root = vault_client
+    r = c.post("/api/v1/ops/vault:write_page",
+               json={"project_id": "p1", "topic": "softmax",
+                     "content": "# Softmax v2\n\nedited\n"},
+               headers=_h(tok))
+    assert r.status_code == 200, r.text
+    assert "v2" in (root / "wiki" / "concepts" / "softmax.md").read_text()
+
+
+def test_vault_write_page_optimistic_lock_conflict(vault_client):
+    c, tok, s, root = vault_client
+    r = c.post("/api/v1/ops/vault:write_page",
+               json={"project_id": "p1", "topic": "softmax",
+                     "content": "edited",
+                     "expect_content_hash": "deadbeef"},
+               headers=_h(tok))
+    assert r.status_code == 409, r.text
+
+
+def test_vault_write_page_records_git_commit(vault_client):
+    c, tok, s, root = vault_client
+    c.post("/api/v1/ops/vault:write_page",
+           json={"project_id": "p1", "topic": "softmax",
+                 "content": "edited body", "commit_message": "edit softmax"},
+           headers=_h(tok))
+    r = c.post("/api/v1/ops/vault:history",
+               json={"project_id": "p1", "limit": 5}, headers=_h(tok))
+    msgs = [c["message"] for c in r.json()["commits"]]
+    assert any("edit softmax" in m for m in msgs)
