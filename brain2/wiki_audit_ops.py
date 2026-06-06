@@ -95,35 +95,65 @@ def make_list_suggestions(store):
 
 
 def make_accept_suggestion(store, gateway):
+    from brain2.vault.fs import write_text_atomic
+    from brain2.vault.indexer import reindex_path
+    from brain2.vault.git import commit_batch, CommitBatch
+    from brain2.vault_ops import _slugify_topic, _unique_path
+    from brain2.vault.parser import canonical_topic
+    from pathlib import Path
+
     def handler(ctx, params):
         row = store._conn.execute(
             "SELECT s.*, a.project_id, a.topic, a.audit_id "
-            "FROM wiki_audit_suggestions s JOIN wiki_audits a ON a.audit_id = s.audit_id "
+            "FROM wiki_audit_suggestions s "
+            "JOIN wiki_audits a ON a.audit_id = s.audit_id "
             "WHERE s.tenant_id=? AND s.suggestion_id=?",
             (ctx.tenant_id, params["suggestion_id"])).fetchone()
         if row is None:
             raise NotFound("suggestion not found")
-        if row["status"] not in ("pending",):
+        if row["status"] != "pending":
             raise Conflict(f"suggestion already {row['status']}")
+
         content = params.get("edit") or row["proposed_content"]
-        current = store.get_wiki_page(ctx.tenant_id, row["project_id"], row["topic"])
-        try:
-            page = store.put_wiki_page(
-                ctx.tenant_id, row["project_id"], row["topic"], content,
-                expect_version=current.version if current else None,
-                updated_by=ctx.user_id,
-                provenance=current.provenance if current else None,
-                source="llm_audit", audit_id=row["audit_id"])
-        except Conflict as exc:
-            raise Conflict(str(exc)) from exc
+        project_id = row["project_id"]
+        topic = row["topic"]
+        audit_id = row["audit_id"]
+
+        proj = store.get_project(ctx.tenant_id, project_id)
+        if proj is None or not proj.vault_path:
+            raise NotFound(f"project {project_id!r} has no vault")
+        root = Path(proj.vault_path)
+        # Canonicalize topic to match vault_pages.topic (lowercase-kebab).
+        page = store.get_vault_page_by_topic(project_id, canonical_topic(topic))
+        if page is None:
+            rel = _unique_path(root, _slugify_topic(topic))
+        else:
+            rel = page.path
+
+        abs_path = root / rel
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        write_text_atomic(abs_path, content)
+        reindex_path(store, project_id, root, rel)
+
+        batch = CommitBatch(root)
+        batch.touched(abs_path)
+        commit_sha = commit_batch(
+            store, batch,
+            project_id=project_id, tenant_id=ctx.tenant_id,
+            kind="human",
+            message=f"audit:{audit_id}: accept {params['suggestion_id']}",
+            agent_id=f"user:{ctx.user_id}",
+            source_file=None,
+        )
+
         status = "edited_accepted" if "edit" in params else "accepted"
         with store.transaction() as cx:
             cx.execute(
-                "UPDATE wiki_audit_suggestions SET status=?, decided_by=?, decided_at=? "
-                "WHERE tenant_id=? AND suggestion_id=?",
+                "UPDATE wiki_audit_suggestions SET status=?, decided_by=?, "
+                "decided_at=? WHERE tenant_id=? AND suggestion_id=?",
                 (status, ctx.user_id, _now(), ctx.tenant_id, params["suggestion_id"]))
         return {"suggestion_id": params["suggestion_id"], "status": status,
-                "new_version": page.version}
+                "commit_sha": commit_sha}
     return handler
 
 
@@ -149,11 +179,10 @@ def register_wiki_audit_ops(ops, store, gateway):
                  summary="List suggestions emitted by an audit",
                  params=[{"name": "audit_id", "type": "str", "required": True},
                          {"name": "project_id", "type": "str", "required": True}])
-    ops.register("wiki:accept_suggestion", action="ingest",
+    ops.register("wiki:accept_suggestion", action="use_agents",
                  handler=make_accept_suggestion(store, gateway),
                  summary="Apply an audit suggestion as a new wiki revision",
-                 params=[{"name": "project_id", "type": "str", "required": True},
-                         {"name": "suggestion_id", "type": "str", "required": True},
+                 params=[{"name": "suggestion_id", "type": "str", "required": True},
                          {"name": "edit", "type": "str", "required": False}])
     ops.register("wiki:dismiss_suggestion", action="ingest",
                  handler=make_dismiss_suggestion(store),
