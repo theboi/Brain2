@@ -49,10 +49,18 @@ class Group(_Base):
     created_at: datetime = Field(default_factory=_now)
 
 
+class Workspace(_Base):
+    tenant_id: str
+    workspace_id: str
+    name: str
+    created_at: str
+
+
 class Project(_Base):
     id: str
     tenant_id: str
     name: str
+    workspace_id: str | None = None
     vault_path: str | None = None
     created_at: datetime = Field(default_factory=_now)
 

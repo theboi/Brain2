@@ -13,8 +13,8 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from brain2.errors import Conflict
-from brain2.models import IngestionJob, Project, Tenant, User, VaultCommit, VaultLink, VaultPage, WikiPage
+from brain2.errors import Conflict, NotFound
+from brain2.models import IngestionJob, Project, Tenant, User, VaultCommit, VaultLink, VaultPage, WikiPage, Workspace
 from brain2.store.migrations.runner import (
     SQLITE_MIGRATIONS_DIR,
     applied_version,
@@ -171,32 +171,54 @@ class LocalStore:
                 "VALUES (?,?,?)", (tenant_id, group_id, user_id))
 
     # --- projects ---
-    def create_project(self, tenant_id: str, project_id: str, name: str) -> Project:
+    def create_project(self, tenant_id: str, project_id: str, name: str, *,
+                       workspace_id: str | None = None) -> Project:
+        wid = workspace_id or "default"
         now = _now_iso()
         with self.transaction() as cx:
-            try:
-                cx.execute(
-                    "INSERT INTO projects(project_id, tenant_id, name, created_at, workspace_id) "
-                    "VALUES (?,?,?,?,'default')",
-                    (project_id, tenant_id, name, now),
-                )
-            except sqlite3.IntegrityError as exc:
-                raise Conflict(f"project {project_id} conflict: {exc}") from exc
-            # Ensure a "Default" workspace exists for this tenant.
+            # Ensure the target workspace exists (auto-create "default" if needed).
             cx.execute(
                 "INSERT OR IGNORE INTO workspaces(tenant_id, workspace_id, name, created_at) "
                 "VALUES (?, 'default', 'Default', ?)",
                 (tenant_id, now),
             )
-        return Project(id=project_id, tenant_id=tenant_id, name=name)
+            try:
+                cx.execute(
+                    "INSERT INTO projects(project_id, tenant_id, name, created_at, workspace_id) "
+                    "VALUES (?,?,?,?,?)",
+                    (project_id, tenant_id, name, now, wid),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise Conflict(f"project {project_id} conflict: {exc}") from exc
+        return Project(id=project_id, tenant_id=tenant_id, name=name, workspace_id=wid)
+
+    def _row_to_project(self, row) -> Project:
+        keys = row.keys()
+        return Project(
+            id=row["project_id"],
+            tenant_id=row["tenant_id"],
+            name=row["name"],
+            workspace_id=row["workspace_id"] if "workspace_id" in keys else None,
+            vault_path=row["vault_path"] if "vault_path" in keys else None,
+        )
 
     def get_project(self, tenant_id: str, project_id: str) -> Project | None:
         row = self._conn.execute(
             "SELECT * FROM projects WHERE tenant_id=? AND project_id=?",
             (tenant_id, project_id)).fetchone()
-        return Project(id=row["project_id"], tenant_id=row["tenant_id"],
-                       name=row["name"],
-                       vault_path=row["vault_path"] if "vault_path" in row.keys() else None) if row else None
+        return self._row_to_project(row) if row else None
+
+    def list_projects(self, tenant_id: str, *,
+                      workspace_id: str | None = None) -> list[Project]:
+        if workspace_id is None:
+            rows = self._conn.execute(
+                "SELECT * FROM projects WHERE tenant_id=? ORDER BY name",
+                (tenant_id,)).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM projects WHERE tenant_id=? AND workspace_id=? "
+                "ORDER BY name", (tenant_id, workspace_id)).fetchall()
+        return [self._row_to_project(r) for r in rows]
 
     def set_project_vault_path(self, tenant_id: str, project_id: str, vault_path: str) -> None:
         with self.transaction() as cx:
@@ -207,26 +229,64 @@ class LocalStore:
     def find_project_by_vault_path(self, abs_path: str) -> Project | None:
         """Return the project whose vault_path is a prefix of abs_path."""
         rows = self._conn.execute(
-            "SELECT tenant_id, project_id, name, vault_path FROM projects "
-            "WHERE vault_path IS NOT NULL").fetchall()
+            "SELECT * FROM projects WHERE vault_path IS NOT NULL").fetchall()
         for row in rows:
             vp = row["vault_path"]
             if abs_path == vp or abs_path.startswith(vp.rstrip("/") + "/"):
-                return Project(id=row["project_id"], tenant_id=row["tenant_id"],
-                               name=row["name"], vault_path=vp)
+                return self._row_to_project(row)
         return None
 
     def get_project_for_watch(self, project_id: str) -> Project | None:
         """Return the Project for this id from any tenant. Used by VaultWatcher."""
         with self.transaction() as cx:
             r = cx.execute(
-                "SELECT tenant_id, project_id, name, vault_path FROM projects "
-                "WHERE project_id = ? LIMIT 1",
+                "SELECT * FROM projects WHERE project_id = ? LIMIT 1",
                 (project_id,)).fetchone()
         if not r:
             return None
-        return Project(id=r["project_id"], tenant_id=r["tenant_id"],
-                       name=r["name"], vault_path=r["vault_path"])
+        return self._row_to_project(r)
+
+    # --- workspaces ---
+    def create_workspace(self, tenant_id: str, name: str,
+                         workspace_id: str | None = None) -> Workspace:
+        wid = workspace_id or uuid.uuid4().hex[:12]
+        now = _now_iso()
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO workspaces(tenant_id, workspace_id, name, created_at) "
+                "VALUES (?, ?, ?, ?)", (tenant_id, wid, name, now))
+        return Workspace(tenant_id=tenant_id, workspace_id=wid, name=name, created_at=now)
+
+    def get_workspace(self, tenant_id: str, workspace_id: str) -> Workspace | None:
+        row = self._conn.execute(
+            "SELECT tenant_id, workspace_id, name, created_at FROM workspaces "
+            "WHERE tenant_id=? AND workspace_id=?",
+            (tenant_id, workspace_id)).fetchone()
+        return Workspace(**dict(row)) if row else None
+
+    def list_workspaces(self, tenant_id: str) -> list[Workspace]:
+        rows = self._conn.execute(
+            "SELECT tenant_id, workspace_id, name, created_at FROM workspaces "
+            "WHERE tenant_id=? ORDER BY name", (tenant_id,)).fetchall()
+        return [Workspace(**dict(r)) for r in rows]
+
+    def rename_workspace(self, tenant_id: str, workspace_id: str, name: str) -> None:
+        with self.transaction() as cx:
+            cur = cx.execute(
+                "UPDATE workspaces SET name=? WHERE tenant_id=? AND workspace_id=?",
+                (name, tenant_id, workspace_id))
+            if cur.rowcount == 0:
+                raise NotFound(f"workspace {workspace_id!r} not found")
+
+    def delete_workspace(self, tenant_id: str, workspace_id: str) -> None:
+        attached = self._conn.execute(
+            "SELECT COUNT(*) FROM projects WHERE tenant_id=? AND workspace_id=?",
+            (tenant_id, workspace_id)).fetchone()[0]
+        if attached:
+            raise Conflict(f"workspace {workspace_id!r} has {attached} project(s) attached")
+        with self.transaction() as cx:
+            cx.execute("DELETE FROM workspaces WHERE tenant_id=? AND workspace_id=?",
+                       (tenant_id, workspace_id))
 
     # --- access ---
     def grant_access(self, tenant_id: str, project_id: str, principal_type: str,
