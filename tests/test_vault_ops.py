@@ -154,3 +154,23 @@ def test_vault_write_page_records_git_commit(vault_client):
                json={"project_id": "p1", "limit": 5}, headers=_h(tok))
     msgs = [c["message"] for c in r.json()["commits"]]
     assert any("edit softmax" in m for m in msgs)
+
+
+def test_vault_search_finds_by_topic(vault_client):
+    c, tok, s, root = vault_client
+    r = c.post("/api/v1/ops/vault:search",
+               json={"project_id": "p1", "query": "attention"},
+               headers=_h(tok))
+    assert r.status_code == 200, r.text
+    topics = [x["topic"] for x in r.json()["results"]]
+    assert "attention" in topics
+
+
+def test_vault_search_respects_limit(vault_client):
+    c, tok, s, root = vault_client
+    r = c.post("/api/v1/ops/vault:search",
+               json={"project_id": "p1", "query": "softmax OR attention",
+                     "limit": 1},
+               headers=_h(tok))
+    assert r.status_code == 200
+    assert len(r.json()["results"]) <= 1

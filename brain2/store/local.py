@@ -1086,6 +1086,17 @@ class LocalStore:
                 (project_id,)).fetchall()
         return [self._row_to_vault_page(r) for r in rows]
 
+    def search_vault_pages(self, project_id: str, query: str,
+                           limit: int = 20) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT vp.topic, vp.path, vp.tldr "
+            "FROM vault_pages_fts f JOIN vault_pages vp "
+            "  ON vp.project_id=f.project_id AND vp.path=f.path "
+            "WHERE f.project_id=? AND vault_pages_fts MATCH ? "
+            "LIMIT ?",
+            (project_id, query, int(limit))).fetchall()
+        return [{"topic": r[0], "path": r[1], "excerpt": r[2] or ""} for r in rows]
+
     # --- vault links ---
     def _row_to_link(self, r) -> VaultLink:
         return VaultLink(

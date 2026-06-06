@@ -167,6 +167,18 @@ def _unique_path(root: Path, slug: str) -> str:
     return rel
 
 
+def make_search(store):
+    def handler(ctx, params):
+        project_id = params.get("project_id") or ctx.project_id
+        query = (params.get("query") or "").strip()
+        if not query:
+            return {"results": []}
+        results = store.search_vault_pages(project_id, query,
+                                           limit=int(params.get("limit", 20)))
+        return {"results": results}
+    return handler
+
+
 def make_write_page(store):
     def handler(ctx, params):
         project_id = params.get("project_id") or ctx.project_id
@@ -255,6 +267,12 @@ def register_vault_ops(ops, store):
     ops.register("vault:reindex", action="manage_vault",
                  handler=make_reindex(store),
                  summary="Force a full reindex of the vault", params=[pid])
+    ops.register("vault:search", action="read_vault",
+                 handler=make_search(store),
+                 summary="Full-text search across vault pages (topic + tldr)",
+                 params=[pid,
+                         {"name": "query", "type": "str", "required": True},
+                         {"name": "limit", "type": "int", "required": False}])
     ops.register("vault:write_page", action="manage_vault",
                  handler=make_write_page(store),
                  summary="Create or update a vault page (writes file, reindexes, commits)",
