@@ -5,15 +5,28 @@
  * suggestions block Accept until overridden. Faithful port of the AuditDrawer
  * tree in docs/design/v1 app-wiki.jsx.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { btnGhost, btnPrimary } from '@/components/browse/Browse';
 import { DiffView } from '@/components/browse/DiffView';
-import { AUDIT_SUGGESTIONS, AUDIT_LOG, type Suggestion } from '@/lib/wiki';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
+import {
+  useStartAudit, subscribeAuditStream,
+  useAcceptSuggestion, useDismissSuggestion,
+} from '@/hooks/useVault';
+import type { DiffHunk } from '@/lib/wiki';
 
+interface LiveSuggestion {
+  id: string;
+  section: string;
+  cited: boolean;
+  sourcesCited: string[];
+  diff: DiffHunk[];
+  why: string;
+}
 type SgState = 'pending' | 'accepted' | 'dismissed';
-interface SgWithState extends Suggestion { state: SgState; }
+interface SgWithState extends LiveSuggestion { state: SgState; }
 
 function Radio({ checked, label, onClick }: { checked: boolean; label: string; onClick: () => void }) {
   return (
@@ -62,19 +75,80 @@ function SuggestionCard({ sg, onAccept, onDismiss }: { sg: SgWithState; onAccept
 }
 
 export function AuditDrawer({ open, onClose, topic }: { open: boolean; onClose: () => void; topic: string }) {
-  const [sugs, setSugs] = useState<SgWithState[]>(() => AUDIT_SUGGESTIONS.map((s) => ({ ...s, state: 'pending' as SgState })));
+  const { projectId } = useWorkspace();
+  const [sugs, setSugs] = useState<SgWithState[]>([]);
+  const [running, setRunning] = useState(false);
+  const [auditStatus, setAuditStatus] = useState<string>('');
   const [prompt, setPrompt] = useState('Check the Origins section is accurate per the sources. Tighten wording and add a citation if one is missing.');
   const [scope, setScope] = useState<'selection' | 'page'>('selection');
-  const [logOpen, setLogOpen] = useState(false);
+  const [citationRequired, setCitationRequired] = useState(true);
+  const unsubRef = useRef<(() => void) | null>(null);
+
+  const startAudit = useStartAudit(projectId, topic);
+  const acceptSuggestion = useAcceptSuggestion();
+  const dismissSuggestion = useDismissSuggestion();
+
   useEffect(() => {
     if (!open) return;
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', k);
     return () => document.removeEventListener('keydown', k);
   }, [open, onClose]);
+
+  // cleanup SSE on close
+  useEffect(() => {
+    if (!open && unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
+  }, [open]);
+
+  const handleRunAudit = () => {
+    if (!projectId || !topic || running) return;
+    setSugs([]);
+    setAuditStatus('Starting audit…');
+    setRunning(true);
+    startAudit.mutate(
+      { agent_id: 'editor', instructions: prompt, scope, citation_policy: citationRequired ? 'must_cite' : 'optional' },
+      {
+        onSuccess: (res) => {
+          setAuditStatus('Running…');
+          const unsub = subscribeAuditStream(res.audit_id, (event) => {
+            if (event.type === 'suggestion') {
+              setSugs((xs) => [...xs, { ...event.suggestion, state: 'pending' as SgState }]);
+            } else if (event.type === 'done') {
+              setRunning(false); setAuditStatus('Done');
+              unsub(); unsubRef.current = null;
+            } else if (event.type === 'error') {
+              setRunning(false); setAuditStatus('Error: ' + (event.message ?? 'unknown'));
+              unsub(); unsubRef.current = null;
+            }
+          });
+          unsubRef.current = unsub;
+        },
+        onError: (err) => {
+          setRunning(false);
+          setAuditStatus('Failed to start: ' + (err as Error).message);
+        },
+      },
+    );
+  };
+
   if (!open) return null;
+
   const pending = sugs.filter((s) => s.state !== 'dismissed');
-  const set = (id: string, state: SgState) => setSugs((xs) => xs.map((s) => s.id === id ? { ...s, state } : s));
+  const setLocalState = (id: string, state: SgState) =>
+    setSugs((xs) => xs.map((s) => s.id === id ? { ...s, state } : s));
+
+  const handleAccept = (sg: SgWithState) => {
+    acceptSuggestion.mutate(
+      { suggestion_id: sg.id },
+      { onSuccess: () => setLocalState(sg.id, 'accepted') },
+    );
+  };
+  const handleDismiss = (sg: SgWithState) => {
+    dismissSuggestion.mutate(
+      { suggestion_id: sg.id },
+      { onSuccess: () => setLocalState(sg.id, 'dismissed') },
+    );
+  };
 
   return (
     <>
@@ -94,7 +168,7 @@ export function AuditDrawer({ open, onClose, topic }: { open: boolean; onClose: 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Agent</span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 7, height: 30, padding: '0 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>
-                <StatusDot status="active" pulse={false} /> Editor <span style={{ fontFamily: 'var(--mono-font)', fontWeight: 400, color: 'var(--fg-muted)' }}>llama3 8B</span> <Icon name="chevDown" size={12} color="var(--fg-muted)" />
+                <StatusDot status="active" pulse={false} /> Editor <Icon name="chevDown" size={12} color="var(--fg-muted)" />
               </span>
             </div>
           </div>
@@ -104,11 +178,14 @@ export function AuditDrawer({ open, onClose, topic }: { open: boolean; onClose: 
               <Radio checked={scope === 'page'} label="Whole page" onClick={() => setScope('page')} />
             </div>
             <div><div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 2 }}>Citation policy</div>
-              <Radio checked label="Must cite source" onClick={() => {}} />
-              <Radio checked={false} label="Citations optional" onClick={() => {}} />
+              <Radio checked={citationRequired} label="Must cite source" onClick={() => setCitationRequired(true)} />
+              <Radio checked={!citationRequired} label="Citations optional" onClick={() => setCitationRequired(false)} />
             </div>
           </div>
-          <button style={{ ...btnPrimary(), height: 36, width: '100%', justifyContent: 'center', background: 'var(--success)', marginTop: 6 }}><Icon name="zap" size={15} color="#fff" /> Run audit</button>
+          <button onClick={handleRunAudit} disabled={running || !projectId} style={{ ...btnPrimary(), height: 36, width: '100%', justifyContent: 'center', background: running ? 'var(--fg-muted)' : 'var(--success)', marginTop: 6 }}>
+            <Icon name="zap" size={15} color="#fff" /> {running ? 'Running…' : 'Run audit'}
+          </button>
+          {auditStatus && <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', marginTop: 6, fontFamily: 'var(--mono-font)' }}>{auditStatus}</div>}
 
           <div style={{ height: 1, background: 'var(--border)', margin: '18px 0' }} />
 
@@ -119,24 +196,17 @@ export function AuditDrawer({ open, onClose, topic }: { open: boolean; onClose: 
             <span style={{ fontSize: 11, fontFamily: 'var(--mono-font)', color: 'var(--fg-muted)', background: 'var(--surface-2)', borderRadius: 6, padding: '1px 6px' }}>{pending.filter((s) => s.state === 'pending').length}</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {pending.map((s) => <SuggestionCard key={s.id} sg={s} onAccept={() => set(s.id, 'accepted')} onDismiss={() => set(s.id, 'dismissed')} />)}
-            {!pending.length && <div style={{ textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13, padding: 20 }}>All suggestions resolved.</div>}
+            {pending.map((s) => (
+              <SuggestionCard key={s.id} sg={s}
+                onAccept={() => handleAccept(s)}
+                onDismiss={() => handleDismiss(s)} />
+            ))}
+            {!pending.length && !running && (
+              <div style={{ textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13, padding: 20 }}>
+                {sugs.length > 0 ? 'All suggestions resolved.' : 'Run an audit to see suggestions.'}
+              </div>
+            )}
           </div>
-
-          {/* log */}
-          <button onClick={() => setLogOpen((o) => !o)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', marginTop: 18, padding: '10px 0', border: 'none', borderTop: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', color: 'var(--fg-muted)', fontFamily: 'var(--ui-font)' }}>
-            <Icon name={logOpen ? 'chevDown' : 'chevRight'} size={13} />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Audit log</span>
-            <span style={{ fontSize: 11.5, color: 'var(--fg-faint)' }}>{AUDIT_LOG.length} prior audits</span>
-          </button>
-          {logOpen && AUDIT_LOG.map((l, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0 8px 21px', fontSize: 12.5, color: 'var(--fg-muted)' }}>
-              <span style={{ fontFamily: 'var(--mono-font)', color: 'var(--fg-faint)' }}>{l.t}</span>
-              <span>{l.agent} · {l.who}</span>
-              <span style={{ marginLeft: 'auto', color: 'var(--success)' }}>{l.accepted}✓</span>
-              <span style={{ color: 'var(--fg-faint)' }}>{l.dismissed}✕</span>
-            </div>
-          ))}
         </div>
       </div>
     </>
