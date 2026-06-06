@@ -9,7 +9,6 @@ def test_store_is_protocol_with_expected_methods():
         "create_user", "get_user",
         "create_project", "get_project",
         "grant_access", "effective_project_role",
-        "put_wiki_page", "get_wiki_page",
         "remember_idempotent", "recall_idempotent",
     ):
         assert hasattr(Store, name), f"Store protocol missing {name}"

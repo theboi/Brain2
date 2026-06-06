@@ -74,22 +74,6 @@ class AccessGrant(_Base):
     created_at: datetime = Field(default_factory=_now)
 
 
-class WikiPage(_Base):
-    """Content lives here, not on disk (Phase 4 §9.4). `version` powers
-    optimistic-locking merge (Core §14); incremented on every write."""
-    id: str
-    tenant_id: str
-    project_id: str
-    topic: str
-    content: str
-    version: int = 1
-    last_updated_by: str | None = None
-    content_hash: str | None = None
-    provenance: str | None = None
-    created_at: datetime = Field(default_factory=_now)
-    updated_at: datetime = Field(default_factory=_now)
-
-
 class IngestionJob(_Base):
     id: str
     tenant_id: str

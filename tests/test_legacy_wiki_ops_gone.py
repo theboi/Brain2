@@ -25,3 +25,12 @@ def test_wiki_ops_not_registered():
                  "wiki:diff", "wiki:restore", "wiki:get_sources"}
     overlap = op_names & forbidden
     assert not overlap, f"legacy wiki ops still registered: {overlap}"
+
+
+def test_legacy_wiki_store_methods_removed():
+    from brain2.store.local import LocalStore
+    s = LocalStore(":memory:")
+    for name in ("put_wiki_page", "get_wiki_page", "list_wiki_pages",
+                 "search_wiki_fts", "list_wiki_revisions",
+                 "get_wiki_revision", "get_wiki_revision_by_version"):
+        assert not hasattr(s, name), f"{name} should be removed"

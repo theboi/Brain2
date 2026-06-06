@@ -9,7 +9,7 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from typing import Any, Protocol, runtime_checkable
 
-from brain2.models import Tenant, User, Project, WikiPage, IngestionJob, DataSource, Addon, VaultPage, VaultLink, VaultCommit, Workspace
+from brain2.models import Tenant, User, Project, IngestionJob, DataSource, Addon, VaultPage, VaultLink, VaultCommit, Workspace
 
 
 class Transaction(Protocol):
@@ -69,24 +69,6 @@ class Store(Protocol):
         """Max of the user's direct grant and any group grants (Core §6).
         Returns None if the user has no access. No implicit admin (P4 §9.5)."""
         ...
-
-    # --- wiki content (in DB, Phase 4 §9.4) ---
-    def put_wiki_page(self, tenant_id: str, project_id: str, topic: str, content: str,
-                      *, expect_version: int | None = None,
-                      updated_by: str | None = None,
-                      content_hash: str | None = None,
-                      provenance: str | None = None) -> WikiPage:
-        """Create or update with optimistic locking (Core §14). Raises Conflict
-        if expect_version is given and does not match the stored version."""
-        ...
-
-    def get_wiki_page(self, tenant_id: str, project_id: str, topic: str) -> WikiPage | None: ...
-
-    def list_wiki_pages(self, tenant_id: str, project_id: str,
-                        limit: int = 50, cursor: str | None = None) -> list[WikiPage]: ...
-
-    def search_wiki_fts(self, tenant_id: str, project_id: str,
-                        query: str, limit: int = 50) -> list[WikiPage]: ...
 
     def create_ingestion_job(self, tenant_id: str, project_id: str,
                               content_hash: str, topic: str) -> str: ...
