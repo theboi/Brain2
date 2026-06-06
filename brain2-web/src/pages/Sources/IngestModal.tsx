@@ -4,9 +4,12 @@
  * Faithful TS port of the IngestModal tree in docs/design/v1/project/components.jsx.
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
 import type { DroppedFile } from '@/lib/sources';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { useIngestUrl, uploadFileWithProgress } from '@/hooks/useIngest';
 
 // ── constants ─────────────────────────────────────────────────────────────────
 const INGEST_TYPE_ICON: Record<string, IconName> = { pdf: 'file', md: 'hash', url: 'globe', txt: 'file', img: 'image', code: 'code', audio: 'sparkles' };
@@ -365,20 +368,37 @@ const norm = (f: Partial<DroppedFile> & { kind?: string; url?: string; suggested
   };
 };
 
-export function IngestModal({ open, onClose, files = [], project = 'default' }: {
-  open: boolean; onClose: () => void; files?: DroppedFile[]; project?: string;
+export function IngestModal({ open, onClose, files = [] }: {
+  open: boolean; onClose: () => void; files?: DroppedFile[];
 }) {
-  const seedRows = (): Row[] => {
-    const base = files.map((f, i) => norm(f, i, project));
-    base.push(norm({ kind: 'url', name: 'https://en.wikipedia.org/wiki/Cell_theory', topic: 'Cell theory', collision: true } as never, base.length, project));
-    return base;
-  };
+  const { projectId } = useWorkspace();
+  const qc = useQueryClient();
+  const ingestUrl = useIngestUrl(projectId);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // pendingFiles: tracks File objects for rows added via picker/drop
+  const pendingFiles = useRef<Map<string, File>>(new Map());
+  // progress: filename → 0..1 fraction
+  const [progress, setProgress] = useState<Record<string, number>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
+  const effectiveProject = projectId ?? 'default';
+
+  const seedRows = (): Row[] => files.map((f, i) => norm(f, i, effectiveProject));
   const [rows, setRows] = useState<Row[]>(seedRows);
   const [sel, setSel] = useState<Set<string>>(() => new Set());
   const [draft, setDraft] = useState('');
   const [access, setAccess] = useState<Record<string, Member[]>>({});
   const [showAccess, setShowAccess] = useState(true);
-  useEffect(() => { if (open) { setRows(seedRows()); setSel(new Set()); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (open) {
+      setRows(seedRows());
+      setSel(new Set());
+      setProgress({});
+      setSubmitting(false);
+      pendingFiles.current = new Map();
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!open) return;
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -392,13 +412,71 @@ export function IngestModal({ open, onClose, files = [], project = 'default' }: 
     if (!v) return;
     let host = v;
     try { host = new URL(v.match(/^https?:\/\//) ? v : 'https://' + v).hostname.replace(/^www\./, ''); } catch { /* ignore */ }
-    setRows((rs) => [...rs, { id: 'u' + Date.now(), kind: 'url', name: v, url: v, type: 'url', size: '—', project, suggestedTopic: host, topic: host, mode: 'wiki', collision: false }]);
+    setRows((rs) => [...rs, { id: 'u' + Date.now(), kind: 'url', name: v, url: v, type: 'url', size: '—', project: effectiveProject, suggestedTopic: host, topic: host, mode: 'wiki', collision: false }]);
     setDraft('');
   };
-  const addMockFile = () => {
-    const samples: [string, string, string, string][] = [['field-notes.pdf', 'pdf', '2.3 MB', 'Field notes'], ['sales-2026.csv', 'file', '5.1 MB', 'Sales 2026'], ['onboarding.md', 'md', '8 KB', 'Onboarding']];
-    const s = samples[Math.floor(Math.random() * samples.length)];
-    setRows((rs) => [...rs, { id: 'f' + Date.now(), kind: 'file', name: s[0], type: s[1], size: s[2], project, suggestedTopic: s[3], topic: s[3], mode: 'wiki', collision: false }]);
+
+  const addFilesToQueue = (picked: File[]) => {
+    const newRows: Row[] = picked.map((f, i) => {
+      const ext = f.name.split('.').pop()?.toLowerCase() ?? 'file';
+      const typeMap: Record<string, string> = { pdf: 'pdf', md: 'md', txt: 'md', png: 'img', jpg: 'img', jpeg: 'img', gif: 'img', webp: 'img', py: 'code', js: 'code', ts: 'code', mp3: 'audio', m4a: 'audio', wav: 'audio' };
+      const type = typeMap[ext] ?? 'file';
+      const sizeKb = f.size / 1024;
+      const size = sizeKb < 1024 ? `${sizeKb.toFixed(0)} KB` : `${(sizeKb / 1024).toFixed(1)} MB`;
+      pendingFiles.current.set(f.name, f);
+      return norm({ name: f.name, type, size, project: effectiveProject, topic: '', mode: 'wiki' }, rows.length + i, effectiveProject);
+    });
+    setRows((rs) => [...rs, ...newRows]);
+  };
+
+  const onBrowseClick = () => fileInputRef.current?.click();
+
+  const onFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    if (picked.length) addFilesToQueue(picked);
+    e.target.value = '';
+  };
+
+  const onDropZoneDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const picked = Array.from(e.dataTransfer.files);
+    if (picked.length) addFilesToQueue(picked);
+  };
+
+  const onIngest = async () => {
+    if (rows.length === 0 || submitting) return;
+    setSubmitting(true);
+    try {
+      // Submit URL rows
+      const urlRows = rows.filter((r) => r.kind === 'url');
+      await Promise.allSettled(
+        urlRows.map((r) =>
+          ingestUrl.mutateAsync({ url: r.url ?? r.name, topic: r.topic || undefined }),
+        ),
+      );
+
+      // Upload file rows that have corresponding File objects
+      if (projectId) {
+        const fileRows = rows.filter((r) => r.kind === 'file');
+        const uploads = Array.from(pendingFiles.current.entries()).map(([name, file]) => {
+          const row = fileRows.find((r) => r.name === name);
+          const handle = uploadFileWithProgress(projectId, file, {
+            topic: row?.topic || undefined,
+            onProgress: (frac) => setProgress((p) => ({ ...p, [name]: frac })),
+          });
+          return handle.promise
+            .then(() => setProgress((p) => { const { [name]: _, ...rest } = p; return rest; }))
+            .catch((err) => console.error('upload error', name, err));
+        });
+        await Promise.allSettled(uploads);
+        qc.invalidateQueries({ queryKey: ['sources', projectId] });
+      }
+
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const ids = rows.map((r) => r.id);
@@ -417,8 +495,12 @@ export function IngestModal({ open, onClose, files = [], project = 'default' }: 
   const rmMember = (v: string, id: string) => setAccess((a) => { const cur = a[v] || seedAccess(); return { ...a, [v]: cur.filter((m) => m.id !== id) }; });
   const selCount = sel.size;
 
+  const progressEntries = Object.entries(progress);
+
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      {/* hidden file input */}
+      <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={onFileInputChange} />
       <div onClick={(e) => e.stopPropagation()} className="b2-anim-slide" style={{ width: 880, maxWidth: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, boxShadow: '0 24px 80px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
         {/* header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px 14px', borderBottom: '1px solid var(--border)' }}>
@@ -429,14 +511,32 @@ export function IngestModal({ open, onClose, files = [], project = 'default' }: 
         {/* body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
           {/* combined add area — files + URL in one place */}
-          <div style={{ borderRadius: 12, border: '1.5px dashed var(--border-strong)', background: 'var(--bg)', padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDropZoneDrop}
+            style={{ borderRadius: 12, border: `1.5px dashed ${dragOver ? 'var(--accent)' : 'var(--border-strong)'}`, background: dragOver ? 'var(--accent-soft)' : 'var(--bg)', padding: 14, display: 'flex', flexDirection: 'column', gap: 12, transition: 'border-color .1s, background .1s' }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="download" size={19} /></span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Drag files here, or <button onClick={addMockFile} style={{ border: 'none', background: 'transparent', color: 'var(--accent)', fontWeight: 600, fontSize: 13.5, fontFamily: 'var(--ui-font)', cursor: 'pointer', padding: 0 }}>browse</button></div>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Drag files here, or <button onClick={onBrowseClick} style={{ border: 'none', background: 'transparent', color: 'var(--accent)', fontWeight: 600, fontSize: 13.5, fontFamily: 'var(--ui-font)', cursor: 'pointer', padding: 0 }}>browse</button></div>
                 <div style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>PDF · Markdown · text · images · code — or paste a link below</div>
               </div>
             </div>
+            {progressEntries.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {progressEntries.map(([name, frac]) => (
+                  <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: 'var(--fg-muted)' }}>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                    <div style={{ width: 80, height: 4, borderRadius: 2, background: 'var(--border)' }}>
+                      <div style={{ width: `${Math.round(frac * 100)}%`, height: '100%', borderRadius: 2, background: 'var(--accent)', transition: 'width .15s' }} />
+                    </div>
+                    <span style={{ width: 30, textAlign: 'right' }}>{Math.round(frac * 100)}%</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8 }}>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 9, height: 36, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)' }}>
                 <Icon name="globe" size={15} color="var(--fg-muted)" />
@@ -473,7 +573,7 @@ export function IngestModal({ open, onClose, files = [], project = 'default' }: 
           <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{rows.length} item{rows.length === 1 ? '' : 's'} → <b style={{ color: 'var(--fg)' }}>{vaults.length}</b> vault{vaults.length === 1 ? '' : 's'}</span>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button onClick={onClose} style={ingBtnGhost()}>Cancel</button>
-            <button onClick={onClose} style={{ ...ingBtnPrimary(), opacity: rows.length ? 1 : 0.5 }}><Icon name="download" size={14} color="#fff" /> Ingest{rows.length ? ` ${rows.length}` : ''}</button>
+            <button onClick={onIngest} disabled={submitting || rows.length === 0} style={{ ...ingBtnPrimary(), opacity: (rows.length && !submitting) ? 1 : 0.5, cursor: submitting ? 'wait' : 'pointer' }}><Icon name="download" size={14} color="#fff" /> {submitting ? 'Ingesting…' : `Ingest${rows.length ? ` ${rows.length}` : ''}`}</button>
           </span>
         </div>
       </div>
