@@ -9,12 +9,11 @@ import { createPortal } from 'react-dom';
 import { Icon } from '@/components/ui/Icon';
 import { Popover } from '@/components/ui/Popover';
 import type { Theme } from '@/lib/tokens';
-
-const WORKSPACES = [
-  { id: 'default',     name: 'default',     role: 'Owner', members: 6 },
-  { id: 'research-q3', name: 'research-q3', role: 'Admin', members: 4 },
-  { id: 'personal',    name: 'personal',    role: 'Owner', members: 1 },
-];
+import type { IconName } from '@/components/ui/Icon';
+import { INBOX_TONE, inboxItems, useInboxRead } from '@/lib/inbox';
+import { useWorkspaces } from '@/hooks/useWorkspaces';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
+import type { Workspace } from '@/lib/types';
 
 const PALETTE_GROUPS = [
   { group: 'Pages', items: [
@@ -59,10 +58,65 @@ const iconBtn = (): React.CSSProperties => ({
   cursor: 'pointer',
 });
 
+function InboxMenu({ onClose }: { onClose: () => void }) {
+  const { isRead, markRead, markAll } = useInboxRead();
+  const items = inboxItems().filter((it) => !isRead(it.id));
+  return (
+    <Popover onClose={onClose} style={{ top: 44, right: 0, width: 380, maxWidth: 'calc(100vw - 24px)', padding: 0, overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '13px 14px', borderBottom: '1px solid var(--border)' }}>
+        <Icon name="bell" size={16} color="var(--fg)" />
+        <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Inbox</span>
+        <span style={{ fontSize: 11, fontFamily: 'var(--mono-font)', color: 'var(--fg-muted)', background: 'var(--surface-2)', borderRadius: 6, padding: '1px 6px' }}>
+          {items.length}
+        </span>
+        <button
+          onClick={markAll}
+          disabled={!items.length}
+          style={{ marginLeft: 'auto', border: 'none', background: 'transparent', cursor: items.length ? 'pointer' : 'default', color: items.length ? 'var(--accent)' : 'var(--fg-faint)', fontFamily: 'var(--ui-font)', fontSize: 12, fontWeight: 500 }}
+        >
+          Mark all read
+        </button>
+      </div>
+      {/* Items */}
+      <div style={{ maxHeight: 380, overflowY: 'auto', padding: 6 }}>
+        {items.map((it) => (
+          <button
+            key={it.id}
+            onClick={() => markRead(it.id)}
+            title="Mark as read"
+            style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', textAlign: 'left', padding: '9px 8px', border: 'none', borderRadius: 9, background: 'transparent', cursor: 'pointer', fontFamily: 'var(--ui-font)' }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'var(--surface-2)')}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: INBOX_TONE[it.itemTone] ?? 'var(--accent)' }} />
+            <span style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-2)', color: INBOX_TONE[it.itemTone] }}>
+              <Icon name={it.icon as IconName} size={15} />
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 13, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.title}</span>
+              <span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.meta}</span>
+            </span>
+            <Icon name="chevRight" size={14} color="var(--fg-faint)" />
+          </button>
+        ))}
+        {!items.length && (
+          <div style={{ padding: '28px', textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>You're all caught up.</div>
+        )}
+      </div>
+      {/* Footer */}
+      <a href="/inbox" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '11px', borderTop: '1px solid var(--border)', textDecoration: 'none', color: 'var(--fg-muted)', fontSize: 12.5, fontWeight: 600 }}>
+        Open inbox <Icon name="arrowRight" size={13} />
+      </a>
+    </Popover>
+  );
+}
+
 // ── Sub-components ───────────────────────────────────────────────────────────
-function WorkspaceMenu({ current, onPick, onClose }: {
-  current: string;
-  onPick: (name: string) => void;
+function WorkspaceMenu({ workspaces, currentId, onPick, onClose }: {
+  workspaces: Workspace[];
+  currentId: string | null;
+  onPick: (id: string) => void;
   onClose: () => void;
 }) {
   return (
@@ -70,14 +124,14 @@ function WorkspaceMenu({ current, onPick, onClose }: {
       <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '6px 8px 4px' }}>
         Workspaces
       </div>
-      {WORKSPACES.map((w) => (
+      {workspaces.map((w) => (
         <button
-          key={w.id}
-          onClick={() => { onPick(w.name); onClose(); }}
+          key={w.workspace_id}
+          onClick={() => { onPick(w.workspace_id); onClose(); }}
           style={{
             display: 'flex', alignItems: 'center', gap: 10, width: '100%',
             padding: '8px', border: 'none', borderRadius: 8, cursor: 'pointer',
-            background: w.name === current ? 'var(--accent-soft)' : 'transparent',
+            background: w.workspace_id === currentId ? 'var(--accent-soft)' : 'transparent',
             fontFamily: 'var(--ui-font)', textAlign: 'left',
           }}
         >
@@ -86,11 +140,14 @@ function WorkspaceMenu({ current, onPick, onClose }: {
           </span>
           <span style={{ flex: 1 }}>
             <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>{w.name}</span>
-            <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-muted)' }}>{w.role} · {w.members} members</span>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-muted)' }}>{w.vault_count} vault{w.vault_count !== 1 ? 's' : ''}</span>
           </span>
-          {w.name === current && <Icon name="check" size={14} color="var(--accent)" />}
+          {w.workspace_id === currentId && <Icon name="check" size={14} color="var(--accent)" />}
         </button>
       ))}
+      {workspaces.length === 0 && (
+        <div style={{ padding: '14px 8px', fontSize: 12.5, color: 'var(--fg-faint)', textAlign: 'center' }}>No workspaces</div>
+      )}
     </Popover>
   );
 }
@@ -236,9 +293,20 @@ interface TopBarProps {
 type MenuId = 'ws' | 'profile' | 'palette' | 'inbox' | null;
 
 export function TopBar({ theme, onToggleTheme }: TopBarProps) {
-  const [ws, setWs] = useState('default');
   const [menu, setMenu] = useState<MenuId>(null);
-  const UNREAD = 3;
+  const { isRead } = useInboxRead();
+  const { data: workspaces = [] } = useWorkspaces();
+  const { workspaceId, setWorkspaceId } = useWorkspace();
+
+  useEffect(() => {
+    if (!workspaceId && workspaces.length > 0) {
+      setWorkspaceId(workspaces[0].workspace_id);
+    }
+  }, [workspaceId, workspaces, setWorkspaceId]);
+
+  const activeWs = workspaces.find(w => w.workspace_id === workspaceId);
+  const wsLabel = activeWs?.name ?? '—';
+  const UNREAD = inboxItems().filter((it) => !isRead(it.id)).length;
 
   const open = useCallback((id: MenuId) => setMenu((m) => (m === id ? null : id)), []);
 
@@ -282,11 +350,16 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
       <div className="b2-hide-sm" style={{ position: 'relative' }}>
         <button style={pillBtn()} onClick={() => open('ws')}>
           <span style={{ color: 'var(--fg-muted)' }}>workspace</span>
-          <span style={{ color: 'var(--fg)', fontWeight: 500 }}>{ws}</span>
+          <span style={{ color: 'var(--fg)', fontWeight: 500 }}>{wsLabel}</span>
           <Icon name="chevDown" size={13} color="var(--fg-muted)" />
         </button>
         {menu === 'ws' && (
-          <WorkspaceMenu current={ws} onPick={setWs} onClose={() => setMenu(null)} />
+          <WorkspaceMenu
+            workspaces={workspaces}
+            currentId={workspaceId}
+            onPick={setWorkspaceId}
+            onClose={() => setMenu(null)}
+          />
         )}
       </div>
 
@@ -338,15 +411,7 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
             </span>
           )}
         </button>
-        {menu === 'inbox' && (
-          <Popover onClose={() => setMenu(null)} style={{ top: 44, right: 0, width: 340, padding: 12 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 8 }}>Inbox</div>
-            <div style={{ color: 'var(--fg-faint)', fontSize: 13 }}>3 unread notifications</div>
-            <a href="/" style={{ display: 'block', marginTop: 12, textAlign: 'center', fontSize: 12.5, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}>
-              View all →
-            </a>
-          </Popover>
-        )}
+        {menu === 'inbox' && <InboxMenu onClose={() => setMenu(null)} />}
       </div>
 
       {/* Profile */}
