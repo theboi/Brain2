@@ -1,85 +1,18 @@
 /*
  * Home page modals:
- *   IngestModal       — "Ingest source" button
  *   ActivityModal     — "Recent activity → View all"
  *   ManageAgentsModal — "Manage agents" link
  *   AddAgentModal     — "Add agent" tile
  *
- * All share a common HomeModalShell (fixed backdrop + animated panel).
+ * (The ingest overlay is the canonical IngestModal in @/pages/Sources/IngestModal.)
+ * All share the shared Modal shell (@/components/ui/Modal).
  */
-import { useState, useEffect, useRef, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { StatusDot } from '@/components/ui/StatusDot';
 import type { IconName } from '@/components/ui/Icon';
 import { AGENTS, ACTIVITY } from '@/lib/mockData';
-
-// ── Shared modal shell ────────────────────────────────────────────────────────
-interface ModalShellProps {
-  icon: IconName;
-  title: string;
-  width?: number;
-  onClose: () => void;
-  children: ReactNode;
-  footer?: ReactNode;
-}
-
-function ModalShell({ icon, title, width = 760, onClose, children, footer }: ModalShellProps) {
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', k);
-    return () => document.removeEventListener('keydown', k);
-  }, [onClose]);
-
-  return createPortal(
-    <div
-      className="b2-anim-fade"
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 200,
-        background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(3px)',
-        WebkitBackdropFilter: 'blur(3px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
-      }}
-    >
-      <div
-        className="b2-anim-slide"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width, maxWidth: '100%', maxHeight: '90vh',
-          display: 'flex', flexDirection: 'column',
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 16, boxShadow: '0 24px 80px rgba(0,0,0,0.5)', overflow: 'hidden',
-        }}
-      >
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          <Icon name={icon} size={18} color="var(--accent)" />
-          <span style={{ fontFamily: 'var(--display-font)', fontSize: 16, fontWeight: 600, color: 'var(--fg)' }}>{title}</span>
-          <span style={{ marginLeft: 'auto' }}>
-            <button
-              onClick={onClose}
-              style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Icon name="x" size={15} />
-            </button>
-          </span>
-        </div>
-        {/* Body */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {children}
-        </div>
-        {/* Footer */}
-        {footer && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
-            {footer}
-          </div>
-        )}
-      </div>
-    </div>,
-    document.body,
-  );
-}
+import { Modal } from '@/components/ui/Modal';
 
 // ── Shared button helpers ────────────────────────────────────────────────────
 const ghostBtn: React.CSSProperties = {
@@ -101,106 +34,6 @@ const fieldLabel: React.CSSProperties = {
   display: 'block', fontSize: 11.5, fontWeight: 600, color: 'var(--fg-muted)',
   letterSpacing: '0.02em', marginBottom: 7,
 };
-
-// ── 1 · Ingest source ────────────────────────────────────────────────────────
-const INGEST_EXAMPLE_FILES = [
-  { name: 'darwin-1859.pdf',     type: 'pdf',  size: '11.2 MB', topic: 'Origin of Species' },
-  { name: 'standup-04-12.md',    type: 'md',   size: '18 KB',   topic: 'Q3 themes' },
-];
-const INGEST_PROJECTS = ['default', 'research-q3', 'launch-docs', 'archive'];
-const INGEST_MODES = [
-  { id: 'wiki',    label: 'Wiki',    desc: 'Summarise with LLM into a clean wiki page' },
-  { id: 'static',  label: 'Static',  desc: 'Store as-is, no rewriting' },
-  { id: 'dynamic', label: 'Dynamic', desc: 'Link a live database — refreshes on change' },
-];
-
-interface IngestFile { name: string; type: string; size: string; topic: string; }
-
-export function IngestModal({ onClose }: { onClose: () => void }) {
-  const [files, setFiles] = useState<IngestFile[]>(INGEST_EXAMPLE_FILES);
-  const [project, setProject] = useState('default');
-  const [mode, setMode] = useState('wiki');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const removeFile = (i: number) => setFiles((f) => f.filter((_, j) => j !== i));
-
-  return (
-    <ModalShell
-      icon="download"
-      title="Ingest source"
-      width={680}
-      onClose={onClose}
-      footer={
-        <>
-          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{files.length} file{files.length !== 1 ? 's' : ''} queued</span>
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <button style={ghostBtn} onClick={onClose}>Cancel</button>
-            <button style={primaryBtn} onClick={onClose}>
-              <Icon name="download" size={14} color="#fff" /> Ingest
-            </button>
-          </span>
-        </>
-      }
-    >
-      {/* Drop zone */}
-      <div
-        style={{ border: '1.5px dashed var(--border-strong)', borderRadius: 12, padding: '24px 20px', textAlign: 'center', cursor: 'pointer', background: 'var(--bg)' }}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        <Icon name="download" size={22} color="var(--fg-faint)" style={{ margin: '0 auto 8px' }} />
-        <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Drop files here or click to browse</div>
-        <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 4 }}>PDFs, markdown, text, URLs, screenshots</div>
-        <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} />
-      </div>
-
-      {/* Queue */}
-      {files.length > 0 && (
-        <div style={{ borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden' }}>
-          {files.map((f, i) => (
-            <div
-              key={f.name}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderTop: i ? '1px solid var(--border)' : 'none', background: 'var(--surface)' }}
-            >
-              <Icon name="file" size={16} color="var(--fg-muted)" />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{f.type} · {f.size}</div>
-              </div>
-              <span style={{ fontSize: 11.5, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)', flexShrink: 0 }}>{f.topic}</span>
-              <button onClick={() => removeFile(i)} style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Icon name="x" size={12} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Settings row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-        <div>
-          <label style={fieldLabel}>Vault</label>
-          <select
-            value={project}
-            onChange={(e) => setProject(e.target.value)}
-            style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}
-          >
-            {INGEST_PROJECTS.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </div>
-        <div>
-          <label style={fieldLabel}>Mode</label>
-          <select
-            value={mode}
-            onChange={(e) => setMode(e.target.value)}
-            style={{ ...inputStyle, appearance: 'none', cursor: 'pointer' }}
-          >
-            {INGEST_MODES.map((m) => <option key={m.id} value={m.id}>{m.label} — {m.desc}</option>)}
-          </select>
-        </div>
-      </div>
-    </ModalShell>
-  );
-}
 
 // ── 2 · Activity (full log with filter chips) ─────────────────────────────────
 const ACTIVITY_FILTERS = [
@@ -232,7 +65,7 @@ export function ActivityModal({ onClose }: { onClose: () => void }) {
   const days = [...new Set(rows.map((r) => r.day))];
 
   return (
-    <ModalShell
+    <Modal
       icon="history"
       title="Activity"
       width={720}
@@ -308,7 +141,7 @@ export function ActivityModal({ onClose }: { onClose: () => void }) {
           No events match this filter.
         </div>
       )}
-    </ModalShell>
+    </Modal>
   );
 }
 
@@ -327,7 +160,7 @@ export function ManageAgentsModal({ onClose, onAddAgent }: { onClose: () => void
     setPaused((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   return (
-    <ModalShell
+    <Modal
       icon="users"
       title="Manage agents"
       width={880}
@@ -360,9 +193,7 @@ export function ManageAgentsModal({ onClose, onAddAgent }: { onClose: () => void
       {/* Table */}
       <div style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)', overflow: 'hidden' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.6fr 1fr 0.7fr 132px', gap: 14, padding: '9px 14px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--fg-faint)' }}>
-          <span>Agent</span>
-          <span>Model</span>
-          <span>Status</span>
+          <span>Agent</span><span>Model</span><span>Status</span>
           <span style={{ textAlign: 'right' }}>Msgs</span>
           <span style={{ textAlign: 'right' }}>Actions</span>
         </div>
@@ -374,15 +205,10 @@ export function ManageAgentsModal({ onClose, onAddAgent }: { onClose: () => void
             background: active ? 'var(--accent-soft)' : 'transparent',
           });
           return (
-            <div
-              key={a.id}
-              style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.6fr 1fr 0.7fr 132px', gap: 14, alignItems: 'center', padding: '12px 14px', borderTop: i ? '1px solid var(--border)' : 'none' }}
-            >
+            <div key={a.id} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.6fr 1fr 0.7fr 132px', gap: 14, alignItems: 'center', padding: '12px 14px', borderTop: i ? '1px solid var(--border)' : 'none' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                 <StatusDot status={isPaused ? 'idle' : a.status} />
-                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', fontFamily: 'var(--display-font)', letterSpacing: 'var(--display-track)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {a.name}
-                </span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', fontFamily: 'var(--display-font)', letterSpacing: 'var(--display-track)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.name}</span>
               </div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 12.5, color: 'var(--fg)', fontFamily: 'var(--mono-font)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.model}</div>
@@ -396,12 +222,8 @@ export function ManageAgentsModal({ onClose, onAddAgent }: { onClose: () => void
                 <button onClick={() => togglePause(a.id)} title={isPaused ? 'Resume' : 'Pause'} style={iconBtnStyle(isPaused)}>
                   <Icon name={isPaused ? 'play' : 'pause'} size={14} color={isPaused ? 'var(--accent)' : 'var(--fg-muted)'} />
                 </button>
-                <button title="Configure" style={iconBtnStyle(false)}>
-                  <Icon name="settings" size={14} color="var(--fg-muted)" />
-                </button>
-                <button title="More" style={iconBtnStyle(false)}>
-                  <Icon name="more" size={14} color="var(--fg-muted)" />
-                </button>
+                <button title="Configure" style={iconBtnStyle(false)}><Icon name="settings" size={14} color="var(--fg-muted)" /></button>
+                <button title="More" style={iconBtnStyle(false)}><Icon name="more" size={14} color="var(--fg-muted)" /></button>
               </span>
             </div>
           );
@@ -412,7 +234,7 @@ export function ManageAgentsModal({ onClose, onAddAgent }: { onClose: () => void
           </div>
         )}
       </div>
-    </ModalShell>
+    </Modal>
   );
 }
 
@@ -435,12 +257,12 @@ const MODELS_BY_DEPLOY: Record<string, { provider: string; model: string }[]> = 
   ],
 };
 const TOOL_OPTIONS: { id: string; label: string; icon: IconName }[] = [
-  { id: 'sources:read',    label: 'sources:read',    icon: 'sources' },
-  { id: 'wiki:get',        label: 'wiki:get',        icon: 'wiki' },
-  { id: 'wiki:edit',       label: 'wiki:edit',       icon: 'pencil' },
-  { id: 'web:crawl',       label: 'web:crawl',       icon: 'globe' },
-  { id: 'reports:write',   label: 'reports:write',   icon: 'file' },
-  { id: 'chat:send',       label: 'chat:send',       icon: 'chats' },
+  { id: 'sources:read',  label: 'sources:read',  icon: 'sources' },
+  { id: 'wiki:get',      label: 'wiki:get',       icon: 'wiki' },
+  { id: 'wiki:edit',     label: 'wiki:edit',      icon: 'pencil' },
+  { id: 'web:crawl',     label: 'web:crawl',      icon: 'globe' },
+  { id: 'reports:write', label: 'reports:write',  icon: 'file' },
+  { id: 'chat:send',     label: 'chat:send',      icon: 'chats' },
 ];
 
 export function AddAgentModal({ onClose }: { onClose: () => void }) {
@@ -456,11 +278,10 @@ export function AddAgentModal({ onClose }: { onClose: () => void }) {
 
   const toggleTool = (id: string) =>
     setTools((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-
   const switchDeploy = (d: 'cloud' | 'local') => { setDeploy(d); setModelIdx(0); };
 
   return (
-    <ModalShell
+    <Modal
       icon="plus"
       title="Add agent"
       width={600}
@@ -470,40 +291,25 @@ export function AddAgentModal({ onClose }: { onClose: () => void }) {
           <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{curModel.provider} · {curModel.model}</span>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button style={ghostBtn} onClick={onClose}>Cancel</button>
-            <button
-              style={{ ...primaryBtn, opacity: ready ? 1 : 0.5, pointerEvents: ready ? 'auto' : 'none' }}
-              onClick={onClose}
-            >
+            <button style={{ ...primaryBtn, opacity: ready ? 1 : 0.5, pointerEvents: ready ? 'auto' : 'none' }} onClick={onClose}>
               <Icon name="plus" size={14} color="#fff" /> Create agent
             </button>
           </span>
         </>
       }
     >
-      {/* Name */}
       <div>
         <label style={fieldLabel}>Agent name</label>
-        <input
-          autoFocus
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Analyst"
-          style={inputStyle}
-        />
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Analyst" style={inputStyle} />
       </div>
 
-      {/* Deployment */}
       <div>
         <label style={fieldLabel}>Deployment</label>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           {DEPLOY_OPTIONS.map((d) => {
             const on = deploy === d.id;
             return (
-              <button
-                key={d.id}
-                onClick={() => switchDeploy(d.id as 'cloud' | 'local')}
-                style={{ display: 'flex', alignItems: 'center', gap: 11, textAlign: 'left', padding: '11px 13px', borderRadius: 10, cursor: 'pointer', fontFamily: 'var(--ui-font)', border: on ? '1px solid var(--accent)' : '1px solid var(--border)', background: on ? 'var(--accent-soft)' : 'var(--bg)' }}
-              >
+              <button key={d.id} onClick={() => switchDeploy(d.id as 'cloud' | 'local')} style={{ display: 'flex', alignItems: 'center', gap: 11, textAlign: 'left', padding: '11px 13px', borderRadius: 10, cursor: 'pointer', fontFamily: 'var(--ui-font)', border: on ? '1px solid var(--accent)' : '1px solid var(--border)', background: on ? 'var(--accent-soft)' : 'var(--bg)' }}>
                 <span style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: on ? 'var(--surface)' : 'var(--surface-2)', color: on ? 'var(--accent)' : 'var(--fg-muted)' }}>
                   <Icon name={d.icon} size={17} />
                 </span>
@@ -517,18 +323,13 @@ export function AddAgentModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      {/* Model */}
       <div>
         <label style={fieldLabel}>Model</label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
           {models.map((m, i) => {
             const on = i === Math.min(modelIdx, models.length - 1);
             return (
-              <button
-                key={m.provider + m.model}
-                onClick={() => setModelIdx(i)}
-                style={{ display: 'flex', alignItems: 'center', gap: 11, textAlign: 'left', padding: '9px 12px', borderRadius: 9, cursor: 'pointer', fontFamily: 'var(--ui-font)', border: on ? '1px solid var(--accent)' : '1px solid var(--border)', background: on ? 'var(--accent-soft)' : 'var(--bg)' }}
-              >
+              <button key={m.provider + m.model} onClick={() => setModelIdx(i)} style={{ display: 'flex', alignItems: 'center', gap: 11, textAlign: 'left', padding: '9px 12px', borderRadius: 9, cursor: 'pointer', fontFamily: 'var(--ui-font)', border: on ? '1px solid var(--accent)' : '1px solid var(--border)', background: on ? 'var(--accent-soft)' : 'var(--bg)' }}>
                 <span style={{ width: 16, height: 16, borderRadius: '50%', flexShrink: 0, border: on ? '5px solid var(--accent)' : '1.6px solid var(--border-strong)', background: on ? 'var(--surface)' : 'transparent', boxSizing: 'border-box' }} />
                 <span style={{ flex: 1, fontSize: 13, color: 'var(--fg)', fontFamily: 'var(--mono-font)' }}>{m.model}</span>
                 <span style={{ fontSize: 11, color: 'var(--fg-faint)' }}>{m.provider}</span>
@@ -538,7 +339,6 @@ export function AddAgentModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      {/* System prompt */}
       <div>
         <label style={fieldLabel}>
           System prompt{' '}
@@ -553,7 +353,6 @@ export function AddAgentModal({ onClose }: { onClose: () => void }) {
         />
       </div>
 
-      {/* Tools */}
       <div>
         <label style={fieldLabel}>
           Tools{' '}
@@ -563,11 +362,7 @@ export function AddAgentModal({ onClose }: { onClose: () => void }) {
           {TOOL_OPTIONS.map((t) => {
             const on = tools.has(t.id);
             return (
-              <button
-                key={t.id}
-                onClick={() => toggleTool(t.id)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 32, padding: '0 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--mono-font)', fontSize: 12, fontWeight: 500, border: on ? '1px solid var(--accent)' : '1px solid var(--border)', background: on ? 'var(--accent-soft)' : 'var(--bg)', color: on ? 'var(--accent)' : 'var(--fg-muted)' }}
-              >
+              <button key={t.id} onClick={() => toggleTool(t.id)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 32, padding: '0 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--mono-font)', fontSize: 12, fontWeight: 500, border: on ? '1px solid var(--accent)' : '1px solid var(--border)', background: on ? 'var(--accent-soft)' : 'var(--bg)', color: on ? 'var(--accent)' : 'var(--fg-muted)' }}>
                 <Icon name={on ? 'check' : t.icon} size={13} color={on ? 'var(--accent)' : 'var(--fg-faint)'} />
                 {t.label}
               </button>
@@ -575,6 +370,6 @@ export function AddAgentModal({ onClose }: { onClose: () => void }) {
           })}
         </div>
       </div>
-    </ModalShell>
+    </Modal>
   );
 }

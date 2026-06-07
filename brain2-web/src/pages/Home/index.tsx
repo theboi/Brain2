@@ -22,7 +22,8 @@ import { StatTile, Legend } from '@/components/dashboard/StatTile';
 import { ActivityPanel } from '@/components/dashboard/ActivityPanel';
 import { WikiHealth } from '@/components/dashboard/WikiHealth';
 import { QuickActions } from '@/components/dashboard/QuickActions';
-import { IngestModal, ActivityModal, ManageAgentsModal, AddAgentModal } from '@/components/home/HomeModals';
+import { ActivityModal, ManageAgentsModal, AddAgentModal } from '@/components/home/HomeModals';
+import { IngestModal } from '@/pages/Sources/IngestModal';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import {
   AGENTS, HERO_STATS, ACTIVITY, WIKI_HEALTH, WIKI_BY_PROJECT,
@@ -176,7 +177,7 @@ export function HomePage() {
       </div>
 
       {/* Modals */}
-      {modal === 'ingest'   && <IngestModal onClose={() => setModal(null)} />}
+      {modal === 'ingest'   && <IngestModal open onClose={() => setModal(null)} />}
       {modal === 'activity' && <ActivityModal onClose={() => setModal(null)} />}
       {modal === 'agents'   && (
         <ManageAgentsModal
