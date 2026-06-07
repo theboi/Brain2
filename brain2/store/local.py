@@ -311,13 +311,79 @@ class LocalStore:
               ON gm.tenant_id=ag.tenant_id AND gm.group_id=ag.principal_id
             WHERE ag.tenant_id=? AND ag.project_id=? AND ag.principal_type='group'
               AND gm.user_id=?
+            UNION ALL
+            SELECT 'admin' AS role FROM users
+              WHERE tenant_id=? AND user_id=? AND role='owner'
+            UNION ALL
+            SELECT CASE wm.role WHEN 'admin' THEN 'admin' ELSE 'editor' END AS role
+              FROM workspace_members wm
+              JOIN projects p ON p.tenant_id=wm.tenant_id AND p.workspace_id=wm.workspace_id
+              WHERE wm.tenant_id=? AND wm.user_id=? AND p.project_id=?
             """,
-            (tenant_id, project_id, user_id, tenant_id, project_id, user_id),
+            (tenant_id, project_id, user_id,
+             tenant_id, project_id, user_id,
+             tenant_id, user_id,
+             tenant_id, user_id, project_id),
         ).fetchall()
         roles = [r["role"] for r in rows]
         if not roles:
             return None  # no implicit admin (Phase 4 §9.5)
         return max(roles, key=lambda r: _ROLE_RANK[r])
+
+    def revoke_access(self, tenant_id: str, project_id: str, principal_type: str,
+                      principal_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "DELETE FROM access_grants "
+                "WHERE tenant_id=? AND project_id=? AND principal_type=? AND principal_id=?",
+                (tenant_id, project_id, principal_type, principal_id))
+
+    def add_workspace_member(self, tenant_id: str, workspace_id: str,
+                             user_id: str, role: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO workspace_members(tenant_id, workspace_id, user_id, role, created_at) "
+                "VALUES (?,?,?,?,?) "
+                "ON CONFLICT(tenant_id, workspace_id, user_id) DO UPDATE SET role=excluded.role",
+                (tenant_id, workspace_id, user_id, role, _now_iso()))
+
+    def list_workspace_members(self, tenant_id: str, workspace_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT wm.user_id, u.email, u.display_name, wm.role "
+            "FROM workspace_members wm "
+            "JOIN users u ON u.tenant_id=wm.tenant_id AND u.user_id=wm.user_id "
+            "WHERE wm.tenant_id=? AND wm.workspace_id=? "
+            "ORDER BY u.email",
+            (tenant_id, workspace_id)).fetchall()
+        return [{"user_id": r["user_id"], "email": r["email"],
+                 "display_name": r["display_name"], "role": r["role"]}
+                for r in rows]
+
+    def get_workspace_member_role(self, tenant_id: str, workspace_id: str,
+                                  user_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT role FROM workspace_members "
+            "WHERE tenant_id=? AND workspace_id=? AND user_id=?",
+            (tenant_id, workspace_id, user_id)).fetchone()
+        return row["role"] if row else None
+
+    def set_workspace_member_role(self, tenant_id: str, workspace_id: str,
+                                  user_id: str, role: str) -> None:
+        with self.transaction() as cx:
+            cur = cx.execute(
+                "UPDATE workspace_members SET role=? "
+                "WHERE tenant_id=? AND workspace_id=? AND user_id=?",
+                (role, tenant_id, workspace_id, user_id))
+            if cur.rowcount == 0:
+                raise NotFound(f"workspace member {user_id!r} not found in {workspace_id!r}")
+
+    def remove_workspace_member(self, tenant_id: str, workspace_id: str,
+                                user_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "DELETE FROM workspace_members "
+                "WHERE tenant_id=? AND workspace_id=? AND user_id=?",
+                (tenant_id, workspace_id, user_id))
 
     # --- ingestion jobs ---
     def _row_to_ingestion_job(self, row) -> IngestionJob:
