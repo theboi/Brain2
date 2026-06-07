@@ -16,6 +16,7 @@ import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import type { Workspace } from '@/lib/types';
 import { logout } from '@/lib/auth';
+import { useMe } from '@/hooks/me';
 
 const PALETTE_GROUPS = [
   { group: 'Pages', items: [
@@ -301,6 +302,14 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
   const { isRead } = useInboxRead();
   const { data: workspaces = [] } = useWorkspaces();
   const { workspaceId, setWorkspaceId } = useWorkspace();
+  const { data: me } = useMe();
+
+  const meInitial = (() => {
+    if (me?.display_name) return me.display_name.trim()[0].toUpperCase();
+    if (me?.email) return me.email[0].toUpperCase();
+    return '?';
+  })();
+  const meLabel = me?.display_name ?? me?.email?.split('@')[0] ?? '…';
 
   useEffect(() => {
     if (!workspaceId && workspaces.length > 0) {
@@ -429,8 +438,8 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
           }}
           aria-label="Account menu"
         >
-          <span style={{ width: 26, height: 26, borderRadius: '50%', background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, fontFamily: 'var(--ui-font)' }}>A</span>
-          <span className="b2-hide-sm" style={{ fontSize: 13, color: 'var(--fg)', fontWeight: 500, paddingRight: 4 }}>alice</span>
+          <span style={{ width: 26, height: 26, borderRadius: '50%', background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, fontFamily: 'var(--ui-font)' }}>{meInitial}</span>
+          <span className="b2-hide-sm" style={{ fontSize: 13, color: 'var(--fg)', fontWeight: 500, paddingRight: 4 }}>{meLabel}</span>
         </button>
         {menu === 'profile' && (
           <ProfileMenu
