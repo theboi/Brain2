@@ -30,12 +30,13 @@ def make_create_project(store: Store):
 
 def make_list_projects(store: Store):
     def handler(ctx: RequestContext, params: dict) -> dict:
-        row = store._conn.execute(
-            "SELECT project_id, name, created_at FROM projects WHERE tenant_id = ? "
-            "ORDER BY created_at DESC",
-            (ctx.tenant_id,)).fetchall()
-        out = [{"project_id": r["project_id"], "name": r["name"],
-                "created_at": r["created_at"]} for r in row]
+        workspace_id = params.get("workspace_id")
+        projects = store.list_projects(ctx.tenant_id, workspace_id=workspace_id)
+        out = [{"project_id": p.id, "name": p.name,
+                "workspace_id": p.workspace_id, "vault_path": p.vault_path,
+                "created_at": p.created_at.isoformat()
+                if hasattr(p.created_at, "isoformat") else p.created_at}
+               for p in projects]
         return {"projects": out}
     return handler
 
@@ -80,7 +81,8 @@ def register_project_ops(ops, store: Store) -> None:
                          {"name": "workspace_id", "type": "str", "required": False}])
     ops.register("list_projects", action="manage_projects",
                  handler=make_list_projects(store),
-                 summary="List projects in your tenant")
+                 summary="List projects in your tenant",
+                 params=[{"name": "workspace_id", "type": "str", "required": False}])
     ops.register("get_project", action="manage_projects",
                  handler=make_get_project(store),
                  summary="Get a single project",
