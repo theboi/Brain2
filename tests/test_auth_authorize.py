@@ -34,8 +34,15 @@ def test_viewer_cannot_ingest(setup):
         authorize(setup, _ctx("member1"), action="ingest", project_id="p1")
 
 
-def test_admin_can_manage_users_tenant_action(setup):
-    authorize(setup, _ctx("admin1", "admin"), action="manage_users")
+def test_owner_can_manage_users_tenant_action(setup):
+    # manage_users re-gated to owner (spec §A4 — People management is owner-only).
+    authorize(setup, _ctx("owner1", "owner"), action="manage_users")
+
+
+def test_admin_cannot_manage_users_after_regating(setup):
+    # admin can no longer call manage_users; owner-only since spec §A4.
+    with pytest.raises(PermissionDenied):
+        authorize(setup, _ctx("admin1", "admin"), action="manage_users")
 
 
 def test_member_cannot_manage_users(setup):
@@ -61,15 +68,24 @@ def test_no_access_raises_permission_denied(setup):
         authorize(setup, _ctx("member1"), action="read_wiki", project_id="nonexistent")
 
 
-def test_owner_satisfies_admin_gated_action(store):
+def test_owner_satisfies_owner_gated_action(store):
     store.create_tenant("t1", "Acme")
-    # owner must outrank admin for tenant actions (manage_users requires 'admin')
+    # owner satisfies owner-gated actions (manage_users, manage_tenant are owner-only).
     authorize(store, _ctx("u1", "owner"), "manage_users")  # no raise
+    authorize(store, _ctx("u1", "owner"), "manage_tenant")  # no raise
 
 
 def test_admin_satisfies_admin_gated_action(store):
     store.create_tenant("t1", "Acme")
-    authorize(store, _ctx("u1", "admin"), "manage_users")  # no raise
+    # admin can still call admin-gated actions (e.g. manage_groups).
+    authorize(store, _ctx("u1", "admin"), "manage_groups")  # no raise
+
+
+def test_admin_denied_owner_gated_action(store):
+    store.create_tenant("t1", "Acme")
+    # admin cannot call owner-gated actions (manage_users re-gated to owner).
+    with pytest.raises(PermissionDenied):
+        authorize(store, _ctx("u1", "admin"), "manage_users")
 
 
 def test_member_denied_admin_gated_action(store):

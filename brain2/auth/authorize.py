@@ -10,7 +10,10 @@ from brain2.errors import PermissionDenied
 from brain2.store.base import Store
 
 TENANT_ACTION_ROLES: dict[str, str] = {
-    "manage_users": "admin",
+    # manage_users re-gated to 'owner' — People management is owner-only (spec §A4).
+    # Ops going forward should call manage_tenant; manage_users is kept as a
+    # legacy alias so existing callers don't silently break.
+    "manage_users": "owner",
     "manage_groups": "admin",
     "manage_projects": "admin",
     "manage_addons": "admin",
@@ -22,7 +25,14 @@ TENANT_ACTION_ROLES: dict[str, str] = {
     "use_agents":     "member",       # chat / list agents / list conversations
     "review_concepts": "member",      # spaced-repetition (per-user state)
     "view_reports":   "member",       # list reports (filtered to accessible projects)
-    "manage_workspace": "admin",       # create/rename/delete workspaces (admin+owner)
+    # manage_workspace removed from here — now workspace-scoped (see WORKSPACE_ACTION_ROLES).
+    "manage_tenant":  "owner",        # canonical owner-level tenant management (spec §A4)
+}
+
+# Workspace-scoped actions.  The workspace_id parameter must be supplied (or the
+# caller must be the tenant owner, who satisfies any workspace action).
+WORKSPACE_ACTION_ROLES: dict[str, str] = {
+    "manage_workspace": "admin",      # create/rename/delete workspaces
 }
 
 PROJECT_ACTION_ROLES: dict[str, str] = {
@@ -48,7 +58,8 @@ def _role_ge(a: str, b: str) -> bool:
 
 
 def authorize(store: Store, ctx: RequestContext, action: str,
-              project_id: str | None = None) -> None:
+              project_id: str | None = None,
+              workspace_id: str | None = None) -> None:
     """Raise PermissionDenied if the request lacks permission."""
     tenant_id = ctx.tenant_id
 
@@ -57,6 +68,19 @@ def authorize(store: Store, ctx: RequestContext, action: str,
         if _TENANT_ROLE_RANK.get(ctx.tenant_role, 0) < _TENANT_ROLE_RANK.get(required, 0):
             raise PermissionDenied(
                 f"action '{action}' requires tenant role '{required}'"
+            )
+        return
+
+    if action in WORKSPACE_ACTION_ROLES:
+        # Tenant owner satisfies any workspace action unconditionally.
+        if ctx.tenant_role == "owner":
+            return
+        if workspace_id is None:
+            raise PermissionDenied(f"action '{action}' requires a workspace_id")
+        ws_role = store.get_workspace_member_role(tenant_id, workspace_id, ctx.user_id)
+        if ws_role != "admin":
+            raise PermissionDenied(
+                f"action '{action}' on workspace '{workspace_id}' requires workspace admin role"
             )
         return
 
