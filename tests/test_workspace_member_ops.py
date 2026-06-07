@@ -137,9 +137,42 @@ def test_remove_non_last_admin_as_non_owner_is_allowed():
     s.create_user("t1", "u3", "u3@t1.com", "member")
     s.add_workspace_member("t1", wid, "u2", "admin")
     s.add_workspace_member("t1", wid, "u3", "admin")
+    # Add u3 to another workspace so removing from wid is not their last membership
+    ws2 = s.create_workspace("t1", "Sales")
+    s.add_workspace_member("t1", ws2.workspace_id, "u3", "member")
     non_owner_ctx = _ctx(uid="owner1", role="admin")
     result = make_remove_workspace_member(s)(non_owner_ctx, {
         "workspace_id": wid, "user_id": "u3"
+    })
+    assert result == {"removed": True}
+
+
+# ---------------------------------------------------------------------------
+# Guard: remove last workspace membership
+# ---------------------------------------------------------------------------
+
+def test_remove_last_workspace_membership_as_non_owner_raises_conflict():
+    """Non-owner cannot remove a user from their only workspace."""
+    s, wid = _setup()
+    # Add u2 to only one workspace
+    s.add_workspace_member("t1", wid, "u2", "member")
+    # caller is admin-role (not owner) trying to remove u2 from their only workspace
+    non_owner_ctx = _ctx(uid="owner1", role="admin")
+    with pytest.raises(Conflict, match="last workspace membership"):
+        make_remove_workspace_member(s)(non_owner_ctx, {
+            "workspace_id": wid, "user_id": "u2"
+        })
+
+
+def test_remove_last_workspace_membership_as_owner_is_allowed():
+    """Owner can remove a user from their only workspace."""
+    s, wid = _setup()
+    # Add u2 to only one workspace
+    s.add_workspace_member("t1", wid, "u2", "member")
+    # caller is owner trying to remove u2 from their only workspace
+    owner_ctx = _ctx(uid="owner1", role="owner")
+    result = make_remove_workspace_member(s)(owner_ctx, {
+        "workspace_id": wid, "user_id": "u2"
     })
     assert result == {"removed": True}
 

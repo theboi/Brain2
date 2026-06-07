@@ -55,6 +55,13 @@ def make_remove_workspace_member(store: Store):
         if len(admins) == 1 and admins[0]["user_id"] == user_id:
             if ctx.tenant_role != "owner":
                 raise Conflict("cannot remove the last admin of a workspace")
+        # Guard: removing a member's last workspace membership requires owner (spec §8)
+        count_row = store._conn.execute(
+            "SELECT COUNT(*) AS n FROM workspace_members WHERE tenant_id=? AND user_id=?",
+            (ctx.tenant_id, user_id)
+        ).fetchone()
+        if count_row["n"] <= 1 and ctx.tenant_role != "owner":
+            raise Conflict("cannot remove a member's last workspace membership")
         store.remove_workspace_member(ctx.tenant_id, workspace_id, user_id)
         return {"removed": True}
     return handler
