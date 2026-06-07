@@ -1,9 +1,7 @@
 // brain2-web/src/lib/auth.ts
 const STORAGE_KEY = 'b2-token';
 const REFRESH_KEY = 'b2-refresh';
-const DEV_TENANT = import.meta.env.VITE_DEV_TENANT ?? 'default';
-const DEV_EMAIL = import.meta.env.VITE_DEV_EMAIL ?? 'alice@example.com';
-const DEV_PASSWORD = import.meta.env.VITE_DEV_PASSWORD ?? 'change-me-please';
+const TENANT_ID = import.meta.env.VITE_TENANT_ID ?? 'default';
 
 let memToken: string | null = null;
 let memRefresh: string | null = null;
@@ -34,13 +32,13 @@ export function clearToken() {
   writeStorage(null, null);
 }
 
-export async function login(): Promise<void> {
+export async function login(email: string, password: string): Promise<void> {
   const r = await fetch('/api/v1/auth/tokens', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tenant_id: DEV_TENANT, email: DEV_EMAIL, password: DEV_PASSWORD }),
+    body: JSON.stringify({ tenant_id: TENANT_ID, email, password }),
   });
-  if (!r.ok) throw new Error(`login failed: ${r.status} ${await r.text()}`);
+  if (!r.ok) throw new Error(`${r.status}`);
   const body = await r.json();
   memToken = body.token;
   memRefresh = body.refresh_token ?? null;
@@ -68,7 +66,7 @@ export async function refresh(): Promise<void> {
   writeStorage(memToken, memRefresh);
 }
 
-export async function ensureToken(): Promise<string> {
+export async function ensureToken(): Promise<string | null> {
   if (memToken) return memToken;
   const { token, refresh: r } = readStorage();
   if (token) {
@@ -76,8 +74,20 @@ export async function ensureToken(): Promise<string> {
     memRefresh = r;
     return memToken;
   }
-  await login();
-  return memToken!;
+  return null; // No token — caller (RequireAuth) redirects to login
+}
+
+export async function logout(): Promise<void> {
+  const tok = memToken ?? readStorage().token;
+  if (tok) {
+    try {
+      await fetch('/api/v1/auth/tokens', {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${tok}` },
+      });
+    } catch { /* ignore network errors on logout */ }
+  }
+  clearToken();
 }
 
 export function currentToken(): string | null { return memToken; }
