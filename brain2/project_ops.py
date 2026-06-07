@@ -72,11 +72,12 @@ def make_grant_access(store: Store):
 
 
 def register_project_ops(ops, store: Store) -> None:
-    ops.register("create_project", action="manage_projects",
+    ops.register("create_project", action="manage_workspace",
                  handler=make_create_project(store),
                  summary="Create a project in your tenant",
                  params=[{"name": "name", "type": "str", "required": True},
-                         {"name": "project_id", "type": "str", "required": False}])
+                         {"name": "project_id", "type": "str", "required": False},
+                         {"name": "workspace_id", "type": "str", "required": False}])
     ops.register("list_projects", action="manage_projects",
                  handler=make_list_projects(store),
                  summary="List projects in your tenant")

@@ -132,10 +132,16 @@ def create_app(actx: AppContext) -> FastAPI:
     @app.get("/api/v1/me")
     def me(ctx: RequestContext = Depends(_auth)):
         user = actx.store.get_user(ctx.tenant_id, ctx.user_id)
+        row = actx.store._conn.execute(
+            "SELECT must_change_password FROM users WHERE tenant_id=? AND user_id=?",
+            (ctx.tenant_id, ctx.user_id)
+        ).fetchone()
+        must_change = bool(row["must_change_password"]) if row else False
         return {"user_id": ctx.user_id, "tenant_id": ctx.tenant_id,
                 "role": ctx.tenant_role,
                 "display_name": user.display_name if user else None,
-                "email": user.email if user else None}
+                "email": user.email if user else None,
+                "must_change_password": must_change}
 
     @app.patch("/api/v1/me")
     def patch_me(body: dict, ctx: RequestContext = Depends(_auth)):
@@ -160,6 +166,10 @@ def create_app(actx: AppContext) -> FastAPI:
         except AccountLockedError as exc:
             raise HTTPException(status_code=423, detail=str(exc))
         actx.passwords.set_password(ctx.tenant_id, ctx.user_id, body["new_password"])
+        # Clear the forced-change flag
+        with actx.store.transaction() as cx:
+            cx.execute("UPDATE users SET must_change_password=0 WHERE tenant_id=? AND user_id=?",
+                       (ctx.tenant_id, ctx.user_id))
         return {"changed": True}
 
     @app.get("/api/v1/workspace")

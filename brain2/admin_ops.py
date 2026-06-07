@@ -21,11 +21,32 @@ def make_create_user(store: Store, passwords: PasswordManager):
         if role not in _ASSIGNABLE_ROLES:
             raise Conflict("create_user role must be 'admin' or 'member' "
                            "(use transfer_ownership for owner)")
+        workspace_id = params.get("workspace_id")
+        workspace_role = params.get("workspace_role", "member")
+
+        # Members must belong to at least one workspace (spec §2.1 invariant)
+        if role != "owner" and workspace_id is None:
+            raise Conflict("non-owner users must be assigned to a workspace (workspace_id required)")
+
         user_id = str(uuid.uuid4())
         store.create_user(ctx.tenant_id, user_id, params["email"], role,
                           display_name=params.get("display_name"))
         passwords.set_password(ctx.tenant_id, user_id, params["password"])
-        return {"user_id": user_id, "email": params["email"], "role": role}
+
+        # Admin-seeded password → force change on first login
+        with store.transaction() as cx:
+            cx.execute("UPDATE users SET must_change_password=1 WHERE tenant_id=? AND user_id=?",
+                       (ctx.tenant_id, user_id))
+
+        # Assign to workspace
+        if workspace_id is not None:
+            if workspace_role not in {"admin", "member"}:
+                raise Conflict("workspace_role must be 'admin' or 'member'")
+            store.add_workspace_member(ctx.tenant_id, workspace_id, user_id, workspace_role)
+
+        return {"user_id": user_id, "email": params["email"], "role": role,
+                "workspace_id": workspace_id,
+                "workspace_role": workspace_role if workspace_id else None}
     return handler
 
 

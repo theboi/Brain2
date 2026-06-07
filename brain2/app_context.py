@@ -148,17 +148,20 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
                  summary="Run a read-only query against a data source",
                  params=[{"name": "data_source_id", "type": "str", "required": True},
                          {"name": "query", "type": "str", "required": True}])
-    ops.register("create_user", action="manage_users",
+    ops.register("create_user", action="manage_tenant",
                  handler=make_create_user(store, passwords),
                  summary="Create a user (admin/member) in your tenant",
                  params=[{"name": "email", "type": "str", "required": True},
                          {"name": "password", "type": "str", "required": True},
                          {"name": "display_name", "type": "str", "required": False},
                          {"name": "role", "type": "str", "required": True,
+                          "choices": ["admin", "member"]},
+                         {"name": "workspace_id", "type": "str", "required": False},
+                         {"name": "workspace_role", "type": "str", "required": False,
                           "choices": ["admin", "member"]}])
-    ops.register("list_users", action="manage_users",
+    ops.register("list_users", action="manage_tenant",
                  handler=make_list_users(store), summary="List tenant users")
-    ops.register("set_user_role", action="manage_users",
+    ops.register("set_user_role", action="manage_tenant",
                  handler=make_set_user_role(store),
                  summary="Set a user's role (admin/member)",
                  params=[{"name": "user_id", "type": "str", "required": True},
