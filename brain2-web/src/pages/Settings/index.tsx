@@ -3,14 +3,15 @@
  *   Left: secondary nav (sections)
  *   Right: scrollable section content (max-width 760px)
  *
- * Sections: Profile · Members · Integrations · Providers · Appearance ·
- *           Tools · Audit log · Danger zone
+ * Sections: Profile · People · Members · Integrations · Providers · Appearance ·
+ *           Tools · Audit log · Vault Access · Danger zone
  */
 import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
 import type { Theme, Accent } from '@/lib/tokens';
 import { ProfileSection } from './sections/ProfileSection';
+import { PeopleSection } from './sections/PeopleSection';
 import { MembersSection } from './sections/MembersSection';
 import { IntegrationsSection } from './sections/IntegrationsSection';
 import { ProvidersSection } from './sections/ProvidersSection';
@@ -18,8 +19,10 @@ import { AppearanceSection } from './sections/AppearanceSection';
 import { ToolsSection } from './sections/ToolsSection';
 import { AuditSection } from './sections/AuditSection';
 import { DangerSection } from './sections/DangerSection';
+import { VaultAccessSection } from './sections/VaultAccessSection';
+import { useMe } from '@/hooks/me';
 
-type SectionId = 'profile' | 'members' | 'integrations' | 'providers' | 'appearance' | 'tools' | 'audit' | 'danger';
+type SectionId = 'profile' | 'people' | 'members' | 'integrations' | 'providers' | 'appearance' | 'tools' | 'audit' | 'vault-access' | 'danger';
 
 interface NavItem {
   id: SectionId;
@@ -30,12 +33,14 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { id: 'profile',      icon: 'user',     label: 'Profile',      subtitle: 'Manage your personal details and sign-in.' },
+  { id: 'people',       icon: 'users',    label: 'People',       subtitle: 'Manage tenant members and guests.' },
   { id: 'members',      icon: 'users',    label: 'Members',      subtitle: 'Invite teammates and manage their roles.' },
   { id: 'integrations', icon: 'plug',     label: 'Integrations', subtitle: 'Connect Telegram, Slack and other channels.' },
   { id: 'providers',    icon: 'key',      label: 'Providers',    subtitle: 'Bring your own model API keys.' },
   { id: 'appearance',   icon: 'sparkles', label: 'Appearance',   subtitle: 'Theme, accent and interface preferences.' },
   { id: 'tools',        icon: 'command',  label: 'Tools',        subtitle: 'Control which operations agents can call.' },
   { id: 'audit',        icon: 'history',  label: 'Audit log',    subtitle: 'A record of every change in this workspace.' },
+  { id: 'vault-access', icon: 'shield',   label: 'Vault Access', subtitle: 'Manage who can access each vault.' },
   { id: 'danger',       icon: 'shield',   label: 'Danger zone',  subtitle: 'Irreversible, destructive actions.' },
 ];
 
@@ -48,16 +53,25 @@ interface SettingsPageProps {
 
 export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPageProps) {
   const [sec, setSec] = useState<SectionId>('profile');
-  const cur = NAV.find((n) => n.id === sec)!;
+  const { data: me } = useMe();
+
+  const visibleNav = NAV.filter(n => {
+    if (n.id === 'people') return me?.role === 'owner';
+    return true;
+  });
+
+  const cur = visibleNav.find((n) => n.id === sec) ?? visibleNav[0];
 
   const body: Record<SectionId, React.ReactNode> = {
     profile:      <ProfileSection />,
+    people:       <PeopleSection />,
     members:      <MembersSection />,
     integrations: <IntegrationsSection />,
     providers:    <ProvidersSection />,
     appearance:   <AppearanceSection theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />,
     tools:        <ToolsSection />,
     audit:        <AuditSection />,
+    'vault-access': <VaultAccessSection />,
     danger:       <DangerSection />,
   };
 
@@ -71,7 +85,7 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
         <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '0 10px 10px' }}>
           Settings
         </div>
-        {NAV.map((n) => {
+        {visibleNav.map((n) => {
           const on = n.id === sec;
           return (
             <button
