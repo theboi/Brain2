@@ -21,8 +21,9 @@ def _row(row) -> dict:
     return {k: row[k] for k in row.keys()}
 
 
-def insert_user_message(store, *, conversation_id: str, content: str) -> str:
-    mid = str(uuid.uuid4())
+def insert_user_message(store, *, conversation_id: str, content: str,
+                        message_id: str | None = None) -> str:
+    mid = message_id or str(uuid.uuid4())
     with store.transaction() as cx:
         cx.execute(
             "INSERT INTO messages(message_id, conversation_id, role, content, created_at) "

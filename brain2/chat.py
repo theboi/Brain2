@@ -76,6 +76,8 @@ def _allowed_tools(store, ctx: RequestContext, operations, agent_allowlist: list
 
 def run_turn(store, operations, secrets, ctx: RequestContext,
              conversation_id: str, agent_row, user_text: str,
+             user_message_id: str | None = None,
+             persist_user_message: bool = True,
              stop_check=lambda: False):
     """Yield (event_type, payload) tuples for one user turn.
 
@@ -84,7 +86,10 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
     """
     from brain2.chat_ops import (insert_user_message, insert_assistant_message,
                                   insert_tool_message)
-    insert_user_message(store, conversation_id=conversation_id, content=user_text)
+    if persist_user_message:
+        user_message_id = insert_user_message(
+            store, conversation_id=conversation_id, content=user_text,
+            message_id=user_message_id)
 
     try:
         provider = build_provider(ctx.tenant_id, agent_row, secrets)
@@ -132,7 +137,8 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
             final_assistant_text = text
             final_msg_id = insert_assistant_message(
                 store, conversation_id=conversation_id, content=text,
-                tokens_in=resp.input_tokens, tokens_out=resp.output_tokens)
+                tokens_in=resp.input_tokens, tokens_out=resp.output_tokens,
+                parent_message_id=user_message_id)
             break
 
         # Persist this assistant turn (it contained tool calls).
@@ -174,7 +180,7 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
             final_assistant_text = "(turn limit reached)"
             final_msg_id = insert_assistant_message(
                 store, conversation_id=conversation_id, content=final_assistant_text,
-                tokens_in=0, tokens_out=0)
+                tokens_in=0, tokens_out=0, parent_message_id=user_message_id)
 
     latency_ms = int((time.monotonic() - started) * 1000)
     yield ("done", {"tokens_in": total_in, "tokens_out": total_out,
