@@ -48,5 +48,6 @@ def dispatch(store: Store, registry: OperationRegistry, ctx: RequestContext,
     if op is None:
         raise KeyError(f"unknown operation {name!r}")
     project_id = params.get("project_id") or ctx.project_id
-    authorize(store, ctx, op.action, project_id)
+    workspace_id = params.get("workspace_id")
+    authorize(store, ctx, op.action, project_id, workspace_id=workspace_id)
     return op.handler(ctx, params)
