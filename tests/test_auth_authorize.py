@@ -99,3 +99,56 @@ def test_manage_ownership_requires_owner(store):
     authorize(store, _ctx("u1", "owner"), "manage_ownership")  # no raise
     with pytest.raises(PermissionDenied):
         authorize(store, _ctx("u1", "admin"), "manage_ownership")
+
+
+# --- Workspace tests ---
+
+def test_owner_bypasses_workspace_check_no_workspace_id(store):
+    """Owner can manage_workspace without a workspace_id parameter."""
+    store.create_tenant("t1", "Acme")
+    # Owner should not raise even without workspace_id
+    authorize(store, _ctx("u1", "owner"), "manage_workspace")
+
+
+def test_owner_bypasses_workspace_check_with_workspace_id(store):
+    """Owner can manage_workspace with any workspace_id."""
+    store.create_tenant("t1", "Acme")
+    # Owner should not raise even if workspace doesn't exist
+    authorize(store, _ctx("u1", "owner"), "manage_workspace", workspace_id="ws1")
+
+
+def test_non_owner_missing_workspace_id_raises(store):
+    """Non-owner calling manage_workspace without workspace_id raises PermissionDenied."""
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "admin1", "a@b.com", "admin")
+    with pytest.raises(PermissionDenied):
+        authorize(store, _ctx("admin1", "admin"), "manage_workspace")
+
+
+def test_workspace_admin_can_manage_workspace(store):
+    """User with workspace admin role can manage_workspace."""
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "ws_admin", "wa@b.com", "member")
+    store.create_workspace("t1", "Engineering", "ws1")
+    store.add_workspace_member("t1", "ws1", "ws_admin", "admin")
+    # Should not raise
+    authorize(store, _ctx("ws_admin"), "manage_workspace", workspace_id="ws1")
+
+
+def test_workspace_member_cannot_manage_workspace(store):
+    """Non-admin workspace member cannot manage_workspace."""
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "ws_member", "wm@b.com", "member")
+    store.create_workspace("t1", "Engineering", "ws1")
+    store.add_workspace_member("t1", "ws1", "ws_member", "member")
+    with pytest.raises(PermissionDenied):
+        authorize(store, _ctx("ws_member"), "manage_workspace", workspace_id="ws1")
+
+
+def test_non_member_cannot_manage_workspace(store):
+    """User with no workspace membership cannot manage_workspace."""
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "outsider", "o@b.com", "member")
+    store.create_workspace("t1", "Engineering", "ws1")
+    with pytest.raises(PermissionDenied):
+        authorize(store, _ctx("outsider"), "manage_workspace", workspace_id="ws1")
