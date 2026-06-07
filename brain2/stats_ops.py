@@ -122,6 +122,22 @@ def make_activity_list(store):
     return handler
 
 
+def make_workspace_info(store):
+    def handler(ctx, params):
+        tenant = store.get_tenant(ctx.tenant_id)
+        member_count = store._conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE tenant_id=?",
+            (ctx.tenant_id,),
+        ).fetchone()["n"]
+        return {
+            "tenant_id": ctx.tenant_id,
+            "name": tenant.name if tenant else ctx.tenant_id,
+            "member_count": member_count,
+            "plan": None,
+        }
+    return handler
+
+
 def register_stats_ops(ops, store):
     ops.register("stats:overview", action="view_stats",
                  handler=make_stats_overview(store),
@@ -145,3 +161,6 @@ def register_stats_ops(ops, store):
                  handler=make_activity_list(store),
                  summary="Recent events from the outbox (most recent first)",
                  params=[{"name": "limit", "type": "int", "required": False}])
+    ops.register("workspace:info", action="view_stats",
+                 handler=make_workspace_info(store),
+                 summary="Current workspace metadata")
