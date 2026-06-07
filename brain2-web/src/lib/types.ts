@@ -56,3 +56,41 @@ export interface SourceEvent {
   kind?: SourceRow['kind'];
   progress?: number;
 }
+
+export interface MeResponse {
+  user_id: string;
+  tenant_id: string;
+  role: string;
+  display_name: string | null;
+  email: string | null;
+  must_change_password: boolean;
+}
+
+export interface TenantUser {
+  user_id: string;
+  email: string;
+  role: string;
+  display_name: string | null;
+}
+
+export interface UserAccess {
+  user_id: string;
+  role: string;
+  workspaces: Array<{ workspace_id: string; name: string; role: string }>;
+  guest_vaults: Array<{ project_id: string; name: string; workspace_id: string; workspace_name: string; role: string }>;
+}
+
+export interface WorkspaceMember {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  role: string;
+}
+
+export interface VaultAccessEntry {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  role: string;
+  source: 'owner' | 'workspace_admin' | 'workspace_member' | 'guest';
+}

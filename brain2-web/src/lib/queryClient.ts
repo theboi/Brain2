@@ -28,4 +28,9 @@ export const qk = {
   wikiTopicSources: (pid: string, topic: string) =>
     ['wiki', pid, topic, 'sources'] as const,
   audits: (pid: string, topic: string) => ['audits', pid, topic] as const,
+  me: () => ['me'] as const,
+  users: () => ['users'] as const,
+  userAccess: (userId: string) => ['user-access', userId] as const,
+  workspaceMembers: (workspaceId: string) => ['workspace-members', workspaceId] as const,
+  vaultAccess: (projectId: string) => ['vault-access', projectId] as const,
 };
