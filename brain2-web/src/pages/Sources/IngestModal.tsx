@@ -4,7 +4,10 @@
  * Faithful TS port of the IngestModal tree in docs/design/v1/project/components.jsx.
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import { Modal } from '@/components/ui/Modal';
+import { useProjects } from '@/hooks/useWorkspaces';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
 import type { DroppedFile } from '@/lib/sources';
@@ -13,7 +16,6 @@ import { useIngestUrl, uploadFileWithProgress } from '@/hooks/useIngest';
 
 // ── constants ─────────────────────────────────────────────────────────────────
 const INGEST_TYPE_ICON: Record<string, IconName> = { pdf: 'file', md: 'hash', url: 'globe', txt: 'file', img: 'image', code: 'code', audio: 'sparkles' };
-const PROJECT_OPTS = ['default', 'research-q3', 'launch-docs', 'archive'];
 const INGEST_MODES: { id: string; label: string; icon: IconName; desc: string }[] = [
   { id: 'wiki', label: 'Wiki', icon: 'wand', desc: 'Summarise with the LLM into a clean wiki page' },
   { id: 'static', label: 'Static', icon: 'file', desc: 'Store the source as-is, no rewriting' },
@@ -69,13 +71,14 @@ function IngMenu({ trigger, width = 240, align = 'left', full = false, children 
   return (
     <Fragment>
       <div ref={ref} onClick={() => setOpen((o) => !o)} style={{ display: full ? 'block' : 'inline-flex', width: full ? '100%' : 'auto', minWidth: 0 }}>{trigger(open)}</div>
-      {open && (
+      {open && createPortal(
         <Fragment>
           <div onClick={close} style={{ position: 'fixed', inset: 0, zIndex: 305 }} />
           <div className="b2-anim-pop" style={{ position: 'fixed', left: pos.left, top: pos.top, width, zIndex: 306, background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 12, boxShadow: '0 18px 50px rgba(0,0,0,0.45)', overflow: 'hidden' }}>
             {children(close)}
           </div>
-        </Fragment>
+        </Fragment>,
+        document.body,
       )}
     </Fragment>
   );
@@ -89,7 +92,7 @@ function IngCheck({ checked, onChange }: { checked: boolean; onChange: () => voi
   );
 }
 
-function ProjectPicker({ value, onPick, full }: { value: string | null; onPick: (v: string) => void; full?: boolean }) {
+function ProjectPicker({ value, onPick, full, options, loading }: { value: string | null; onPick: (v: string) => void; full?: boolean; options: string[]; loading?: boolean }) {
   return (
     <IngMenu width={224} full={full} trigger={(open) => (
       <button style={{ ...ingPill(open, full), color: value ? 'var(--fg)' : 'var(--fg-muted)' }} title={value || 'Choose vault'}>
@@ -101,7 +104,9 @@ function ProjectPicker({ value, onPick, full }: { value: string | null; onPick: 
       {(close) => (
         <div style={{ padding: 6 }}>
           <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '6px 9px 4px' }}>Vault · project</div>
-          {PROJECT_OPTS.map((p) => (
+          {loading && <div style={{ padding: '8px 9px', fontSize: 12, color: 'var(--fg-faint)' }}>Loading…</div>}
+          {!loading && options.length === 0 && <div style={{ padding: '8px 9px', fontSize: 12, color: 'var(--fg-faint)' }}>No vaults yet</div>}
+          {options.map((p) => (
             <button key={p} onClick={() => { onPick(p); close(); }} style={ingRowBtn()}>
               <Icon name="folder" size={13} color="var(--fg-muted)" />
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p}</span>
@@ -305,9 +310,10 @@ function VaultAccess({ vaults, accessFor, onLevel, onAdd, onRemove }: {
   );
 }
 
-function IngestQueueBar({ total, selCount, allSel, onToggleAll, onBulk, onClearSel, onRemoveSel }: {
+function IngestQueueBar({ total, selCount, allSel, onToggleAll, onBulk, onClearSel, onRemoveSel, vaultOptions, vaultsLoading }: {
   total: number; selCount: number; allSel: boolean; onToggleAll: () => void;
   onBulk: (p: Partial<Row>) => void; onClearSel: () => void; onRemoveSel: () => void;
+  vaultOptions: string[]; vaultsLoading?: boolean;
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)', minHeight: 46, flexWrap: 'wrap' }}>
@@ -318,7 +324,7 @@ function IngestQueueBar({ total, selCount, allSel, onToggleAll, onBulk, onClearS
           <button onClick={onClearSel} style={{ border: 'none', background: 'transparent', color: 'var(--fg-muted)', fontSize: 11.5, cursor: 'pointer', fontFamily: 'var(--ui-font)' }}>clear</button>
           <span style={{ width: 1, height: 18, background: 'var(--border-strong)' }} />
           <span style={{ fontSize: 11.5, color: 'var(--fg-muted)', whiteSpace: 'nowrap' }}>Set for all:</span>
-          <ProjectPicker value={null} onPick={(v) => onBulk({ project: v })} />
+          <ProjectPicker value={null} onPick={(v) => onBulk({ project: v })} options={vaultOptions} loading={vaultsLoading} />
           <TopicPicker value={null} suggested={null} onPick={(v) => onBulk({ topic: v })} />
           <ModePicker value={null} onPick={(v) => onBulk({ mode: v })} />
           <button onClick={onRemoveSel} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 28, padding: '0 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--destructive)', fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--ui-font)', marginLeft: 'auto' }}><Icon name="trash" size={13} /> Remove</button>
@@ -330,8 +336,9 @@ function IngestQueueBar({ total, selCount, allSel, onToggleAll, onBulk, onClearS
   );
 }
 
-function IngestRow({ r, selected, onToggle, onChange, onRemove }: {
+function IngestRow({ r, selected, onToggle, onChange, onRemove, vaultOptions, vaultsLoading }: {
   r: Row; selected: boolean; onToggle: () => void; onChange: (p: Partial<Row>) => void; onRemove: () => void;
+  vaultOptions: string[]; vaultsLoading?: boolean;
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', borderBottom: '1px solid var(--border)', background: selected ? 'var(--accent-soft)' : 'transparent' }}>
@@ -343,7 +350,7 @@ function IngestRow({ r, selected, onToggle, onChange, onRemove }: {
           {r.kind === 'url' ? 'web page' : `${r.type} · ${r.size}`}{r.collision && <span style={{ color: 'var(--warning)' }}> · topic exists</span>}
         </div>
       </div>
-      <div style={{ flexShrink: 0, width: 124, minWidth: 0 }}><ProjectPicker value={r.project} onPick={(v) => onChange({ project: v })} full /></div>
+      <div style={{ flexShrink: 0, width: 124, minWidth: 0 }}><ProjectPicker value={r.project} onPick={(v) => onChange({ project: v })} full options={vaultOptions} loading={vaultsLoading} /></div>
       <div style={{ flexShrink: 0, width: 150, minWidth: 0 }}><TopicPicker value={r.topic} suggested={r.suggestedTopic} onPick={(v) => onChange({ topic: v })} full /></div>
       <div style={{ flexShrink: 0, width: 104, minWidth: 0 }}><ModePicker value={r.mode} onPick={(v) => onChange({ mode: v })} full /></div>
       <button onClick={onRemove} style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="x" size={13} /></button>
@@ -371,25 +378,26 @@ const norm = (f: Partial<DroppedFile> & { kind?: string; url?: string; suggested
 export function IngestModal({ open, onClose, files = [] }: {
   open: boolean; onClose: () => void; files?: DroppedFile[];
 }) {
-  const { projectId } = useWorkspace();
+  const { workspaceId, projectId } = useWorkspace();
+  const { data: projects = [], isLoading: vaultsLoading } = useProjects(workspaceId);
   const qc = useQueryClient();
   const ingestUrl = useIngestUrl(projectId);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // pendingFiles: tracks File objects for rows added via picker/drop
   const pendingFiles = useRef<Map<string, File>>(new Map());
-  // progress: filename → 0..1 fraction
   const [progress, setProgress] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
-  const effectiveProject = projectId ?? 'default';
+  const vaultOptions = projects.map((p) => p.name);
+  const defaultVault = vaultOptions[0] ?? 'default';
 
-  const seedRows = (): Row[] => files.map((f, i) => norm(f, i, effectiveProject));
+  const seedRows = (): Row[] => files.map((f, i) => norm(f, i, defaultVault));
   const [rows, setRows] = useState<Row[]>(seedRows);
   const [sel, setSel] = useState<Set<string>>(() => new Set());
   const [draft, setDraft] = useState('');
   const [access, setAccess] = useState<Record<string, Member[]>>({});
   const [showAccess, setShowAccess] = useState(true);
+
   useEffect(() => {
     if (open) {
       setRows(seedRows());
@@ -399,12 +407,7 @@ export function IngestModal({ open, onClose, files = [] }: {
       pendingFiles.current = new Map();
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (!open) return;
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', k);
-    return () => document.removeEventListener('keydown', k);
-  }, [open, onClose]);
+
   if (!open) return null;
 
   const addUrl = () => {
@@ -412,7 +415,7 @@ export function IngestModal({ open, onClose, files = [] }: {
     if (!v) return;
     let host = v;
     try { host = new URL(v.match(/^https?:\/\//) ? v : 'https://' + v).hostname.replace(/^www\./, ''); } catch { /* ignore */ }
-    setRows((rs) => [...rs, { id: 'u' + Date.now(), kind: 'url', name: v, url: v, type: 'url', size: '—', project: effectiveProject, suggestedTopic: host, topic: host, mode: 'wiki', collision: false }]);
+    setRows((rs) => [...rs, { id: 'u' + Date.now(), kind: 'url', name: v, url: v, type: 'url', size: '—', project: defaultVault, suggestedTopic: host, topic: host, mode: 'wiki', collision: false }]);
     setDraft('');
   };
 
@@ -424,7 +427,7 @@ export function IngestModal({ open, onClose, files = [] }: {
       const sizeKb = f.size / 1024;
       const size = sizeKb < 1024 ? `${sizeKb.toFixed(0)} KB` : `${(sizeKb / 1024).toFixed(1)} MB`;
       pendingFiles.current.set(f.name, f);
-      return norm({ name: f.name, type, size, project: effectiveProject, topic: '', mode: 'wiki' }, rows.length + i, effectiveProject);
+      return norm({ name: f.name, type, size, project: defaultVault, topic: '', mode: 'wiki' }, rows.length + i, defaultVault);
     });
     setRows((rs) => [...rs, ...newRows]);
   };
@@ -448,15 +451,10 @@ export function IngestModal({ open, onClose, files = [] }: {
     if (rows.length === 0 || submitting) return;
     setSubmitting(true);
     try {
-      // Submit URL rows
       const urlRows = rows.filter((r) => r.kind === 'url');
       await Promise.allSettled(
-        urlRows.map((r) =>
-          ingestUrl.mutateAsync({ url: r.url ?? r.name, topic: r.topic || undefined }),
-        ),
+        urlRows.map((r) => ingestUrl.mutateAsync({ url: r.url ?? r.name, topic: r.topic || undefined })),
       );
-
-      // Upload file rows that have corresponding File objects
       if (projectId) {
         const fileRows = rows.filter((r) => r.kind === 'file');
         const uploads = Array.from(pendingFiles.current.entries()).map(([name, file]) => {
@@ -466,13 +464,12 @@ export function IngestModal({ open, onClose, files = [] }: {
             onProgress: (frac) => setProgress((p) => ({ ...p, [name]: frac })),
           });
           return handle.promise
-            .then(() => setProgress((p) => { const { [name]: _, ...rest } = p; return rest; }))
+            .then(() => setProgress((p) => { const { [name]: _omit, ...rest } = p; return rest; }))
             .catch((err) => console.error('upload error', name, err));
         });
         await Promise.allSettled(uploads);
         qc.invalidateQueries({ queryKey: ['sources', projectId] });
       }
-
       onClose();
     } finally {
       setSubmitting(false);
@@ -494,89 +491,86 @@ export function IngestModal({ open, onClose, files = [] }: {
   const addMember = (v: string, p: Person) => setAccess((a) => { const cur = a[v] || seedAccess(); if (cur.some((m) => m.id === p.id)) return a; return { ...a, [v]: [...cur, { ...p, level: 'read' }] }; });
   const rmMember = (v: string, id: string) => setAccess((a) => { const cur = a[v] || seedAccess(); return { ...a, [v]: cur.filter((m) => m.id !== id) }; });
   const selCount = sel.size;
-
   const progressEntries = Object.entries(progress);
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      {/* hidden file input */}
-      <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={onFileInputChange} />
-      <div onClick={(e) => e.stopPropagation()} className="b2-anim-slide" style={{ width: 880, maxWidth: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, boxShadow: '0 24px 80px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
-        {/* header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px 14px', borderBottom: '1px solid var(--border)' }}>
-          <Icon name="download" size={18} color="var(--accent)" />
-          <span style={{ fontFamily: 'var(--display-font)', fontSize: 16, fontWeight: 600, color: 'var(--fg)' }}>Ingest sources</span>
-          <span style={{ marginLeft: 'auto' }}><button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="x" size={15} /></button></span>
-        </div>
-        {/* body */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* combined add area — files + URL in one place */}
-          <div
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onDropZoneDrop}
-            style={{ borderRadius: 12, border: `1.5px dashed ${dragOver ? 'var(--accent)' : 'var(--border-strong)'}`, background: dragOver ? 'var(--accent-soft)' : 'var(--bg)', padding: 14, display: 'flex', flexDirection: 'column', gap: 12, transition: 'border-color .1s, background .1s' }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="download" size={19} /></span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Drag files here, or <button onClick={onBrowseClick} style={{ border: 'none', background: 'transparent', color: 'var(--accent)', fontWeight: 600, fontSize: 13.5, fontFamily: 'var(--ui-font)', cursor: 'pointer', padding: 0 }}>browse</button></div>
-                <div style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>PDF · Markdown · text · images · code — or paste a link below</div>
-              </div>
-            </div>
-            {progressEntries.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {progressEntries.map(([name, frac]) => (
-                  <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: 'var(--fg-muted)' }}>
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-                    <div style={{ width: 80, height: 4, borderRadius: 2, background: 'var(--border)' }}>
-                      <div style={{ width: `${Math.round(frac * 100)}%`, height: '100%', borderRadius: 2, background: 'var(--accent)', transition: 'width .15s' }} />
-                    </div>
-                    <span style={{ width: 30, textAlign: 'right' }}>{Math.round(frac * 100)}%</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 9, height: 36, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)' }}>
-                <Icon name="globe" size={15} color="var(--fg-muted)" />
-                <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addUrl(); }} placeholder="https://…  paste a page or sitemap URL" style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--fg)', fontSize: 13, fontFamily: 'var(--ui-font)' }} />
-              </div>
-              <button onClick={addUrl} style={ingBtnGhost()}><Icon name="plus" size={14} /> Add link</button>
-            </div>
-          </div>
-
-          {/* queue */}
-          <div style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)' }}>
-            <IngestQueueBar total={rows.length} selCount={selCount} allSel={allSel} onToggleAll={toggleAll} onBulk={bulk} onClearSel={() => setSel(new Set())} onRemoveSel={removeSel} />
-            <div>
-              {rows.map((r) => <IngestRow key={r.id} r={r} selected={sel.has(r.id)} onToggle={() => toggle(r.id)} onChange={(p) => patch(r.id, p)} onRemove={() => removeRow(r.id)} />)}
-              {!rows.length && <div style={{ textAlign: 'center', color: 'var(--fg-faint)', padding: '26px 0', fontSize: 12.5 }}>Nothing queued — drop files or paste a link above.</div>}
-            </div>
-          </div>
-
-          {/* access management */}
-          {vaults.length > 0 && (
-            <div style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)', padding: 14 }}>
-              <button onClick={() => setShowAccess((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, textAlign: 'left' }}>
-                <Icon name="shield" size={16} color="var(--accent)" />
-                <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Vault access</span>
-                <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{vaults.length} vault{vaults.length > 1 ? 's' : ''}</span>
-                <span style={{ marginLeft: 'auto', transform: showAccess ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .12s', display: 'flex' }}><Icon name="chevDown" size={15} color="var(--fg-muted)" /></span>
-              </button>
-              {showAccess && <VaultAccess vaults={vaults} accessFor={accessFor} onLevel={setLevel} onAdd={addMember} onRemove={rmMember} />}
-            </div>
-          )}
-        </div>
-        {/* footer */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', borderTop: '1px solid var(--border)' }}>
+    <Modal
+      onClose={onClose}
+      width={880}
+      icon="download"
+      title="Ingest sources"
+      footer={
+        <Fragment>
           <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{rows.length} item{rows.length === 1 ? '' : 's'} → <b style={{ color: 'var(--fg)' }}>{vaults.length}</b> vault{vaults.length === 1 ? '' : 's'}</span>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button onClick={onClose} style={ingBtnGhost()}>Cancel</button>
             <button onClick={onIngest} disabled={submitting || rows.length === 0} style={{ ...ingBtnPrimary(), opacity: (rows.length && !submitting) ? 1 : 0.5, cursor: submitting ? 'wait' : 'pointer' }}><Icon name="download" size={14} color="#fff" /> {submitting ? 'Ingesting…' : `Ingest${rows.length ? ` ${rows.length}` : ''}`}</button>
           </span>
+        </Fragment>
+      }
+    >
+      {/* hidden file input — inside the panel; stop click bubbling to backdrop */}
+      <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }}
+        onClick={(e) => e.stopPropagation()}
+        onChange={onFileInputChange} />
+
+      {/* combined add area — files + URL */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDropZoneDrop}
+        style={{ borderRadius: 12, border: `1.5px dashed ${dragOver ? 'var(--accent)' : 'var(--border-strong)'}`, background: dragOver ? 'var(--accent-soft)' : 'var(--bg)', padding: 14, display: 'flex', flexDirection: 'column', gap: 12, transition: 'border-color .1s, background .1s' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="download" size={19} /></span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Drag files here, or <button onClick={onBrowseClick} style={{ border: 'none', background: 'transparent', color: 'var(--accent)', fontWeight: 600, fontSize: 13.5, fontFamily: 'var(--ui-font)', cursor: 'pointer', padding: 0 }}>browse</button></div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>PDF · Markdown · text · images · code — or paste a link below</div>
+          </div>
+        </div>
+        {progressEntries.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {progressEntries.map(([name, frac]) => (
+              <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: 'var(--fg-muted)' }}>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                <div style={{ width: 80, height: 4, borderRadius: 2, background: 'var(--border)' }}>
+                  <div style={{ width: `${Math.round(frac * 100)}%`, height: '100%', borderRadius: 2, background: 'var(--accent)', transition: 'width .15s' }} />
+                </div>
+                <span style={{ width: 30, textAlign: 'right' }}>{Math.round(frac * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 9, height: 36, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)' }}>
+            <Icon name="globe" size={15} color="var(--fg-muted)" />
+            <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addUrl(); }} placeholder="https://…  paste a page or sitemap URL" style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--fg)', fontSize: 13, fontFamily: 'var(--ui-font)' }} />
+          </div>
+          <button onClick={addUrl} style={ingBtnGhost()}><Icon name="plus" size={14} /> Add link</button>
         </div>
       </div>
-    </div>
+
+      {/* queue */}
+      <div style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)' }}>
+        <IngestQueueBar total={rows.length} selCount={selCount} allSel={allSel} onToggleAll={toggleAll} onBulk={bulk} onClearSel={() => setSel(new Set())} onRemoveSel={removeSel} vaultOptions={vaultOptions} vaultsLoading={vaultsLoading} />
+        <div>
+          {rows.map((r) => <IngestRow key={r.id} r={r} selected={sel.has(r.id)} onToggle={() => toggle(r.id)} onChange={(p) => patch(r.id, p)} onRemove={() => removeRow(r.id)} vaultOptions={vaultOptions} vaultsLoading={vaultsLoading} />)}
+          {!rows.length && <div style={{ textAlign: 'center', color: 'var(--fg-faint)', padding: '26px 0', fontSize: 12.5 }}>Nothing queued — drop files or paste a link above.</div>}
+        </div>
+      </div>
+
+      {/* access management */}
+      {vaults.length > 0 && (
+        <div style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)', padding: 14 }}>
+          <button onClick={() => setShowAccess((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, textAlign: 'left' }}>
+            <Icon name="shield" size={16} color="var(--accent)" />
+            <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Vault access</span>
+            <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{vaults.length} vault{vaults.length > 1 ? 's' : ''}</span>
+            <span style={{ marginLeft: 'auto', transform: showAccess ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .12s', display: 'flex' }}><Icon name="chevDown" size={15} color="var(--fg-muted)" /></span>
+          </button>
+          {showAccess && <VaultAccess vaults={vaults} accessFor={accessFor} onLevel={setLevel} onAdd={addMember} onRemove={rmMember} />}
+        </div>
+      )}
+    </Modal>
   );
 }
