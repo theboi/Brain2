@@ -193,6 +193,9 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
     from brain2.workspace_ops import register_workspace_ops
     register_workspace_ops(ops, store)
 
+    from brain2.workspace_member_ops import register_workspace_member_ops
+    register_workspace_member_ops(ops, store)
+
     from brain2.vault_ops import register_vault_ops
     register_vault_ops(ops, store)
     from brain2.static_ops import register_static_ops
