@@ -9,6 +9,11 @@ export class ApiError extends Error {
 
 async function _request<T>(path: string, init: RequestInit, retry = true): Promise<T> {
   const token = await ensureToken();
+  if (!token) {
+    clearToken();
+    window.location.href = '/login';
+    throw new Error('no token');
+  }
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
   if (!headers.has('Content-Type') && init.body && typeof init.body === 'string') {

@@ -23,6 +23,10 @@ export function ForcePasswordChange() {
     setLoading(true);
     try {
       const tok = await ensureToken();
+      if (!tok) {
+        setError('Your session expired. Please sign in again.');
+        return;
+      }
       const r = await fetch('/api/v1/me/password', {
         method: 'POST',
         headers: {

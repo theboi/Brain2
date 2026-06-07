@@ -6,6 +6,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
 import { Popover } from '@/components/ui/Popover';
 import type { Theme } from '@/lib/tokens';
@@ -14,6 +15,7 @@ import { INBOX_TONE, inboxItems, useInboxRead } from '@/lib/inbox';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import type { Workspace } from '@/lib/types';
+import { logout } from '@/lib/auth';
 
 const PALETTE_GROUPS = [
   { group: 'Pages', items: [
@@ -152,10 +154,11 @@ function WorkspaceMenu({ workspaces, currentId, onPick, onClose }: {
   );
 }
 
-function ProfileMenu({ theme, onToggleTheme, onClose }: {
+function ProfileMenu({ theme, onToggleTheme, onClose, onSignOut }: {
   theme: Theme;
   onToggleTheme: () => void;
   onClose: () => void;
+  onSignOut: () => void;
 }) {
   const Item = ({ icon, label, href, onClick, danger }: {
     icon: string; label: string; href?: string; onClick?: () => void; danger?: boolean;
@@ -198,7 +201,7 @@ function ProfileMenu({ theme, onToggleTheme, onClose }: {
         onClick={() => { onToggleTheme(); onClose(); }}
       />
       <div style={{ height: 1, background: 'var(--border)', margin: '5px 4px' }} />
-      <Item icon="logout" label="Sign out" danger onClick={onClose} />
+      <Item icon="logout" label="Sign out" danger onClick={onSignOut} />
     </Popover>
   );
 }
@@ -294,6 +297,7 @@ type MenuId = 'ws' | 'profile' | 'palette' | 'inbox' | null;
 
 export function TopBar({ theme, onToggleTheme }: TopBarProps) {
   const [menu, setMenu] = useState<MenuId>(null);
+  const navigate = useNavigate();
   const { isRead } = useInboxRead();
   const { data: workspaces = [] } = useWorkspaces();
   const { workspaceId, setWorkspaceId } = useWorkspace();
@@ -429,7 +433,16 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
           <span className="b2-hide-sm" style={{ fontSize: 13, color: 'var(--fg)', fontWeight: 500, paddingRight: 4 }}>alice</span>
         </button>
         {menu === 'profile' && (
-          <ProfileMenu theme={theme} onToggleTheme={onToggleTheme} onClose={() => setMenu(null)} />
+          <ProfileMenu
+            theme={theme}
+            onToggleTheme={onToggleTheme}
+            onClose={() => setMenu(null)}
+            onSignOut={async () => {
+              setMenu(null);
+              await logout();
+              navigate('/login', { replace: true });
+            }}
+          />
         )}
       </div>
 
