@@ -1,5 +1,5 @@
 """User-management operation handlers (P15). Registered into the OperationRegistry
-and reached via POST /api/v1/ops/{name}; authorize() gates them (manage_users for
+and reached via POST /api/v1/ops/{name}; authorize() gates them (manage_tenant for
 create/list/set-role, manage_ownership for transfer). The ">=1 owner" invariant is
 enforced here: set_user_role never grants/removes owner; transfer_ownership is the
 only path to owner and always leaves at least one owner."""
