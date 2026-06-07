@@ -203,6 +203,9 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
     from brain2.vault_lint_ops import register_lint_ops
     register_lint_ops(ops, store)
 
+    from brain2.access_ops import register_access_ops
+    register_access_ops(ops, store)
+
 
 # Map add-on op name -> (authorize action, signature adapter).
 # Bridges AddonRegistry handlers into the OperationRegistry so REST `/ops` can reach them.
