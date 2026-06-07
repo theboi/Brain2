@@ -161,28 +161,38 @@ anything you want to persist across restarts.
 
 ## Running the server
 
-### 1. Bootstrap a tenant, user, and password
+### 1. Run the complete setup script
 
-There is no public signup endpoint — the first principal is created through the
-composition root. Save this as `bootstrap.py` and run it once with the **same
-environment** (`BRAIN2_SECRET_KEY`, `BRAIN2_DB_PATH`) you'll start the server with:
+Use `scripts/setup.py` to bootstrap everything in one go: tenant, workspace, owner user,
+optional vault initialization, and optional test data seeding. There is no public signup
+endpoint — the first principal is created through the composition root.
 
-```python
-# bootstrap.py — create the first tenant/user/password
-from brain2.app_context import build_app_context
-
-actx = build_app_context()            # opens LocalStore at $BRAIN2_DB_PATH, runs migrations
-store = actx.store
-
-store.create_tenant("default", "Default Tenant")
-store.create_user("default", "alice", "alice@example.com", role="owner")
-actx.passwords.set_password("default", "alice", "change-me-please")
-print("bootstrapped: tenant=default user=alice@example.com")
-```
-
+**Interactive setup** (prompts for all values):
 ```bash
-.venv/bin/python bootstrap.py
+python scripts/setup.py
 ```
+
+**Non-interactive with defaults** (creates tenant, user, workspace, vault, and test data):
+```bash
+python scripts/setup.py --non-interactive --create-vault --with-seed
+```
+
+**Reset everything** (delete vault directories and database):
+```bash
+python scripts/setup.py --reset --yes
+```
+
+The script respects `BRAIN2_ROOT`, `BRAIN2_DB_PATH`, and `BRAIN2_SEED_VAULT_ROOT` env vars.
+
+> **Legacy:** If you prefer manual bootstrap, save `bootstrap.py` (below) and run once:
+> ```python
+> from brain2.app_context import build_app_context
+> actx = build_app_context()
+> store = actx.store
+> store.create_tenant("default", "Default Tenant")
+> store.create_user("default", "alice", "alice@example.com", role="owner")
+> actx.passwords.set_password("default", "alice", "change-me-please")
+> ```
 
 ### 2. Start the REST API
 
