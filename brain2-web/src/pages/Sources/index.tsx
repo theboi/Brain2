@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Icon } from '@/components/ui/Icon';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import {
-  SOURCE_TREE, TYPE_ICON, STATUS_CHIP, DROPPED,
+  SOURCE_TREE, TYPE_ICON, STATUS_CHIP,
   type Source, type SourceFilter,
 } from '@/lib/sources';
 import {
@@ -60,28 +60,28 @@ function toDisplaySource(r: SourceRow): Source {
 }
 
 // ── Filter chip defs (Tags / Status) — shared by desktop sidebar + mobile list ─
-function sourceChipDefs(f: SourceFilter, setF: (f: SourceFilter) => void): ChipDef[] {
+function sourceChipDefs(f: SourceFilter, setF: (f: SourceFilter) => void, projectNames: string[] = []): ChipDef[] {
   const t = SOURCE_TREE;
-  const projOpts = [{ value: 'all', label: 'All projects', icon: 'layers' as const, count: t.total }, ...t.projects.map((p) => ({ value: p.label, label: p.label, icon: 'folder' as const, count: p.count }))];
+  const projOpts = [{ value: 'all', label: 'All projects', icon: 'layers' as const }, ...projectNames.map((p) => ({ value: p, label: p, icon: 'folder' as const }))];
   const tagOpts = [{ value: 'all', label: 'All tags', icon: 'tag' as const }, ...t.tags.map((x) => ({ value: x.label, label: x.label, icon: 'tag' as const, count: x.count }))];
   const statOpts = [{ value: 'all', label: 'All status', icon: 'layers' as const }, ...t.status.map((x) => ({ value: x.id, label: x.label, icon: x.icon, count: x.count, tone: x.tone }))];
-  const proj = t.projects.find((p) => p.label === f.project);
+  const proj = projectNames.find((p) => p === f.project);
   const tag = t.tags.find((x) => x.label === f.tag);
   const st = t.status.find((x) => x.id === f.status);
   return [
-    { key: 'project', icon: 'folder', label: proj ? proj.label : 'All projects', active: f.project !== 'all', title: 'Project', options: projOpts, value: f.project, onPick: (v) => setF({ ...f, project: v }) },
+    { key: 'project', icon: 'folder', label: proj ?? 'All projects', active: f.project !== 'all', title: 'Project', options: projOpts, value: f.project, onPick: (v) => setF({ ...f, project: v }) },
     { key: 'tag', icon: 'tag', label: tag ? tag.label : 'All tags', active: f.tag !== 'all', title: 'Tag', options: tagOpts, value: f.tag, onPick: (v) => setF({ ...f, tag: v }) },
     { key: 'status', icon: st ? st.icon : 'layers', tone: st ? st.tone : undefined, label: st ? st.label : 'All status', active: f.status !== 'all', title: 'Status', options: statOpts, value: f.status, onPick: (v) => setF({ ...f, status: v }) },
   ];
 }
 
 // ── Desktop sidebar ────────────────────────────────────────────────────────────
-function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, width = 268 }: {
-  f: SourceFilter; setF: (f: SourceFilter) => void; selectedId: string; onSelect: (id: string) => void; onIngest: () => void; items: Source[]; width?: number;
+function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, projectNames, width = 268 }: {
+  f: SourceFilter; setF: (f: SourceFilter) => void; selectedId: string; onSelect: (id: string) => void; onIngest: () => void; items: Source[]; projectNames: string[]; width?: number;
 }) {
   const [q, setQ] = useState('');
   const [openF, setOpenF] = useState<Record<string, boolean>>({ default: true });
-  const defs = sourceChipDefs(f, setF).filter((d) => d.key !== 'project'); // project = the folder tree
+  const defs = sourceChipDefs(f, setF, projectNames).filter((d) => d.key !== 'project'); // project = the folder tree
   const filtered = items.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
   // Group by project_id
   const projectLabels = Array.from(new Set(items.map((s) => s.project)));
@@ -381,6 +381,7 @@ export function SourcesPage() {
 
   const { workspaceId, projectId, setProjectId } = useWorkspace();
   const { data: projects = [] } = useProjects(workspaceId);
+  const projectNames = projects.map((p) => p.name);
 
   useEffect(() => {
     if (!projectId && projects.length > 0) setProjectId(projects[0].project_id);
@@ -410,7 +411,7 @@ export function SourcesPage() {
   }, []);
 
   const selected = items.find((s) => s.id === selectedId) ?? items[0] ?? null;
-  const mobileChips = <FilterChips defs={sourceChipDefs(f, setF)} />;
+  const mobileChips = <FilterChips defs={sourceChipDefs(f, setF, projectNames)} />;
 
   if (!projectId) {
     return <div style={{ padding: 24, color: 'var(--fg-muted)' }}>Pick a vault.</div>;
@@ -432,7 +433,7 @@ export function SourcesPage() {
         </div>
       ) : (
         <>
-          <SourcesSidebar f={f} setF={setF} selectedId={selectedId} onSelect={setSelectedId} onIngest={() => setModal(true)} items={items} />
+          <SourcesSidebar f={f} setF={setF} selectedId={selectedId} onSelect={setSelectedId} onIngest={() => setModal(true)} items={items} projectNames={projectNames} />
           {selected
             ? <PreviewPane s={selected} projectId={projectId} onDeleted={() => setSelectedId('')} />
             : <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>Select a source to preview.</div>}
@@ -448,7 +449,7 @@ export function SourcesPage() {
           </div>
         </div>
       )}
-      <IngestModal open={modal} onClose={() => setModal(false)} files={DROPPED} />
+      <IngestModal open={modal} onClose={() => setModal(false)} />
     </div>
   );
 }

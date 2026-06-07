@@ -10,7 +10,7 @@ import { Modal } from '@/components/ui/Modal';
 import { useProjects } from '@/hooks/useWorkspaces';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
-import type { DroppedFile } from '@/lib/sources';
+export interface DroppedFile { name: string; type: string; size: string; project: string; topic: string; collision?: boolean; mode: 'wiki' | 'dynamic' | 'static'; }
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useIngestUrl, uploadFileWithProgress } from '@/hooks/useIngest';
 

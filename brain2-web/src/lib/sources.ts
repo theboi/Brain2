@@ -69,14 +69,4 @@ export const STATUS_CHIP: Record<IngestStatus, { icon: IconName; tone: Tone; lab
   failed: { icon: 'alert', tone: 'warning', label: 'extraction error' },
 };
 
-// Files shown in the ingest modal (the simulated drop payload).
-export interface DroppedFile { name: string; type: string; size: string; project: string; topic: string; collision?: boolean; mode: 'wiki' | 'dynamic' | 'static'; }
-export const DROPPED: DroppedFile[] = [
-  { name: 'darwin-1859.pdf', type: 'pdf', size: '11.2 MB', project: 'research-q3', topic: 'Origin of Species', mode: 'wiki' },
-  { name: 'mendel-1866.pdf', type: 'pdf', size: '2.1 MB', project: 'default', topic: 'Cell theory', collision: true, mode: 'wiki' },
-  { name: 'schwann-1839.pdf', type: 'pdf', size: '5.1 MB', project: 'default', topic: 'Cell theory', mode: 'wiki' },
-  { name: 'lab-readings.csv', type: 'file', size: '420 KB', project: 'default', topic: 'Microscopy', mode: 'dynamic' },
-  { name: 'gateway.py', type: 'code', size: '18 KB', project: 'launch-docs', topic: 'LLM Gateway', mode: 'static' },
-];
-
 export interface SourceFilter { project: string; tag: string; status: string; }
