@@ -124,8 +124,14 @@ def git_log(root: Path, *, limit: int = 50, until_sha: str | None = None) -> lis
 
 
 def git_show(root: Path, sha: str) -> str:
-    """Return the unified-diff output of `git show <sha>`."""
-    return _run(["show", "--patch", "--format=fuller", sha], cwd=root).stdout
+    """Return the patch-only unified diff of a commit."""
+    return _run(["show", "--patch", "--format=", sha], cwd=root).stdout
+
+
+def parse_show_hunks(patch: str) -> list[dict]:
+    """Parse `git_show` output into [{type, text}] hunks."""
+    from brain2.diffutil import parse_unified_diff
+    return parse_unified_diff(patch)
 
 
 def git_revert(store, root: Path, sha: str, *, project_id: str, tenant_id: str,

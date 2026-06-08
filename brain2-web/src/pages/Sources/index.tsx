@@ -16,6 +16,7 @@ import {
   FilterChips, Folder, NestRow, SidebarSearch, BTONE, btnGhost, btnPrimary,
   type ChipDef,
 } from '@/components/browse/Browse';
+import { HistoryView, type HistoryRevision } from '@/components/browse/HistoryView';
 import { MiniMD } from '@/components/browse/MiniMD';
 import { IngestModal } from './IngestModal';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
@@ -23,7 +24,7 @@ import { useProjects } from '@/hooks/useWorkspaces';
 import {
   useSources, useExtracted,
   usePutExtracted, useReingest, useDeleteSource,
-  useSourceEvents, useDownloadSource,
+  useSourceEvents, useDownloadSource, useExtractionHistory, useExtractionDiff,
 } from '@/hooks/useSources';
 import type { SourceRow } from '@/lib/types';
 
@@ -238,25 +239,33 @@ function ExtractedBody({ s, extractedText, extractedVersion, onSave }: {
   );
 }
 
-function HistoryBody({ s }: { s: Source }) {
-  const rows = [
-    { v: 'v3', t: s.updated, who: s.uploader, what: 'edited extraction' },
-    { v: 'v2', t: s.created, who: 'system', what: 're-ingested · markitdown' },
-    { v: 'v1', t: s.created, who: s.uploader, what: 'uploaded' },
-  ];
+const EXTRACTION_KIND_LABEL: Record<string, string> = {
+  upload: 'extracted on upload',
+  reingest: 're-ingested · markitdown',
+  edit: 'edited extraction',
+};
+
+function HistoryBody({ s, projectId, mobile }: { s: Source; projectId: string | null; mobile?: boolean }) {
+  const { data: versions = [] } = useExtractionHistory(projectId, s.id);
+  const [selVer, setSelVer] = useState<number | null>(null);
+  const selected = versions.some((v) => v.version === selVer) ? selVer : versions[0]?.version ?? null;
+  const { data: diffData, isFetching } = useExtractionDiff(projectId, s.id, selected);
+  const revisions: HistoryRevision[] = versions.map((v) => ({
+    id: String(v.version),
+    shortId: `v${v.version}`,
+    date: new Date(v.created_at).toLocaleString(),
+    title: EXTRACTION_KIND_LABEL[v.kind] ?? v.kind,
+    subtitle: v.bytes ? `${v.bytes.toLocaleString()} bytes` : undefined,
+  }));
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {rows.map((r, i) => (
-        <div key={r.v} style={{ display: 'flex', gap: 14, padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
-          <span style={{ width: 9, marginTop: 5, flexShrink: 0 }}><span style={{ display: 'block', width: 9, height: 9, borderRadius: '50%', background: i ? 'var(--surface-3)' : 'var(--accent)', border: '2px solid var(--border)' }} /></span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, color: 'var(--fg)' }}><b style={{ fontFamily: 'var(--mono-font)', fontWeight: 500 }}>{r.v}</b> · {r.what}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', marginTop: 2 }}>{r.who} · {r.t}</div>
-          </div>
-          <button style={btnGhost()}>Diff</button>
-        </div>
-      ))}
-    </div>
+    <HistoryView
+      revisions={revisions}
+      selectedId={selected != null ? String(selected) : null}
+      onSelect={(id) => setSelVer(Number(id))}
+      hunks={diffData?.hunks}
+      diffLoading={isFetching}
+      mobile={mobile}
+    />
   );
 }
 
@@ -340,7 +349,7 @@ function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
       </div>
       {/* body */}
       <div style={{ flex: 1, overflowY: 'auto', padding: mobile ? '18px 16px 48px' : '22px 28px 48px', paddingBottom: mobile ? 'calc(80px + env(safe-area-inset-bottom, 0px))' : undefined }}>
-        <div style={{ maxWidth: 820, margin: '0 auto' }}>
+        <div style={{ maxWidth: tab === 'History' ? 1040 : 820, margin: '0 auto' }}>
           {s.status === 'failed' && tab !== 'History' && tab !== 'Details' && (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 16, borderRadius: 10, background: 'var(--warning-soft)', border: '1px solid var(--border)', marginBottom: 18 }}>
               <Icon name="alert" size={18} color="var(--warning)" />
@@ -361,7 +370,7 @@ function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
               onSave={handleSave}
             />
           )}
-          {tab === 'History' && <HistoryBody s={s} />}
+          {tab === 'History' && <HistoryBody s={s} projectId={projectId} mobile={mobile} />}
           {tab === 'Details' && <DetailsBody s={s} onDelete={handleDelete} />}
         </div>
       </div>

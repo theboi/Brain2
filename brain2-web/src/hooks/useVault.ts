@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ops, apiFetch, sse, genIdempotencyKey } from '@/lib/api';
 import { qk } from '@/lib/queryClient';
 import type { VaultPage, VaultGraph, VaultCommit } from '@/lib/types';
+import type { DiffHunk } from '@/lib/wiki';
 
 export function useVaultIndex(projectId: string | null) {
   return useQuery({
@@ -35,9 +36,25 @@ export function useVaultHistory(projectId: string | null, topic: string | null) 
   return useQuery({
     queryKey: projectId && topic ? qk.vaultHistory(projectId, topic)
                                   : ['vault', '_', 'history', '_'],
-    queryFn: () => ops<{ commits: VaultCommit[] }>('vault:history',
-      { project_id: projectId, topic, limit: 50 }),
+    queryFn: () => ops<{ commits: Array<Omit<VaultCommit, 'date'> & { ts?: string; date?: string }> }>(
+      'vault:history',
+      { project_id: projectId, topic, limit: 50 },
+    ).then((r) => ({
+      commits: r.commits.map((c) => ({ ...c, date: c.date ?? c.ts ?? '' })),
+    })),
     enabled: !!projectId && !!topic,
+  });
+}
+
+export function useVaultHistoryDiff(projectId: string | null, sha: string | null) {
+  return useQuery({
+    queryKey: projectId && sha ? qk.vaultHistoryDiff(projectId, sha)
+                                : ['vault', '_', 'history-diff', '_'],
+    queryFn: () => ops<{ sha: string; diff: string; hunks: DiffHunk[] }>(
+      'vault:history_show',
+      { project_id: projectId, sha },
+    ),
+    enabled: !!projectId && !!sha,
   });
 }
 

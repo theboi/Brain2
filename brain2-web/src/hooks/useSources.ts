@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ops, sse, genIdempotencyKey } from '@/lib/api';
 import { qk } from '@/lib/queryClient';
 import type { SourceRow, SourceEvent } from '@/lib/types';
+import type { DiffHunk } from '@/lib/wiki';
 
 export interface SourceFilters {
   status?: string;
@@ -35,10 +36,47 @@ export function useExtracted(projectId: string | null, sourceId: string | null) 
   return useQuery({
     queryKey: projectId && sourceId ? qk.sourceExtracted(projectId, sourceId)
                                      : ['sources', '_', '_', 'extracted'],
-    queryFn: () => ops<{ extracted_md: string; version: number }>(
+    queryFn: () => ops<{ extracted_md: string; extracted_version: number }>(
       'sources:get_extracted',
-      { project_id: projectId, source_id: sourceId }),
+      { project_id: projectId, source_id: sourceId })
+      .then((r) => ({ extracted_md: r.extracted_md, version: r.extracted_version })),
     enabled: !!projectId && !!sourceId,
+  });
+}
+
+export interface ExtractionVersion {
+  version: number;
+  kind: string;
+  created_at: string;
+  bytes: number;
+}
+
+export function useExtractionHistory(projectId: string | null, sourceId: string | null) {
+  return useQuery({
+    queryKey: projectId && sourceId ? qk.sourceHistory(projectId, sourceId)
+                                     : ['sources', '_', '_', 'history'],
+    queryFn: () => ops<{ versions: ExtractionVersion[] }>(
+      'sources:extraction_history',
+      { project_id: projectId, source_id: sourceId },
+    ).then((r) => r.versions),
+    enabled: !!projectId && !!sourceId,
+  });
+}
+
+export function useExtractionDiff(
+  projectId: string | null,
+  sourceId: string | null,
+  version: number | null,
+) {
+  return useQuery({
+    queryKey: projectId && sourceId && version != null
+      ? qk.sourceDiff(projectId, sourceId, version)
+      : ['sources', '_', '_', 'diff', -1],
+    queryFn: () => ops<{ version: number; base_version: number; hunks: DiffHunk[] }>(
+      'sources:extraction_diff',
+      { project_id: projectId, source_id: sourceId, version },
+    ),
+    enabled: !!projectId && !!sourceId && version != null,
   });
 }
 
@@ -55,11 +93,15 @@ export function usePutExtracted(projectId: string | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { source_id: string; extracted_md: string; expect_version: number }) =>
-      ops('sources:put_extracted', { project_id: projectId, ...vars },
+      ops('sources:put_extracted', {
+        project_id: projectId,
+        source_id: vars.source_id,
+        content: vars.extracted_md,
+        expect_version: vars.expect_version,
+      },
           { idempotencyKey: genIdempotencyKey() }),
     onSuccess: (_, vars) => {
       if (!projectId) return;
-      qc.invalidateQueries({ queryKey: qk.sourceExtracted(projectId, vars.source_id) });
       qc.invalidateQueries({ queryKey: qk.source(projectId, vars.source_id) });
     },
   });

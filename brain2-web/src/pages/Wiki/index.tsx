@@ -12,18 +12,15 @@ import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useProjects } from '@/hooks/useWorkspaces';
 import {
   useVaultPages, useVaultPage, useVaultHistory,
-  useWritePage, useWikiTopicSources, useRevertCommit,
+  useWritePage, useWikiTopicSources, useRevertCommit, useVaultHistoryDiff,
 } from '@/hooks/useVault';
 import type { VaultCommit } from '@/lib/types';
-import {
-  WIKI_DIFFS,
-} from '@/lib/wiki';
 import {
   FilterChips, Folder, NestRow, SidebarSearch, btnGhost as wbtnGhost, btnPrimary as wbtnPrimary,
   type ChipDef,
 } from '@/components/browse/Browse';
 import { MiniMD } from '@/components/browse/MiniMD';
-import { DiffView } from '@/components/browse/DiffView';
+import { HistoryView, type HistoryRevision } from '@/components/browse/HistoryView';
 import { GraphView } from './GraphView';
 import { AuditDrawer } from './AuditDrawer';
 
@@ -197,61 +194,35 @@ function EditTab({ initialContent, onSave, saving, mobile }: { initialContent: s
   );
 }
 
-function HistoryTab({ commits, onRevert, reverting, mobile }: {
-  commits: VaultCommit[]; onRevert: (sha: string) => void; reverting?: boolean; mobile?: boolean;
+function HistoryTab({ commits, projectId, onRevert, reverting, mobile }: {
+  commits: VaultCommit[];
+  projectId: string | null;
+  onRevert: (sha: string) => void;
+  reverting?: boolean;
+  mobile?: boolean;
 }) {
   const [selSha, setSelSha] = useState<string | null>(commits[0]?.sha ?? null);
-  // sync selection when commits load
-  useEffect(() => {
-    if (!selSha && commits.length > 0) setSelSha(commits[0].sha);
-  }, [commits, selSha]);
-  const cur = commits.find((c) => c.sha === selSha) ?? commits[0];
-  const diff = WIKI_DIFFS['6-7']; // placeholder diff — real diff API not wired yet
-  const timeline = (
-    <div style={{ overflowY: mobile ? 'visible' : 'auto', paddingRight: 4 }}>
-      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 12 }}>Timeline</div>
-      <div style={{ position: 'relative' }}>
-        <div style={{ position: 'absolute', left: 5, top: 6, bottom: 6, width: 2, background: 'var(--border)' }} />
-        {commits.length === 0 && <div style={{ padding: '8px 0 8px 21px', fontSize: 12.5, color: 'var(--fg-faint)' }}>No history yet.</div>}
-        {commits.map((c) => {
-          const on = c.sha === selSha;
-          return (
-            <button key={c.sha} onClick={() => setSelSha(c.sha)} style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 12, width: '100%', padding: '8px 8px 8px 0', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', borderRadius: 8 }}>
-              <span style={{ position: 'relative', zIndex: 1, marginTop: 3, width: 12, height: 12, borderRadius: '50%', flexShrink: 0, background: on ? 'var(--accent)' : 'var(--surface)', border: `2px solid ${on ? 'var(--accent)' : 'var(--border-strong)'}` }} />
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                  <b style={{ fontFamily: 'var(--mono-font)', fontSize: 12.5, fontWeight: 500, color: on ? 'var(--fg)' : 'var(--fg-muted)' }}>{c.sha.slice(0, 7)}</b>
-                  <span style={{ fontSize: 11.5, color: 'var(--fg-faint)' }}>{c.date}</span>
-                </span>
-                <span style={{ display: 'block', fontSize: 12, color: on ? 'var(--fg)' : 'var(--fg-muted)', marginTop: 2 }}>{c.message || c.author}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
+  const selectedSha = commits.some((c) => c.sha === selSha) ? selSha : commits[0]?.sha ?? null;
+  const { data: diffData, isFetching } = useVaultHistoryDiff(projectId, selectedSha);
+  const revisions: HistoryRevision[] = commits.map((c) => ({
+    id: c.sha,
+    shortId: c.sha.slice(0, 7),
+    date: c.date,
+    title: c.message || '',
+    subtitle: c.author,
+  }));
+  return (
+    <HistoryView
+      revisions={revisions}
+      selectedId={selectedSha}
+      onSelect={setSelSha}
+      hunks={diffData?.hunks}
+      diffLoading={isFetching}
+      onRevert={onRevert}
+      reverting={reverting}
+      mobile={mobile}
+    />
   );
-  const diffPanel = (
-    <div style={{ overflowY: mobile ? 'visible' : 'auto', minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Commit diff</span>
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button style={wbtnGhost()}>Unified <Icon name="chevDown" size={12} /></button>
-        </span>
-      </div>
-      {diff && <DiffView hunks={diff} />}
-      {cur && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, padding: '12px 0', borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>Author: <b style={{ color: 'var(--fg)' }}>{cur.author}</b> · {cur.date}<br /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 4 }}>Message: <span style={{ color: 'var(--accent)' }}>{cur.message}</span></span></div>
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <button onClick={() => cur && onRevert(cur.sha)} disabled={reverting} style={{ ...wbtnGhost(), opacity: reverting ? 0.6 : 1 }}><Icon name="history" size={13} /> Revert to this</button>
-          </span>
-        </div>
-      )}
-    </div>
-  );
-  if (mobile) return <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>{timeline}{diffPanel}</div>;
-  return <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 20, height: '100%' }}>{timeline}{diffPanel}</div>;
 }
 
 function SourcesTab({ sources }: { sources: any[] }) {
@@ -360,8 +331,8 @@ export function WikiPage() {
             : <div style={{ height: editH }}><EditTab initialContent={content} onSave={(c) => topic && writePage.mutate({ topic, content: c })} saving={writePage.isPending} /></div>
           )}
           {tab === 'History' && (isMobile
-            ? <HistoryTab commits={commits} onRevert={(sha) => revertCommit.mutate({ sha })} reverting={revertCommit.isPending} mobile />
-            : <div style={{ height: editH }}><HistoryTab commits={commits} onRevert={(sha) => revertCommit.mutate({ sha })} reverting={revertCommit.isPending} /></div>
+            ? <HistoryTab commits={commits} projectId={projectId} onRevert={(sha) => revertCommit.mutate({ sha })} reverting={revertCommit.isPending} mobile />
+            : <div style={{ height: editH }}><HistoryTab commits={commits} projectId={projectId} onRevert={(sha) => revertCommit.mutate({ sha })} reverting={revertCommit.isPending} /></div>
           )}
           {tab === 'Sources' && <SourcesTab sources={sources} />}
         </div>

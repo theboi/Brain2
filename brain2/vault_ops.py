@@ -124,9 +124,11 @@ def make_history(store):
 
 def make_history_show(store):
     def handler(ctx, params):
+        from brain2.vault.git import parse_show_hunks
         root = _vault_root(store, ctx, params)
         sha = params["sha"]
-        return {"sha": sha, "diff": git_show(root, sha)}
+        diff = git_show(root, sha)
+        return {"sha": sha, "diff": diff, "hunks": parse_show_hunks(diff)}
     return handler
 
 

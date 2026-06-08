@@ -242,7 +242,8 @@ def create_app(actx: AppContext) -> FastAPI:
         try:
             md = extract_to_markdown(Path(blob_path), mime=file.content_type)
             set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
-                                  source_id=source_id, extracted_md=md)
+                                  source_id=source_id, extracted_md=md,
+                                  kind="upload")
             status = "extracted"
         except Exception as exc:
             set_source_failed(actx.store, tenant_id=ctx.tenant_id,
@@ -272,7 +273,8 @@ def create_app(actx: AppContext) -> FastAPI:
         try:
             md = extract_url_to_markdown(url)
             set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
-                                  source_id=source_id, extracted_md=md)
+                                  source_id=source_id, extracted_md=md,
+                                  kind="upload")
             status = "extracted"
         except Exception as exc:
             set_source_failed(actx.store, tenant_id=ctx.tenant_id,
@@ -297,7 +299,8 @@ def create_app(actx: AppContext) -> FastAPI:
             blob_hash=blob_hash, blob_path=blob_path, topic=topic,
             uploaded_by=ctx.user_id)
         set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
-                              source_id=source_id, extracted_md=content)
+                              source_id=source_id, extracted_md=content,
+                              kind="upload")
         return {"source_id": source_id, "status": "extracted"}
 
     # --- wiki audit kickoff + stream (Phase G) ---

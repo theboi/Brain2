@@ -29,6 +29,21 @@ def _row_to_dict(row) -> dict:
     return {k: row[k] for k in row.keys()}
 
 
+def _project_id(ctx, params) -> str:
+    pid = params.get("project_id") or ctx.project_id
+    if not pid:
+        raise NotFound("project_id is required")
+    return pid
+
+
+def _source_row(store, ctx, params, columns: str = "*"):
+    return store._conn.execute(
+        f"SELECT {columns} FROM sources WHERE tenant_id=? AND project_id=? "
+        "AND source_id=?",
+        (ctx.tenant_id, _project_id(ctx, params), params["source_id"]),
+    ).fetchone()
+
+
 def create_source_row(store, *, tenant_id: str, project_id: str, kind: str,
                       filename: str | None = None, mime: str | None = None,
                       size_bytes: int = 0, blob_hash: str | None = None,
@@ -50,7 +65,7 @@ def create_source_row(store, *, tenant_id: str, project_id: str, kind: str,
 
 
 def set_source_extracted(store, *, tenant_id: str, source_id: str,
-                          extracted_md: str) -> None:
+                          extracted_md: str, kind: str = "reingest") -> None:
     now = _now()
     with store.transaction() as cx:
         cx.execute(
@@ -58,6 +73,16 @@ def set_source_extracted(store, *, tenant_id: str, source_id: str,
             "extracted_version=extracted_version+1, updated_at=? "
             "WHERE tenant_id=? AND source_id=?",
             (extracted_md, now, tenant_id, source_id))
+        row = cx.execute(
+            "SELECT extracted_version FROM sources WHERE tenant_id=? AND source_id=?",
+            (tenant_id, source_id)).fetchone()
+        if row is None:
+            raise NotFound(f"source {source_id!r} not found")
+        version = row["extracted_version"] if row else 1
+        cx.execute(
+            "INSERT INTO source_extractions(source_id, tenant_id, version, "
+            "extracted_md, kind, created_at) VALUES (?,?,?,?,?,?)",
+            (source_id, tenant_id, version, extracted_md, kind, now))
 
 
 def set_source_failed(store, *, tenant_id: str, source_id: str,
@@ -74,9 +99,7 @@ def set_source_failed(store, *, tenant_id: str, source_id: str,
 
 def make_sources_list(store):
     def handler(ctx, params):
-        pid = params.get("project_id") or ctx.project_id
-        if not pid:
-            raise NotFound("project_id is required")
+        pid = _project_id(ctx, params)
         sql = ("SELECT * FROM sources WHERE tenant_id=? AND project_id=? "
                "AND status != 'deleted'")
         args = [ctx.tenant_id, pid]
@@ -93,9 +116,7 @@ def make_sources_list(store):
 
 def make_sources_get(store):
     def handler(ctx, params):
-        row = store._conn.execute(
-            "SELECT * FROM sources WHERE tenant_id=? AND source_id=?",
-            (ctx.tenant_id, params["source_id"])).fetchone()
+        row = _source_row(store, ctx, params)
         if row is None:
             raise NotFound(f"source {params['source_id']!r} not found")
         return _row_to_dict(row)
@@ -104,21 +125,62 @@ def make_sources_get(store):
 
 def make_sources_get_extracted(store):
     def handler(ctx, params):
-        row = store._conn.execute(
-            "SELECT extracted_md, extracted_version, status, extraction_error "
-            "FROM sources WHERE tenant_id=? AND source_id=?",
-            (ctx.tenant_id, params["source_id"])).fetchone()
+        row = _source_row(
+            store, ctx, params,
+            "extracted_md, extracted_version, status, extraction_error",
+        )
         if row is None:
             raise NotFound(f"source {params['source_id']!r} not found")
         return _row_to_dict(row)
     return handler
 
 
+def make_sources_extraction_history(store):
+    def handler(ctx, params):
+        if _source_row(store, ctx, params, "source_id") is None:
+            raise NotFound(f"source {params['source_id']!r} not found")
+        rows = store._conn.execute(
+            "SELECT version, kind, created_at, LENGTH(extracted_md) AS bytes "
+            "FROM source_extractions WHERE tenant_id=? AND source_id=? "
+            "ORDER BY version DESC",
+            (ctx.tenant_id, params["source_id"])).fetchall()
+        return {"versions": [
+            {"version": r["version"], "kind": r["kind"],
+             "created_at": r["created_at"], "bytes": r["bytes"] or 0}
+            for r in rows]}
+    return handler
+
+
+def make_sources_extraction_diff(store):
+    def handler(ctx, params):
+        from brain2.diffutil import diff_strings
+        sid = params["source_id"]
+        version = int(params["version"])
+        base_version = int(params.get("base_version", version - 1))
+        if _source_row(store, ctx, params, "source_id") is None:
+            raise NotFound(f"source {sid!r} not found")
+
+        def _md(v):
+            if v < 1:
+                return ""
+            row = store._conn.execute(
+                "SELECT extracted_md FROM source_extractions "
+                "WHERE tenant_id=? AND source_id=? AND version=?",
+                (ctx.tenant_id, sid, v)).fetchone()
+            if row is None:
+                raise NotFound(f"source extraction v{v} not found")
+            return row["extracted_md"] if row["extracted_md"] else ""
+
+        old = _md(base_version)
+        new = _md(version)
+        return {"version": version, "base_version": base_version,
+                "hunks": diff_strings(old, new)}
+    return handler
+
+
 def make_sources_put_extracted(store):
     def handler(ctx, params):
-        row = store._conn.execute(
-            "SELECT extracted_version FROM sources WHERE tenant_id=? AND source_id=?",
-            (ctx.tenant_id, params["source_id"])).fetchone()
+        row = _source_row(store, ctx, params, "extracted_version")
         if row is None:
             raise NotFound(f"source {params['source_id']!r} not found")
         if "expect_version" in params and int(params["expect_version"]) != row["extracted_version"]:
@@ -126,7 +188,7 @@ def make_sources_put_extracted(store):
                            f"got {row['extracted_version']}")
         set_source_extracted(store, tenant_id=ctx.tenant_id,
                               source_id=params["source_id"],
-                              extracted_md=params["content"])
+                              extracted_md=params["content"], kind="edit")
         new_row = store._conn.execute(
             "SELECT extracted_md, extracted_version FROM sources WHERE tenant_id=? "
             "AND source_id=?", (ctx.tenant_id, params["source_id"])).fetchone()
@@ -137,9 +199,7 @@ def make_sources_put_extracted(store):
 def make_sources_reingest(store, blob_store):
     def handler(ctx, params):
         from brain2.knowledge.extract import extract_to_markdown, extract_url_to_markdown
-        row = store._conn.execute(
-            "SELECT * FROM sources WHERE tenant_id=? AND source_id=?",
-            (ctx.tenant_id, params["source_id"])).fetchone()
+        row = _source_row(store, ctx, params)
         if row is None:
             raise NotFound(f"source {params['source_id']!r} not found")
         with store.transaction() as cx:
@@ -158,7 +218,8 @@ def make_sources_reingest(store, blob_store):
             else:
                 raise RuntimeError(f"unknown kind: {row['kind']}")
             set_source_extracted(store, tenant_id=ctx.tenant_id,
-                                  source_id=params["source_id"], extracted_md=md)
+                                  source_id=params["source_id"], extracted_md=md,
+                                  kind="reingest")
             return {"source_id": params["source_id"], "status": "extracted"}
         except Exception as exc:
             set_source_failed(store, tenant_id=ctx.tenant_id,
@@ -170,6 +231,8 @@ def make_sources_reingest(store, blob_store):
 
 def make_sources_delete(store):
     def handler(ctx, params):
+        if _source_row(store, ctx, params, "source_id") is None:
+            raise NotFound(f"source {params['source_id']!r} not found")
         with store.transaction() as cx:
             cx.execute(
                 "UPDATE sources SET status='deleted', updated_at=? "
@@ -181,6 +244,8 @@ def make_sources_delete(store):
 
 def make_sources_tag(store):
     def handler(ctx, params):
+        if _source_row(store, ctx, params, "source_id") is None:
+            raise NotFound(f"source {params['source_id']!r} not found")
         with store.transaction() as cx:
             cx.execute(
                 "INSERT OR IGNORE INTO source_tags(tenant_id, source_id, tag, created_at) "
@@ -192,6 +257,8 @@ def make_sources_tag(store):
 
 def make_sources_untag(store):
     def handler(ctx, params):
+        if _source_row(store, ctx, params, "source_id") is None:
+            raise NotFound(f"source {params['source_id']!r} not found")
         with store.transaction() as cx:
             cx.execute(
                 "DELETE FROM source_tags WHERE tenant_id=? AND source_id=? AND tag=?",
@@ -204,7 +271,7 @@ def make_sources_untag(store):
 
 def make_folders_create(store):
     def handler(ctx, params):
-        pid = params.get("project_id") or ctx.project_id
+        pid = _project_id(ctx, params)
         fid = str(uuid.uuid4())
         with store.transaction() as cx:
             cx.execute(
@@ -218,7 +285,7 @@ def make_folders_create(store):
 
 def make_folders_list(store):
     def handler(ctx, params):
-        pid = params.get("project_id") or ctx.project_id
+        pid = _project_id(ctx, params)
         rows = store._conn.execute(
             "SELECT folder_id, name, parent_id, created_at FROM source_folders "
             "WHERE tenant_id=? AND project_id=? ORDER BY name",
@@ -255,6 +322,18 @@ def register_source_ops(ops, store, blob_store):
                  summary="Get the extracted markdown of a source",
                  params=[{"name": "project_id", "type": "str", "required": True},
                          {"name": "source_id", "type": "str", "required": True}])
+    ops.register("sources:extraction_history", action="read_wiki",
+                 handler=make_sources_extraction_history(store),
+                 summary="List extracted-markdown versions of a source, newest first",
+                 params=[{"name": "project_id", "type": "str", "required": True},
+                         {"name": "source_id", "type": "str", "required": True}])
+    ops.register("sources:extraction_diff", action="read_wiki",
+                 handler=make_sources_extraction_diff(store),
+                 summary="Diff a source extraction version against its predecessor",
+                 params=[{"name": "project_id", "type": "str", "required": True},
+                         {"name": "source_id", "type": "str", "required": True},
+                         {"name": "version", "type": "int", "required": True},
+                         {"name": "base_version", "type": "int", "required": False}])
     ops.register("sources:put_extracted", action="ingest",
                  handler=make_sources_put_extracted(store),
                  summary="Replace the user-curated extracted markdown of a source",

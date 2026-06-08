@@ -18,12 +18,18 @@ export const qk = {
   vaultPage: (pid: string, topic: string) => ['vault', pid, 'page', topic] as const,
   vaultGraph: (pid: string) => ['vault', pid, 'graph'] as const,
   vaultHistory: (pid: string, topic: string) => ['vault', pid, 'history', topic] as const,
+  vaultHistoryDiff: (pid: string, sha: string) =>
+    ['vault', pid, 'history-diff', sha] as const,
   vaultSearch: (pid: string, q: string) => ['vault', pid, 'search', q] as const,
   sources: (pid: string, filters: object | null = null) =>
     ['sources', pid, filters] as const,
   source: (pid: string, sourceId: string) => ['sources', pid, sourceId] as const,
   sourceExtracted: (pid: string, sourceId: string) =>
     ['sources', pid, sourceId, 'extracted'] as const,
+  sourceHistory: (pid: string, sourceId: string) =>
+    ['sources', pid, sourceId, 'history'] as const,
+  sourceDiff: (pid: string, sourceId: string, version: number) =>
+    ['sources', pid, sourceId, 'diff', version] as const,
   folders: (pid: string) => ['folders', pid] as const,
   wikiTopicSources: (pid: string, topic: string) =>
     ['wiki', pid, topic, 'sources'] as const,
