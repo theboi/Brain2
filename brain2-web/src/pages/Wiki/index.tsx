@@ -5,7 +5,8 @@
  * drawer. Mobile lands on a page picker first. Faithful port of docs/design/v1
  * wiki.jsx + app-wiki.jsx.
  */
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
@@ -14,6 +15,7 @@ import {
   useVaultPages, useVaultPage, useVaultHistory,
   useWritePage, useWikiTopicSources, useRevertCommit, useVaultHistoryDiff,
 } from '@/hooks/useVault';
+import { useReingest } from '@/hooks/useSources';
 import type { VaultCommit } from '@/lib/types';
 import {
   FilterChips, Folder, NestRow, SidebarSearch, btnGhost as wbtnGhost, btnPrimary as wbtnPrimary,
@@ -116,7 +118,10 @@ function WikiTabBtn({ label, active, onClick, badge }: { label: string; active: 
   );
 }
 
-function ReadTab({ content, onAudit, onAsk }: { content: string; onAudit: () => void; onAsk: (text: string) => void }) {
+function ReadTab({ content, onAudit, onAsk, onWikiLink, knownTopics }: {
+  content: string; onAudit: () => void; onAsk: (text: string) => void;
+  onWikiLink: (topic: string) => void; knownTopics: Set<string>;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [pop, setPop] = useState<{ x: number; y: number; text: string } | null>(null);
   useEffect(() => {
@@ -134,7 +139,7 @@ function ReadTab({ content, onAudit, onAsk }: { content: string; onAudit: () => 
   }, []);
   return (
     <div ref={ref} style={{ maxWidth: 720, margin: '0 auto' }}>
-      <MiniMD text={content} onCite={() => {}} />
+      <MiniMD text={content} onCite={() => {}} onWikiLink={onWikiLink} knownTopics={knownTopics} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 28, paddingTop: 16, borderTop: '1px solid var(--border)', fontSize: 12.5, color: 'var(--fg-muted)' }}>
         <button onClick={onAudit} style={{ marginLeft: 'auto', ...wbtnGhost() }}><Icon name="chats" size={14} /> Open in chat</button>
       </div>
@@ -225,24 +230,36 @@ function HistoryTab({ commits, projectId, onRevert, reverting, mobile }: {
   );
 }
 
-function SourcesTab({ sources }: { sources: any[] }) {
+function SourcesTab({ sources, projectId }: { sources: any[]; projectId: string | null }) {
+  const reingest = useReingest(projectId);
+  const reingestAll = () => {
+    sources.forEach((s) => {
+      const id = s.source_id ?? s.id;
+      if (id) reingest.mutate({ source_id: id });
+    });
+  };
   return (
     <div style={{ maxWidth: 680 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <span style={{ fontSize: 13, color: 'var(--fg-muted)' }}>{sources.length} sources contributed to this page, derived from provenance.</span>
-        <button style={wbtnGhost()}><Icon name="refresh" size={13} /> Re-ingest all</button>
+        <button style={wbtnGhost()} onClick={reingestAll} disabled={reingest.isPending || !projectId || !sources.length}>
+          <Icon name="refresh" size={13} /> Re-ingest all
+        </button>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {sources.map((s) => (
-          <a key={s.source_id ?? s.id} href="/sources" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: 13, border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface)', cursor: 'pointer' }}>
-            <span style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)' }}><Icon name={s.mime?.startsWith('image') ? 'image' : 'file'} size={15} /></span>
-            <span style={{ flex: 1 }}>
-              <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{s.filename ?? s.name ?? s.source_id}</span>
-              <span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)' }}>{s.kind ?? s.detail ?? ''}</span>
-            </span>
-            <Icon name="arrowRight" size={15} color="var(--fg-faint)" />
-          </a>
-        ))}
+        {sources.map((s) => {
+          const id = s.source_id ?? s.id;
+          return (
+            <Link key={id} to={`/sources/${encodeURIComponent(id)}`} style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: 13, border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface)', cursor: 'pointer' }}>
+              <span style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)' }}><Icon name={s.mime?.startsWith('image') ? 'image' : 'file'} size={15} /></span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.filename ?? s.name ?? id}</span>
+                <span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.kind ?? s.detail ?? ''}</span>
+              </span>
+              <Icon name="arrowRight" size={15} color="var(--fg-faint)" />
+            </Link>
+          );
+        })}
         {!sources.length && <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>No sources linked to this page.</div>}
       </div>
     </div>
@@ -255,6 +272,8 @@ type WikiTab = typeof WIKI_TABS[number];
 
 export function WikiPage() {
   const isMobile = useMedia(MOBILE_QUERY);
+  const { topic: routeTopic } = useParams<{ topic?: string }>();
+  const navigate = useNavigate();
   const [topic, setTopic] = useState<string | null>(null);
   const [tab, setTab] = useState<WikiTab>('Read');
   const [audit, setAudit] = useState(false);
@@ -281,16 +300,29 @@ export function WikiPage() {
   const content = pageData?.content ?? '';
   const commits = historyData?.commits ?? [];
   const sources = sourceData?.sources ?? [];
+  const knownTopics = useMemo(() => new Set(vaultPages.map((p) => p.topic)), [vaultPages]);
+
+  useEffect(() => {
+    if (routeTopic && routeTopic !== topic) {
+      setTopic(routeTopic);
+      setMobilePage(routeTopic);
+    }
+  }, [routeTopic, topic]);
 
   // pick first page when pages load
   useEffect(() => {
-    if (!topic && vaultPages.length > 0) setTopic(vaultPages[0].topic);
-  }, [topic, vaultPages]);
+    if (!routeTopic && !topic && vaultPages.length > 0) setTopic(vaultPages[0].topic);
+  }, [routeTopic, topic, vaultPages]);
 
   const pad = isMobile ? '12px 16px 0' : '16px 28px 0';
   const bodyPad = isMobile ? '18px 16px 48px' : '22px 28px 40px';
   const editH = isMobile ? 'calc(100vh - 330px)' : 'calc(100vh - 260px)';
-  const openPage = (t: string) => { setTopic(t); setTab('Read'); setMobilePage(t); };
+  const openPage = (t: string) => {
+    setTopic(t);
+    setTab('Read');
+    setMobilePage(t);
+    navigate(`/wiki/${encodeURIComponent(t)}`);
+  };
 
   const pageView: ReactNode = (
     <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
@@ -321,11 +353,11 @@ export function WikiPage() {
       {/* body */}
       {tab === 'Graph' ? (
         <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
-          <GraphView project="" selected={topic ?? ''} onSelect={(t) => { setTopic(t); setTab('Read'); }} isMobile={isMobile} />
+          <GraphView project="" selected={topic ?? ''} onSelect={openPage} isMobile={isMobile} />
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', padding: bodyPad, paddingBottom: isMobile ? 'calc(72px + env(safe-area-inset-bottom, 0px))' : undefined }}>
-          {tab === 'Read' && <ReadTab content={content} onAudit={() => setAudit(true)} onAsk={() => setAudit(true)} />}
+          {tab === 'Read' && <ReadTab content={content} onAudit={() => setAudit(true)} onAsk={() => setAudit(true)} onWikiLink={openPage} knownTopics={knownTopics} />}
           {tab === 'Edit' && (isMobile
             ? <EditTab initialContent={content} onSave={(c) => topic && writePage.mutate({ topic, content: c })} saving={writePage.isPending} mobile />
             : <div style={{ height: editH }}><EditTab initialContent={content} onSave={(c) => topic && writePage.mutate({ topic, content: c })} saving={writePage.isPending} /></div>
@@ -334,7 +366,7 @@ export function WikiPage() {
             ? <HistoryTab commits={commits} projectId={projectId} onRevert={(sha) => revertCommit.mutate({ sha })} reverting={revertCommit.isPending} mobile />
             : <div style={{ height: editH }}><HistoryTab commits={commits} projectId={projectId} onRevert={(sha) => revertCommit.mutate({ sha })} reverting={revertCommit.isPending} /></div>
           )}
-          {tab === 'Sources' && <SourcesTab sources={sources} />}
+          {tab === 'Sources' && <SourcesTab sources={sources} projectId={projectId} />}
         </div>
       )}
     </main>
@@ -342,7 +374,7 @@ export function WikiPage() {
 
   return (
     <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
-      {!isMobile && <WikiSidebar wf={wf} setWf={setWf} selected={topic ?? ''} onSelect={setTopic} pages={vaultPages} />}
+      {!isMobile && <WikiSidebar wf={wf} setWf={setWf} selected={topic ?? ''} onSelect={openPage} pages={vaultPages} />}
       {isMobile && !mobilePage ? <WikiPicker wf={wf} setWf={setWf} pages={vaultPages} onSelect={openPage} /> : pageView}
       <AuditDrawer open={audit} onClose={() => setAudit(false)} topic={topic ?? ''} />
     </div>

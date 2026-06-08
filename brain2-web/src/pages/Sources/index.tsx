@@ -6,6 +6,7 @@
  * back-stack. Faithful port of docs/design/v1 sources.jsx + app-sources.jsx.
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useParams } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import {
@@ -381,6 +382,7 @@ function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
 // ── Page ───────────────────────────────────────────────────────────────────────
 export function SourcesPage() {
   const isMobile = useMedia(MOBILE_QUERY);
+  const { id: routeSourceId } = useParams<{ id?: string }>();
   const [f, setF] = useState<SourceFilter>({ project: 'all', tag: 'all', status: 'all' });
   const [selectedId, setSelectedId] = useState<string>('');
   const [modal, setModal] = useState(false);
@@ -404,10 +406,17 @@ export function SourcesPage() {
 
   const items: Source[] = sourceRows.map(toDisplaySource);
 
+  useEffect(() => {
+    if (!routeSourceId) return;
+    const routed = items.find((s) => s.id === routeSourceId);
+    if (routed) setSelectedId(routed.id);
+    setMobileView('detail');
+  }, [items, routeSourceId]);
+
   // Auto-select first source when list loads and nothing is selected
   useEffect(() => {
-    if (!selectedId && items.length > 0) setSelectedId(items[0].id);
-  }, [items, selectedId]);
+    if (!routeSourceId && !selectedId && items.length > 0) setSelectedId(items[0].id);
+  }, [items, routeSourceId, selectedId]);
 
   useEffect(() => {
     const onEnter = (e: DragEvent) => { e.preventDefault(); if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragCount.current++; setDragging(true); } };
@@ -419,7 +428,7 @@ export function SourcesPage() {
     return () => { window.removeEventListener('dragenter', onEnter); window.removeEventListener('dragover', onOver); window.removeEventListener('dragleave', onLeave); window.removeEventListener('drop', onDrop); };
   }, []);
 
-  const selected = items.find((s) => s.id === selectedId) ?? items[0] ?? null;
+  const selected = items.find((s) => s.id === selectedId) ?? (routeSourceId ? null : items[0] ?? null);
   const mobileChips = <FilterChips defs={sourceChipDefs(f, setF, projectNames)} />;
 
   if (!projectId) {
