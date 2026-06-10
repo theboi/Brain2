@@ -21,6 +21,7 @@ const ITEMS: NavItem[] = [
   { id: 'sources',  icon: 'sources',  label: 'Sources', href: '/sources' },
   { id: 'wiki',     icon: 'wiki',     label: 'Wiki',    href: '/wiki' },
   { id: 'chats',    icon: 'chats',    label: 'Chats',   href: '/chats', badge: 2 },
+  { id: 'reports',  icon: 'file',     label: 'Reports', href: '/reports' },
   { id: 'settings', icon: 'settings', label: 'Settings', href: '/settings' },
 ];
 
@@ -131,6 +132,7 @@ export function BottomNav() {
         right: 0,
         bottom: 0,
         zIndex: 60,
+        display: 'flex',
         flexDirection: 'column',   /* nav is a flex column; inner row fills width */
         borderTop: '1px solid var(--border)',
         background: 'var(--surface)',

@@ -17,7 +17,7 @@ export function Popover({ onClose, children, style }: PopoverProps) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <>
       <div
         onClick={onClose}
@@ -37,7 +37,8 @@ export function Popover({ onClose, children, style }: PopoverProps) {
       >
         {children}
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
 

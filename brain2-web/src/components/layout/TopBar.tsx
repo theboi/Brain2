@@ -199,7 +199,7 @@ function ProfileMenu({ theme, onToggleTheme, onClose, onSignOut }: {
       <Item
         icon={theme === 'light' ? 'moon' : 'sun'}
         label={theme === 'light' ? 'Dark theme' : 'Light theme'}
-        onClick={() => { onToggleTheme(); onClose(); }}
+        onClick={onToggleTheme}
       />
       <div style={{ height: 1, background: 'var(--border)', margin: '5px 4px' }} />
       <Item icon="logout" label="Sign out" danger onClick={onSignOut} />
