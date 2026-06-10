@@ -80,7 +80,7 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
       {/* Section nav */}
       <nav
         className="b2-hide-sm"
-        style={{ width: 230, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', padding: '18px 12px', overflowY: 'auto' }}
+        style={{ width: 230, flexShrink: 0, flexDirection: 'column', borderRight: '1px solid var(--border)', background: 'var(--surface)', padding: '18px 12px', overflowY: 'auto' }}
       >
         <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '0 10px 10px' }}>
           Settings

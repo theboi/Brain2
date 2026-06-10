@@ -4,7 +4,7 @@
  * pill-shaped workspace switcher, centered search bar (hidden on mobile),
  * notification bell with unread count badge, profile avatar chip.
  */
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
@@ -61,11 +61,11 @@ const iconBtn = (): React.CSSProperties => ({
   cursor: 'pointer',
 });
 
-function InboxMenu({ onClose }: { onClose: () => void }) {
+function InboxMenu({ onClose, anchorRef }: { onClose: () => void; anchorRef: RefObject<HTMLButtonElement | null> }) {
   const { isRead, markRead, markAll } = useInboxRead();
   const items = inboxItems().filter((it) => !isRead(it.id));
   return (
-    <Popover onClose={onClose} style={{ top: 44, right: 0, width: 380, maxWidth: 'calc(100vw - 24px)', padding: 0, overflow: 'hidden' }}>
+    <Popover onClose={onClose} anchorRef={anchorRef} placement="bottom-end" style={{ width: 380, maxWidth: 'calc(100vw - 24px)', padding: 0, overflow: 'hidden' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '13px 14px', borderBottom: '1px solid var(--border)' }}>
         <Icon name="bell" size={16} color="var(--fg)" />
@@ -116,14 +116,15 @@ function InboxMenu({ onClose }: { onClose: () => void }) {
 }
 
 // ── Sub-components ───────────────────────────────────────────────────────────
-function WorkspaceMenu({ workspaces, currentId, onPick, onClose }: {
+function WorkspaceMenu({ workspaces, currentId, onPick, onClose, anchorRef }: {
   workspaces: Workspace[];
   currentId: string | null;
   onPick: (id: string) => void;
   onClose: () => void;
+  anchorRef: RefObject<HTMLButtonElement | null>;
 }) {
   return (
-    <Popover onClose={onClose} style={{ top: 44, left: 0, width: 240, padding: 6 }}>
+    <Popover onClose={onClose} anchorRef={anchorRef} placement="bottom-start" style={{ width: 240, padding: 6 }}>
       <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '6px 8px 4px' }}>
         Workspaces
       </div>
@@ -155,11 +156,12 @@ function WorkspaceMenu({ workspaces, currentId, onPick, onClose }: {
   );
 }
 
-function ProfileMenu({ theme, onToggleTheme, onClose, onSignOut }: {
+function ProfileMenu({ theme, onToggleTheme, onClose, onSignOut, anchorRef }: {
   theme: Theme;
   onToggleTheme: () => void;
   onClose: () => void;
   onSignOut: () => void;
+  anchorRef: RefObject<HTMLButtonElement | null>;
 }) {
   const Item = ({ icon, label, href, onClick, danger }: {
     icon: string; label: string; href?: string; onClick?: () => void; danger?: boolean;
@@ -182,7 +184,7 @@ function ProfileMenu({ theme, onToggleTheme, onClose, onSignOut }: {
   };
 
   return (
-    <Popover onClose={onClose} style={{ top: 44, right: 0, width: 244, padding: 6 }}>
+    <Popover onClose={onClose} anchorRef={anchorRef} placement="bottom-end" style={{ width: 244, padding: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 8px 10px' }}>
         <span style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 600 }}>A</span>
         <span style={{ flex: 1, minWidth: 0 }}>
@@ -298,6 +300,9 @@ type MenuId = 'ws' | 'profile' | 'palette' | 'inbox' | null;
 
 export function TopBar({ theme, onToggleTheme }: TopBarProps) {
   const [menu, setMenu] = useState<MenuId>(null);
+  const wsRef = useRef<HTMLButtonElement>(null);
+  const bellRef = useRef<HTMLButtonElement>(null);
+  const profileRef = useRef<HTMLButtonElement>(null);
   const navigate = useNavigate();
   const { isRead } = useInboxRead();
   const { data: workspaces = [] } = useWorkspaces();
@@ -361,7 +366,7 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
 
       {/* Workspace switcher */}
       <div className="b2-hide-sm" style={{ position: 'relative' }}>
-        <button style={pillBtn()} onClick={() => open('ws')}>
+        <button ref={wsRef} style={pillBtn()} onClick={() => open('ws')}>
           <span style={{ color: 'var(--fg-muted)' }}>workspace</span>
           <span style={{ color: 'var(--fg)', fontWeight: 500 }}>{wsLabel}</span>
           <Icon name="chevDown" size={13} color="var(--fg-muted)" />
@@ -372,6 +377,7 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
             currentId={workspaceId}
             onPick={setWorkspaceId}
             onClose={() => setMenu(null)}
+            anchorRef={wsRef}
           />
         )}
       </div>
@@ -407,6 +413,7 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
       {/* Inbox bell */}
       <div style={{ position: 'relative' }}>
         <button
+          ref={bellRef}
           style={{ ...iconBtn(), position: 'relative' }}
           onClick={() => open('inbox')}
           aria-label={`Inbox, ${UNREAD} unread`}
@@ -424,12 +431,13 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
             </span>
           )}
         </button>
-        {menu === 'inbox' && <InboxMenu onClose={() => setMenu(null)} />}
+        {menu === 'inbox' && <InboxMenu onClose={() => setMenu(null)} anchorRef={bellRef} />}
       </div>
 
       {/* Profile */}
       <div style={{ position: 'relative' }}>
         <button
+          ref={profileRef}
           onClick={() => open('profile')}
           style={{
             display: 'flex', alignItems: 'center', gap: 8, padding: '3px 4px',
@@ -446,6 +454,7 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
             theme={theme}
             onToggleTheme={onToggleTheme}
             onClose={() => setMenu(null)}
+            anchorRef={profileRef}
             onSignOut={async () => {
               setMenu(null);
               await logout();

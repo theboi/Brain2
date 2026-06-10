@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
 import { Modal } from '@/components/ui/Modal';
@@ -332,12 +332,14 @@ function PersonaCrest({ size = 26, pulse = false }: { size?: number; pulse?: boo
 
 function ScheduleDropdown({ value, onChange }: { value: ScheduleId; onChange: (value: ScheduleId) => void }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const opt = scheduleById(value);
   const active = value !== 'oneoff';
 
   return (
     <div style={{ position: 'relative', display: 'inline-flex' }}>
       <button
+        ref={triggerRef}
         onClick={() => setOpen((o) => !o)}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 10px',
@@ -352,7 +354,7 @@ function ScheduleDropdown({ value, onChange }: { value: ScheduleId; onChange: (v
         <Icon name="chevDown" size={12} color={active ? 'var(--accent)' : 'var(--fg-muted)'} />
       </button>
       {open && (
-        <Popover onClose={() => setOpen(false)} style={{ top: 'calc(100% + 6px)', right: 0, width: 248, padding: 6 }}>
+        <Popover onClose={() => setOpen(false)} anchorRef={triggerRef} placement="bottom-end" style={{ width: 248, padding: 6 }}>
           <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '6px 8px 4px' }}>Schedule this report for...</div>
           {SCHEDULE_OPTIONS.map((o) => {
             const on = o.id === value;
@@ -531,11 +533,13 @@ function ParamChip({ param, value, onChange }: {
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const current = param.options.find((o) => o.id === value) ?? param.options[0];
 
   return (
     <div style={{ position: 'relative', display: 'inline-flex' }}>
       <button
+        ref={triggerRef}
         onClick={() => setOpen((o) => !o)}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 12px',
@@ -550,7 +554,7 @@ function ParamChip({ param, value, onChange }: {
         <Icon name="chevDown" size={12} color="var(--fg-muted)" />
       </button>
       {open && (
-        <Popover onClose={() => setOpen(false)} style={{ top: 'calc(100% + 6px)', left: 0, width: 250, padding: 6 }}>
+        <Popover onClose={() => setOpen(false)} anchorRef={triggerRef} placement="bottom-start" style={{ width: 250, padding: 6 }}>
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '6px 8px 4px' }}>{param.label}</div>
           {param.options.map((option) => {
             const on = option.id === value;
@@ -576,6 +580,7 @@ function ParamChip({ param, value, onChange }: {
 
 function AgentSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const { data: agents = [] } = useAgents();
   const current = agents.find((agent) => agent.name === value) ?? agents[0];
 
@@ -597,6 +602,7 @@ function AgentSelect({ value, onChange }: { value: string; onChange: (value: str
   return (
     <div style={{ position: 'relative', display: 'inline-flex' }}>
       <button
+        ref={triggerRef}
         onClick={() => setOpen((o) => !o)}
         style={{ display: 'inline-flex', alignItems: 'center', gap: 10, height: 40, padding: '0 12px', borderRadius: 9, cursor: 'pointer', fontFamily: 'var(--ui-font)', border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`, background: 'var(--surface)' }}
       >
@@ -608,7 +614,7 @@ function AgentSelect({ value, onChange }: { value: string; onChange: (value: str
         <Icon name="chevDown" size={13} color="var(--fg-muted)" />
       </button>
       {open && (
-        <Popover onClose={() => setOpen(false)} style={{ top: 'calc(100% + 6px)', left: 0, width: 290, padding: 6 }}>
+        <Popover onClose={() => setOpen(false)} anchorRef={triggerRef} placement="bottom-start" style={{ width: 290, padding: 6 }}>
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '6px 8px 4px' }}>Submit to agent</div>
           {agents.map((agent) => {
             const on = agent.name === value;
@@ -635,12 +641,14 @@ function AgentSelect({ value, onChange }: { value: string; onChange: (value: str
 
 function RunScheduleSelect({ value, onChange }: { value: RunScheduleId; onChange: (value: RunScheduleId) => void }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const current = runScheduleById(value);
   const active = value !== 'now';
 
   return (
     <div style={{ position: 'relative', display: 'inline-flex' }}>
       <button
+        ref={triggerRef}
         onClick={() => setOpen((o) => !o)}
         style={{ display: 'inline-flex', alignItems: 'center', gap: 10, height: 40, padding: '0 12px', borderRadius: 9, cursor: 'pointer', fontFamily: 'var(--ui-font)', border: `1px solid ${open || active ? 'var(--accent)' : 'var(--border)'}`, background: active ? 'var(--accent-soft)' : 'var(--surface)' }}
       >
@@ -652,7 +660,7 @@ function RunScheduleSelect({ value, onChange }: { value: RunScheduleId; onChange
         <Icon name="chevDown" size={13} color={active ? 'var(--accent)' : 'var(--fg-muted)'} />
       </button>
       {open && (
-        <Popover onClose={() => setOpen(false)} style={{ top: 'calc(100% + 6px)', left: 0, width: 250, padding: 6 }}>
+        <Popover onClose={() => setOpen(false)} anchorRef={triggerRef} placement="bottom-start" style={{ width: 250, padding: 6 }}>
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '6px 8px 4px' }}>Run this report...</div>
           {RUN_SCHEDULE_OPTIONS.map((option) => {
             const on = option.id === value;

@@ -14,7 +14,6 @@ import argparse
 import os
 import shutil
 import sys
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,8 +44,40 @@ VAULT_A = {
                       "Enables [[Cell theory]] and modern biology.\n",
     },
     "sources": [
-        ("file", "Hooke 1665.pdf", "Micrographia"),
-        ("text", "Cell theory notes.txt", "Cell theory"),
+        {
+            "kind": "file",
+            "filename": "Hooke 1665.pdf",
+            "mime": "text/markdown",
+            "topic": "Micrographia",
+            "content": (
+                "# Micrographia (1665)\n\n"
+                "Robert Hooke's *Micrographia* is among the first books to present "
+                "detailed observations made through a [[Microscopy|microscope]], "
+                "engraved at a scale no reader had seen before.\n\n"
+                "## The cork observation\n\n"
+                "Examining a thin shaving of cork, Hooke saw a regular lattice of "
+                "tiny walled pores. He named these units **cells**, after the bare "
+                "rooms (*cellulae*) of a monastery.\n\n"
+                "## Why it matters\n\n"
+                "These drawings seeded what later became [[Cell theory]], the idea "
+                "that all living things are built from cells.\n"
+            ),
+        },
+        {
+            "kind": "text",
+            "filename": "Cell theory notes.txt",
+            "mime": "text/markdown",
+            "topic": "Cell theory",
+            "content": (
+                "# Cell theory - working notes\n\n"
+                "- All living organisms are composed of one or more **cells**.\n"
+                "- The cell is the basic structural and functional unit of life.\n"
+                "- All cells arise from pre-existing cells "
+                "(*omnis cellula e cellula*).\n\n"
+                "Origins trace to [[Robert Hooke]]'s 1665 [[Micrographia]], later "
+                "generalised by Schleiden and Schwann (1838-39).\n"
+            ),
+        },
     ],
 }
 
@@ -60,7 +91,22 @@ VAULT_B = {
         "Churn analysis": "# Churn analysis\n\nLinked to [[Personas]].\n",
     },
     "sources": [
-        ("url", "https://example.com/survey", "Q3 themes"),
+        {
+            "kind": "url",
+            "url": "https://example.com/survey",
+            "filename": "https://example.com/survey",
+            "mime": "text/markdown",
+            "topic": "Q3 themes",
+            "content": (
+                "# Q3 user survey - captured summary\n\n"
+                "Source: https://example.com/survey\n\n"
+                "## Top themes\n\n"
+                "1. Onboarding friction in the first session.\n"
+                "2. Pricing clarity for the team tier.\n"
+                "3. Mobile parity with the desktop console.\n\n"
+                "See [[Personas]] and [[Churn analysis]] for the breakdown.\n"
+            ),
+        },
     ],
 }
 
@@ -109,20 +155,37 @@ def _write_pages(vault: Path, pages: dict[str, str]) -> None:
             write_text_atomic(fp, body)
 
 
-def _seed_sources(s, project_id: str, sources: list[tuple[str, str, str]]) -> None:
-    for kind, filename, topic in sources:
+def _seed_sources(actx, project_id: str, sources: list[dict]) -> None:
+    """Seed sources through the real ingest pipeline so each one is fully backed:
+    bytes land in the blob store (so the Raw tab can download them) and the
+    extracted markdown is stored (so Preview/Extracted render). Older empty
+    placeholder rows from earlier seeds are upgraded in place."""
+    from brain2.source_ops import create_source_row, set_source_extracted
+    s = actx.store
+    for src in sources:
+        ident = src.get("filename") or src.get("url")
         existing = s._conn.execute(
-            "SELECT source_id FROM sources WHERE tenant_id='default' "
-            "AND project_id=? AND filename=?", (project_id, filename)
-        ).fetchone()
+            "SELECT source_id, blob_hash FROM sources WHERE tenant_id='default' "
+            "AND project_id=? AND (filename=? OR url=?)",
+            (project_id, ident, ident)).fetchone()
+        if existing and existing["blob_hash"]:
+            continue  # already fully seeded
         if existing:
-            continue
-        s._conn.execute(
-            "INSERT INTO sources(source_id, tenant_id, project_id, kind, "
-            "filename, size_bytes, topic, status, created_at, updated_at) "
-            "VALUES (?, 'default', ?, ?, ?, 0, ?, 'extracted', ?, ?)",
-            (uuid.uuid4().hex, project_id, kind, filename, topic, _now(), _now()))
-    s._conn.commit()
+            # Drop the empty placeholder (no blob / no extract) and recreate it.
+            s._conn.execute("DELETE FROM source_extractions WHERE tenant_id='default' "
+                            "AND source_id=?", (existing["source_id"],))
+            s._conn.execute("DELETE FROM sources WHERE tenant_id='default' "
+                            "AND source_id=?", (existing["source_id"],))
+            s._conn.commit()
+        data = src["content"].encode("utf-8")
+        blob_hash, blob_path = actx.blob_store.put("default", data)
+        source_id = create_source_row(
+            s, tenant_id="default", project_id=project_id, kind=src["kind"],
+            filename=src.get("filename"), url=src.get("url"),
+            mime=src.get("mime", "text/markdown"), size_bytes=len(data),
+            blob_hash=blob_hash, blob_path=blob_path, topic=src.get("topic"))
+        set_source_extracted(s, tenant_id="default", source_id=source_id,
+                             extracted_md=src["content"], kind="upload")
 
 
 def _seed_vault(actx, vault_def: dict) -> None:
@@ -133,7 +196,7 @@ def _seed_vault(actx, vault_def: dict) -> None:
     _ensure_project(s, vault_def["id"], vault_def["name"], wid, vault_path)
     _write_pages(vault_path, vault_def["pages"])
     reindex_vault(s, vault_def["id"], vault_path)
-    _seed_sources(s, vault_def["id"], vault_def["sources"])
+    _seed_sources(actx, vault_def["id"], vault_def["sources"])
 
 
 def _reset() -> None:

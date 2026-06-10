@@ -208,11 +208,19 @@ function RawBody({ s, onDownload }: { s: Source; onDownload?: () => void }) {
         <span style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>Original {s.type.toUpperCase()} · {s.size.trim()}</span>
         <button style={btnGhost()} onClick={onDownload}><Icon name="download" size={14} /> Download</button>
       </div>
-      <div style={{ height: 360, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: 'var(--fg-faint)' }}>
+      <button
+        onClick={onDownload}
+        title={`Download ${s.name}`}
+        style={{ width: '100%', height: 360, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: 'var(--fg-faint)', cursor: 'pointer', fontFamily: 'var(--ui-font)' }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent-line)'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
+      >
         <Icon name={TYPE_ICON[s.type] || 'file'} size={34} />
-        <span style={{ fontFamily: 'var(--mono-font)', fontSize: 12 }}>{s.name}</span>
-        <span style={{ fontSize: 11.5 }}>raw {s.type} viewer</span>
-      </div>
+        <span style={{ fontFamily: 'var(--mono-font)', fontSize: 12, color: 'var(--fg-muted)' }}>{s.name}</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5 }}>
+          <Icon name="download" size={13} /> Click to download the raw {s.type}
+        </span>
+      </button>
     </div>
   );
 }
