@@ -45,7 +45,20 @@ export async function login(email: string, password: string): Promise<void> {
   writeStorage(memToken, memRefresh);
 }
 
-export async function refresh(): Promise<void> {
+let refreshInFlight: Promise<void> | null = null;
+
+// Single-flight: when many requests 401 at once they would each POST the same
+// rotating refresh token. The server consumes the first and treats the rest as
+// theft, revoking the whole token family and signing the user out. Coalescing
+// concurrent callers onto one rotation keeps a single refresh token in play.
+export function refresh(): Promise<void> {
+  if (!refreshInFlight) {
+    refreshInFlight = _doRefresh().finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
+async function _doRefresh(): Promise<void> {
   if (!memRefresh) {
     const { refresh: stored } = readStorage();
     memRefresh = stored;
