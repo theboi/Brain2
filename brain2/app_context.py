@@ -58,6 +58,8 @@ def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext
     _register_core_operations(operations, store, passwords, connector_factory, gateway,
                               blob_store, secrets)
     _register_addons(addons, tasks, store, gateway, connector_factory, operations)
+    from brain2.tasks.run_op import make_run_op_handler
+    tasks.register("run_op", make_run_op_handler(store, operations))
     actx = AppContext(store=store, secrets=secrets, tokens=tokens, passwords=passwords,
                       gateway=gateway, operations=operations, addons=addons,
                       tasks=tasks, events=events, connector_factory=connector_factory,
@@ -186,6 +188,8 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
         register_provider_ops(ops, secrets)
         from brain2.chat_ops import register_chat_ops
         register_chat_ops(ops, store, secrets)
+        from brain2.report_ops import register_report_ops
+        register_report_ops(ops, store)
         if blob_store is not None:
             from brain2.source_ops import register_source_ops
             register_source_ops(ops, store, blob_store)
@@ -208,6 +212,12 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
 
     from brain2.access_ops import register_access_ops
     register_access_ops(ops, store)
+
+    from brain2.schedule_ops import register_schedule_ops
+    register_schedule_ops(ops, store)
+
+    from brain2.persona_ops import register_persona_ops
+    register_persona_ops(ops, store)
 
 
 # Map add-on op name -> (authorize action, signature adapter).
@@ -260,6 +270,8 @@ def _register_addons(addons: AddonRegistry, tasks: TaskRegistry, store, gateway,
     if ops is not None:
         for name, (action, kwargs) in _ADDON_OP_BRIDGE.items():
             if addons.get_operation(name) is None:
+                continue
+            if ops.get(name) is not None:
                 continue
             ops.register(name, action=action,
                          handler=_make_addon_bridge_handler(addons, name, kwargs, store),

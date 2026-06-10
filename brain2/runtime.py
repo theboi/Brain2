@@ -32,11 +32,13 @@ def worker_tick(store: Store, tasks: TaskRegistry, events: EventRegistry,
     if not tenants:
         return False
     store.sweep_expired_leases(_now_iso())
+    from brain2.scheduler import run_due_schedules
+    fired = run_due_schedules(store, datetime.now(timezone.utc))
     claimed = store.claim_events(tenants, event_batch, _now_iso())
     for event in claimed:
         events.dispatch_one(store, event)
     did_task = run_one(store, tasks, tenants, worker_id)
-    return did_task or bool(claimed)
+    return did_task or bool(claimed) or fired > 0
 
 
 def run_worker(actx: AppContext, *, max_ticks: int | None = None,

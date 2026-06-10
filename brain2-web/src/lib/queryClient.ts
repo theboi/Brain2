@@ -30,6 +30,8 @@ export const qk = {
     ['sources', pid, sourceId, 'history'] as const,
   sourceDiff: (pid: string, sourceId: string, version: number) =>
     ['sources', pid, sourceId, 'diff', version] as const,
+  reports: (pid: string | null) => ['reports', pid] as const,
+  report: (id: string) => ['reports', 'one', id] as const,
   folders: (pid: string) => ['folders', pid] as const,
   wikiTopicSources: (pid: string, topic: string) =>
     ['wiki', pid, topic, 'sources'] as const,

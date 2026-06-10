@@ -39,7 +39,7 @@ def _chunk(text: str, size: int = _CHUNK_SIZE):
 
 
 def _build_prompt(history: list[dict], system_prompt: str,
-                  tools: list[str]) -> tuple[str, str]:
+                  tools: list[str], preamble: str = "") -> tuple[str, str]:
     tools_block = ""
     if tools:
         tools_block = ("\n\nYou may call tools by emitting a line of the form:\n"
@@ -50,7 +50,8 @@ def _build_prompt(history: list[dict], system_prompt: str,
     for m in history:
         role = m["role"].upper()
         transcript.append(f"{role}: {m['content']}")
-    system = (system_prompt or "You are a helpful assistant.") + tools_block
+    base = (system_prompt or "You are a helpful assistant.") + tools_block
+    system = ((preamble + "\n") if preamble else "") + base
     return system, "\n".join(transcript)
 
 
@@ -103,6 +104,8 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
     except Exception:
         allowlist = []
     tools = _allowed_tools(store, ctx, operations, allowlist)
+    from brain2.persona_ops import persona_preamble
+    persona = persona_preamble(store, ctx.tenant_id, ctx.user_id)
 
     history = [{"role": "user", "content": user_text}]
     total_in = total_out = 0
@@ -114,7 +117,8 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
         if stop_check():
             yield ("error", {"message": "stopped"})
             break
-        system, transcript = _build_prompt(history, agent_row["system_prompt"], tools)
+        system, transcript = _build_prompt(
+            history, agent_row["system_prompt"], tools, preamble=persona)
         try:
             resp = complete_once(provider, transcript, system=system)
         except Exception as exc:

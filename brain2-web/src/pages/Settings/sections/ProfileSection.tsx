@@ -4,17 +4,25 @@ import { Button } from '@/components/ui/Button';
 import { SCard } from '@/components/settings/SettingsCard';
 import { RoleBadge } from '@/components/settings/SettingsCard';
 import { useMe, useUpdateProfile, useChangePassword } from '@/hooks/me';
+import { usePersona, useSetPersona } from '@/hooks/usePersona';
 import { ApiError } from '@/lib/api';
 
 export function ProfileSection() {
   const { data: me, isLoading, isError } = useMe();
+  const { data: persona } = usePersona();
   const updateProfile = useUpdateProfile();
   const changePassword = useChangePassword();
+  const setPersona = useSetPersona();
 
   // Profile form state
   const [displayName, setDisplayName] = useState('');
   const [profileSuccess, setProfileSuccess] = useState(false);
   const [profileError, setProfileError] = useState('');
+
+  // Persona form state
+  const [personaText, setPersonaText] = useState('');
+  const [personaSaved, setPersonaSaved] = useState(false);
+  const [personaError, setPersonaError] = useState('');
 
   // Password form state
   const [currentPw, setCurrentPw] = useState('');
@@ -30,6 +38,12 @@ export function ProfileSection() {
     }
   }, [me?.display_name]);
 
+  useEffect(() => {
+    if (persona?.content != null) {
+      setPersonaText(persona.content);
+    }
+  }, [persona?.content]);
+
   function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
     setProfileSuccess(false);
@@ -41,6 +55,16 @@ export function ProfileSection() {
         onError: () => setProfileError('Failed to save profile. Please try again.'),
       },
     );
+  }
+
+  function handleSavePersona(e: React.FormEvent) {
+    e.preventDefault();
+    setPersonaSaved(false);
+    setPersonaError('');
+    setPersona.mutate(personaText, {
+      onSuccess: () => setPersonaSaved(true),
+      onError: () => setPersonaError('Failed to save persona. Please try again.'),
+    });
   }
 
   function handleChangePassword(e: React.FormEvent) {
@@ -139,6 +163,44 @@ export function ProfileSection() {
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
             <Button variant="primary" type="submit" disabled={updateProfile.isPending}>
               {updateProfile.isPending ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        </form>
+      </SCard>
+
+      <SCard title="Persona" desc="A private note about you that is prepended to your AI requests.">
+        <form onSubmit={handleSavePersona}>
+          <label style={{ display: 'block' }}>
+            <span style={{ display: 'block', fontSize: 12, color: 'var(--fg-muted)', marginBottom: 6 }}>
+              Personal context
+            </span>
+            <textarea
+              value={personaText}
+              onChange={(e) => {
+                setPersonaText(e.target.value);
+                setPersonaSaved(false);
+                setPersonaError('');
+              }}
+              placeholder="e.g. Operations & Finance lead. Prefers concise, board-ready output. Currently focused on Q2 planning."
+              spellCheck={false}
+              style={{ width: '100%', minHeight: 200, resize: 'vertical', padding: 14, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-2)', fontFamily: 'var(--mono-font)', fontSize: 13, lineHeight: 1.6, color: 'var(--fg)', outline: 'none' }}
+            />
+          </label>
+
+          {personaError && (
+            <p style={{ fontSize: 12.5, color: 'var(--destructive)', marginTop: 10, marginBottom: 0 }}>
+              {personaError}
+            </p>
+          )}
+          {personaSaved && (
+            <p style={{ fontSize: 12.5, color: 'var(--success, var(--accent))', marginTop: 10, marginBottom: 0 }}>
+              Persona saved.
+            </p>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+            <Button variant="primary" type="submit" disabled={setPersona.isPending}>
+              {setPersona.isPending ? 'Saving…' : 'Save persona'}
             </Button>
           </div>
         </form>
