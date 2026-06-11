@@ -11,7 +11,8 @@ import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { StatusDot } from '@/components/ui/StatusDot';
 import type { IconName } from '@/components/ui/Icon';
-import { AGENTS, ACTIVITY } from '@/lib/mockData';
+import { AGENTS } from '@/lib/mockData';
+import { eventDayLabel, eventToActivityItem, type ActivityEvent } from '@/lib/activity';
 import { Modal } from '@/components/ui/Modal';
 
 // ── Shared button helpers ────────────────────────────────────────────────────
@@ -44,24 +45,15 @@ const ACTIVITY_FILTERS = [
   { id: 'warning', label: 'Alerts',  icon: 'alert' as IconName },
 ];
 
-const ACTIVITY_EARLIER = [
-  { t: '09:51', icon: 'sparkles', text: 'Wiki page merged · "Microscopy"',           meta: 'v4 · 6 sources', tone: 'accent' as const,   day: 'Yesterday' },
-  { t: '09:14', icon: 'sparkles', text: 'Researcher · answered 3 queries',            meta: '5,120 tok',      tone: 'muted' as const,    day: 'Yesterday' },
-  { t: '08:30', icon: 'alert',    text: 'Citations Guard · 2 unsupported claims',     meta: 'Cell theory',    tone: 'warning' as const,  day: 'Yesterday' },
-  { t: '17:42', icon: 'file',     text: 'Source ingested · "gateway.py"',             meta: '→ LLM Gateway',  tone: 'muted' as const,    day: 'Yesterday' },
-  { t: '16:05', icon: 'check',    text: 'Weekly exec digest sent',                   meta: 'to 4 people',    tone: 'success' as const,  day: 'Yesterday' },
-];
-
 const TONE_COLOR: Record<string, string> = {
   accent: 'var(--accent)', success: 'var(--success)', warning: 'var(--warning)', muted: 'var(--fg-muted)',
 };
 
-export function ActivityModal({ onClose }: { onClose: () => void }) {
+export function ActivityModal({ events, onClose }: { events: ActivityEvent[]; onClose: () => void }) {
   const [filter, setFilter] = useState('all');
 
-  const today = ACTIVITY.map((r) => ({ ...r, day: 'Today' }));
-  const all = [...today, ...ACTIVITY_EARLIER];
-  const rows = filter === 'all' ? all : all.filter((r) => r.tone === filter);
+  const mapped = events.map((e) => ({ ...eventToActivityItem(e), day: eventDayLabel(e.ts) }));
+  const rows = filter === 'all' ? mapped : mapped.filter((r) => r.tone === filter);
   const days = [...new Set(rows.map((r) => r.day))];
 
   return (
@@ -73,7 +65,7 @@ export function ActivityModal({ onClose }: { onClose: () => void }) {
       footer={
         <>
           <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-            Showing <b style={{ color: 'var(--fg)' }}>{rows.length}</b> of {all.length} events
+            Showing <b style={{ color: 'var(--fg)' }}>{rows.length}</b> of {mapped.length} events
           </span>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button style={ghostBtn} onClick={onClose}><Icon name="external" size={14} /> Open audit log</button>
@@ -138,7 +130,7 @@ export function ActivityModal({ onClose }: { onClose: () => void }) {
       })}
       {!rows.length && (
         <div style={{ textAlign: 'center', color: 'var(--fg-faint)', padding: '30px 0', fontSize: 13 }}>
-          No events match this filter.
+          {mapped.length ? 'No events match this filter.' : 'No activity yet.'}
         </div>
       )}
     </Modal>

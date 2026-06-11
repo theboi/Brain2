@@ -31,6 +31,11 @@ export function ActivityPanel({ rows, onViewAll }: ActivityPanelProps) {
         </span>
       </div>
       <div style={{ padding: '4px 16px 10px' }}>
+        {rows.length === 0 && (
+          <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 12.5, color: 'var(--fg-faint)' }}>
+            No activity yet.
+          </div>
+        )}
         {rows.map((r, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderTop: i ? '1px solid var(--border)' : 'none' }}>
             <span style={{ fontFamily: 'var(--mono-font)', fontSize: 11.5, color: 'var(--fg-faint)', width: 38, flexShrink: 0 }}>{r.t}</span>

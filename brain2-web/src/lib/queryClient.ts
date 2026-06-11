@@ -31,6 +31,12 @@ export const qk = {
   sourceDiff: (pid: string, sourceId: string, version: number) =>
     ['sources', pid, sourceId, 'diff', version] as const,
   reports: (pid: string | null) => ['reports', pid] as const,
+  statsOverview: () => ['stats', 'overview'] as const,
+  statsSources: (d: number) => ['stats', 'sources', d] as const,
+  statsQueries: (d: number) => ['stats', 'queries', d] as const,
+  statsLlmTokens: (d: number) => ['stats', 'llm_tokens', d] as const,
+  statsWikiByProject: () => ['stats', 'wiki_by_project'] as const,
+  activity: (limit: number) => ['activity', limit] as const,
   report: (id: string) => ['reports', 'one', id] as const,
   folders: (pid: string) => ['folders', pid] as const,
   wikiTopicSources: (pid: string, topic: string) =>

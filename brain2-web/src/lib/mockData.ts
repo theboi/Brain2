@@ -57,18 +57,6 @@ export interface QuickAction {
   runner: string;
 }
 
-function seededSeries(n: number, base: number, drift: number, noise: number, seed: number): number[] {
-  let s = seed;
-  const rand = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
-  const out: number[] = [];
-  let v = base;
-  for (let i = 0; i < n; i++) {
-    v += drift + (rand() - 0.5) * noise;
-    out.push(Math.max(0, Math.round(v)));
-  }
-  return out;
-}
-
 export const AGENTS: Agent[] = [
   {
     id: 'researcher', name: 'Researcher', model: 'Claude 3.5 Sonnet', provider: 'Anthropic · cloud',
@@ -97,24 +85,6 @@ export const AGENTS: Agent[] = [
   },
 ];
 
-export const HERO_STATS = [
-  { label: 'agents online', value: '5' },
-  { label: 'sources', value: '1,284' },
-  { label: 'wiki pages', value: '312' },
-  { label: 'queries today', value: '89' },
-];
-
-export const ACTIVITY: ActivityItem[] = [
-  { t: '14:02', icon: 'sparkles', text: 'Researcher · message returned', meta: '1,840 tok', tone: 'accent' },
-  { t: '13:58', icon: 'file', text: 'Source ingested · "Hooke 1665.pdf"', meta: '→ Micrographia', tone: 'muted' },
-  { t: '13:31', icon: 'check', text: 'Wiki edit applied via LLM nudge', meta: 'Cell theory', tone: 'success' },
-  { t: '13:12', icon: 'alert', text: 'Archivist · circuit breaker half-open', meta: 'retry in 30s', tone: 'warning' },
-  { t: '12:10', icon: 'clock', text: 'Coder · went idle', meta: 'after 34 msgs', tone: 'muted' },
-  { t: '11:46', icon: 'file', text: 'Source ingested · "standup-04-12.md"', meta: '→ Q3 themes', tone: 'muted' },
-  { t: '11:09', icon: 'sparkles', text: 'New wiki page compiled · "Bacteria"', meta: 'v1 · 2 sources', tone: 'accent' },
-  { t: '10:24', icon: 'sparkles', text: 'Summariser · 12-source digest done', meta: '3,201 tok', tone: 'muted' },
-];
-
 export const WIKI_HEALTH = {
   score: 86,
   label: 'Healthy',
@@ -125,22 +95,6 @@ export const WIKI_HEALTH = {
     { icon: 'alert', tone: 'warning' as const, label: 'Flagged for review · drift', value: '7' },
     { icon: 'clock', tone: 'muted' as const, label: 'Stale · not edited 30d+', value: '12' },
   ],
-};
-
-export const WIKI_BY_PROJECT = [
-  { label: 'default', value: 142 },
-  { label: 'research-q3', value: 98 },
-  { label: 'launch-docs', value: 34 },
-  { label: 'archive', value: 22 },
-  { label: 'handbook', value: 16 },
-];
-
-export const SOURCES_OVER_TIME = seededSeries(30, 980, 10, 26, 3);
-export const QUERIES_SERVED = seededSeries(30, 60, 1, 40, 11);
-export const TOKENS_BY_PROVIDER: Record<string, number[]> = {
-  Anthropic: seededSeries(30, 120, 4, 60, 5),
-  Gemini: seededSeries(30, 80, 2, 40, 9),
-  Ollama: seededSeries(30, 50, 1, 30, 13),
 };
 
 export const BRIEFING: BriefingGroup[] = [
