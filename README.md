@@ -7,8 +7,8 @@ atomic, testable concepts, schedules those concepts for spaced-repetition review
 core you extend with add-ons instead of forking.
 
 The core ships with two runnable servers — a **REST API** (`brain2-api`) and an **MCP
-server** for agents (`brain2-mcp`) — plus a migration CLI (`brain2-migrate`). It runs on
-SQLite locally and is built to swap to PostgreSQL behind one `Store` interface.
+server** for agents (`brain2-mcp`) — plus a background worker (`brain2-worker`). It
+runs on SQLite locally and is built to swap to PostgreSQL behind one `Store` interface.
 
 ---
 
@@ -61,6 +61,10 @@ network, or an LLM goes through an interface — never raw drivers.
 
 All dependencies are wired exactly once in the **composition root**
 ([brain2/app_context.py](brain2/app_context.py)); both servers and the worker share it.
+`brain2-worker` is a separate process that drains the event outbox and executes durable
+tasks; for single-process local development the worker runs inline.
+The **VaultWatcher** starts automatically when any server or worker boots — it watches
+vault directories on disk and re-indexes changed wiki pages without any manual trigger.
 
 ### Domain hierarchy
 
@@ -80,14 +84,12 @@ Tenant  >  Workspace  >  Vault  >  Files (wiki pages, static, dynamic)
 - **Files** — markdown pages plus assets inside the vault directory. The wiki is the
   set of pages; sources are uploaded artefacts associated to a project/vault.
 
-### Wiki storage: vault-first (post-migration 0017)
+### Wiki storage: vault-first
 
 Wiki pages are **markdown files on disk** indexed into `vault_pages` / `vault_links`,
 not rows in a `wiki_pages` table. Reads go through `vault:read_index`,
 `vault:read_page`, `vault:graph`, `vault:backlinks`, `vault:history` in
-[brain2/vault_ops.py](brain2/vault_ops.py). The legacy DB-backed wiki ops
-(`brain2/wiki_ops.py`, the `wiki_pages` / `wiki_revisions` / `wiki_fts` tables) are
-being removed — treat them as deprecated; new code should target `vault:*`.
+[brain2/vault_ops.py](brain2/vault_ops.py).
 
 Each project owns one vault (`projects.vault_path`). Vault changes on disk are picked
 up by [brain2/vault/watcher.py](brain2/vault/watcher.py) and re-indexed automatically.
@@ -101,7 +103,7 @@ Key invariants the code enforces (checked in tests on every task):
 - **Every state mutation emits one event in the same transaction** (transactional
   outbox); `events` is the single source of truth, audit logs are projections.
 - **No DB connection is held across an LLM or network call.**
-- **The `tasks` table *is* the durable queue** — the API never runs heavy work.
+- **The `tasks` table *is* the durable queue** — the API never runs heavy work inline.
 - **Mutating ops accept `Idempotency-Key`; repeats replay the stored response.**
 
 **Tech stack:** Python 3.11+, FastAPI + Uvicorn, Pydantic v2, SQLite (`LocalStore`),
@@ -128,13 +130,6 @@ export BRAIN2_SECRET_KEY=$(.venv/bin/python -c \
   "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
 ```
 
-Apply database migrations (creates the SQLite db under `BRAIN2_ROOT`):
-
-```bash
-.venv/bin/brain2-migrate
-# -> Applied migrations: [1, 2, 3, 4, 5, 6, 7, 8]
-```
-
 > Always run Python through the project venv (`.venv/bin/python`), not the bare `python`
 > shim — that's how entrypoints and tests resolve dependencies.
 
@@ -144,55 +139,50 @@ Apply database migrations (creates the SQLite db under `BRAIN2_ROOT`):
 
 Configuration is environment-driven ([brain2/config.py](brain2/config.py)). Every
 variable has a default, so Brain2 boots with none set — but set `BRAIN2_SECRET_KEY` for
-anything you want to persist across restarts.
+anything you want to persist across restarts. An `.env` file in the project root is
+loaded automatically.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `BRAIN2_SECRET_KEY` | *random, ephemeral* | base64url 32-byte key for symmetric encryption. Unset ⇒ secrets unrecoverable after restart (warns). |
-| `BRAIN2_ROOT` | `~/Knowledge/Brain2` | LocalStore root (SQLite db + derived `.md` export). |
+| `BRAIN2_ROOT` | `~/Knowledge/Brain2` | LocalStore root (SQLite db + blob storage). |
 | `BRAIN2_DB_PATH` | `$BRAIN2_ROOT/brain2.sqlite` | SQLite file for LocalStore. |
+| `BRAIN2_BLOBS_ROOT` | `$BRAIN2_ROOT/blobs` | Filesystem root for uploaded source blobs. |
 | `BRAIN2_STORAGE_TYPE` | `local` | `local` (SQLite) or `postgres`. |
 | `BRAIN2_DEFAULT_TENANT` | `default` | Boundary-only default for single-tenant mode. Never defaulted in business logic. |
 | `BRAIN2_WIKI_PAGE_MAX_BYTES` | `262144` | Per-page byte ceiling. |
-| `BRAIN2_TELEGRAM_SERVICE_KEY` | *(unset)* | Shared secret between the API server and the Telegram bot. Required to enable Telegram. |
-| `BRAIN2_TELEGRAM_OWNER_ID` | *(unset)* | Your Telegram numeric user ID. Required to enable Telegram. |
 
 ---
 
 ## Running the server
 
-### 1. Run the complete setup script
+### 1. Run setup
 
-Use `scripts/setup.py` to bootstrap everything in one go: tenant, workspace, owner user,
-optional vault initialization, and optional test data seeding. There is no public signup
-endpoint — the first principal is created through the composition root.
+Use `scripts/setup.py` to bootstrap everything for a fresh install: tenant, owner
+user, workspace, and optional vault + test data. **Database migrations apply
+automatically** on first boot — no manual migration step is needed.
 
-**Interactive setup** (prompts for all values):
+**Interactive** (prompts for all values):
 ```bash
 python scripts/setup.py
 ```
 
-**Non-interactive with defaults** (creates tenant, user, workspace, vault, and test data):
+**Non-interactive with defaults** (creates tenant, owner user, workspace, vault, and test data):
 ```bash
 python scripts/setup.py --non-interactive --create-vault --with-seed
 ```
 
-**Reset everything** (delete vault directories and database):
+This produces:
+- Tenant `default` / owner `alice@example.com` / password `change-me-please`
+- Workspace "Default Workspace" with vault `main-vault`
+- Optional test vaults with seeded wiki pages and sources (`--with-seed`)
+
 ```bash
+# Reset everything (delete vault dirs and DB):
 python scripts/setup.py --reset --yes
 ```
 
-The script respects `BRAIN2_ROOT`, `BRAIN2_DB_PATH`, and `BRAIN2_SEED_VAULT_ROOT` env vars.
-
-> **Legacy:** If you prefer manual bootstrap, save `bootstrap.py` (below) and run once:
-> ```python
-> from brain2.app_context import build_app_context
-> actx = build_app_context()
-> store = actx.store
-> store.create_tenant("default", "Default Tenant")
-> store.create_user("default", "alice", "alice@example.com", role="owner")
-> actx.passwords.set_password("default", "alice", "change-me-please")
-> ```
+See `python scripts/setup.py --help` for all options.
 
 ### 2. Start the REST API
 
@@ -200,9 +190,21 @@ The script respects `BRAIN2_ROOT`, `BRAIN2_DB_PATH`, and `BRAIN2_SEED_VAULT_ROOT
 .venv/bin/brain2-api          # uvicorn on http://0.0.0.0:8000
 ```
 
-Interactive API docs (Swagger UI) are served at <http://localhost:8000/docs>.
+Interactive API docs (Swagger UI) at <http://localhost:8000/docs>.
 
-### 3. Log in and call an operation
+### 3. Start the background worker
+
+The worker drains the event outbox and executes durable tasks (ingestion, report
+generation). Run it in a second terminal alongside the API:
+
+```bash
+.venv/bin/brain2-worker
+```
+
+For lightweight local development, the worker can be omitted — heavy tasks will queue
+but not execute until the worker is running.
+
+### 4. Log in and call an operation
 
 ```bash
 # Exchange credentials for an access token
@@ -228,10 +230,6 @@ curl -s -X POST http://localhost:8000/api/v1/ops/run_query \
   -d '{"data_source_id":"<id>","query":"SELECT 1"}'
 ```
 
-(`run_query` needs a registered data source; create one through its operation first —
-see the ops registered in [brain2/app_context.py](brain2/app_context.py) and the
-add-ons under [addons/](addons/).)
-
 ### Core auth endpoints
 
 | Method & path | Purpose |
@@ -255,105 +253,9 @@ and filters its tool list to permitted operations — it never has ambient autho
 
 Durable, heavy work (report generation, ingestion) is enqueued to the `tasks` table
 rather than run inline. The claim/lease/recover logic lives in
-[brain2/tasks/worker.py](brain2/tasks/worker.py); for the single-process `LocalStore`
-this runs in-process. A separately-scaled worker fleet is the `PostgresStore` deployment
+[brain2/tasks/worker.py](brain2/tasks/worker.py); `brain2-worker` runs this loop as a
+separate process. A separately-scaled worker fleet is the `PostgresStore` deployment
 path.
-
----
-
-## Telegram bot
-
-The Telegram bot (`brain2-telegram`) is bundled in the same package. It connects to the
-Brain2 REST API via a shared service key, manages per-chat sessions in a local SQLite
-file, and exposes all registered operations as inline buttons or direct commands.
-
-### Prerequisites
-
-- Brain2 API server already running (see above).
-- A Telegram bot token from [@BotFather](https://t.me/BotFather) (`/newbot`).
-- Your Telegram numeric user ID (send any message to [@userinfobot](https://t.me/userinfobot)
-  to get it).
-
-### 1. Generate a service key
-
-This is a shared secret that proves the bot is talking to *your* Brain2 server:
-
-```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-# -> e.g. a3f9c2...  (copy this; you'll use it in both places)
-```
-
-### 2. Configure the Brain2 API server
-
-Set these on the server **before** starting it:
-
-```bash
-export BRAIN2_TELEGRAM_SERVICE_KEY=<your-service-key>
-export BRAIN2_TELEGRAM_OWNER_ID=<your-telegram-id>
-```
-
-Then start (or restart) the API:
-
-```bash
-.venv/bin/brain2-api
-```
-
-### 3. Start the bot
-
-In a second terminal (or process), with all four required env vars set:
-
-```bash
-export TELEGRAM_BOT_TOKEN=<token-from-BotFather>
-export BRAIN2_API_URL=http://localhost:8000
-export BRAIN2_TELEGRAM_SERVICE_KEY=<same-key-as-above>
-export BRAIN2_TELEGRAM_OWNER_ID=<your-telegram-id>
-
-.venv/bin/brain2-telegram
-```
-
-The bot connects to Telegram via long-polling by default (no public URL needed). For
-webhook mode set `BRAIN2_TELEGRAM_WEBHOOK_URL` to a publicly reachable HTTPS URL.
-
-Optional env vars for the bot process:
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `BRAIN2_TELEGRAM_DB` | `~/.brain2/telegram.sqlite` | SQLite file for per-chat session store. |
-| `BRAIN2_TELEGRAM_POLL_TIMEOUT` | `30` | Long-poll timeout in seconds. |
-| `BRAIN2_TELEGRAM_WEBHOOK_URL` | *(unset)* | Enable webhook mode; value is the public HTTPS URL. |
-
-### 4. First-run setup in Telegram
-
-Open a DM with your bot and send `/start`. On a fresh server (no workspace yet) it routes
-you to the bootstrap wizard:
-
-```
-/start          → "Let's set up your workspace. Send /setup to begin."
-/setup          → wizard: workspace name → email → password → display name
-                → creates tenant + owner account, signs you in
-```
-
-If the server already has a workspace (you ran `bootstrap.py` earlier), `/start` sends
-you to `/link` instead:
-
-```
-/link           → enter email (+ password for non-owners)
-                → signs you in to the linked account
-```
-
-### Bot commands
-
-| Command | Who | Purpose |
-|---------|-----|---------|
-| `/start` | anyone | Entry point — routes to setup, link, or main menu |
-| `/setup` | owner only | First-run: create workspace + owner account |
-| `/link` | anyone | Link an existing Brain2 account to this chat |
-| `/ops` | signed-in | Inline button menu of all permitted operations |
-| `/op <name> key=value …` | signed-in | Run a named operation directly |
-| `/create_user` | admins | Create a new user (multi-step conversation) |
-| `/list_users` | admins | List users in your workspace |
-| `/mode nlp\|commands` | signed-in | Toggle interaction mode (NLP mode coming soon) |
-| `/cancel` | anyone | Abort the current conversation |
 
 ---
 
@@ -367,12 +269,13 @@ brain2/                     # the headless core
 ├── operations.py           # OperationRegistry + dispatch() (authorize-first)
 ├── api.py                  # FastAPI /api/v1  (brain2-api)
 ├── mcp.py                  # MCP server       (brain2-mcp)
+├── runtime.py              # worker loop      (brain2-worker)
+├── provisioning.py         # atomic tenant+owner bootstrap helper
 ├── models.py / errors.py   # domain models, typed errors → HTTP status
 ├── store/
 │   ├── base.py             # Store protocol + transaction contract
-│   ├── local.py            # LocalStore — SQLite (metadata, index, events); wiki
-│   │                       #   content lives in vaults on disk, not here
-│   └── migrations/         # ordered, checksummed .sql + runner (brain2-migrate)
+│   ├── local.py            # LocalStore — SQLite; wiki content lives in vaults on disk
+│   └── migrations/         # ordered, checksummed .sql (auto-applied on boot)
 ├── vault/                  # vault-first wiki: watcher, indexer, git history
 ├── vault_ops.py            # vault:* ops (read_index, read_page, graph, history…)
 ├── source_ops.py           # sources:* ops (list/get/extract/tag/reingest/delete)
@@ -392,20 +295,6 @@ addons/
 ├── concepts/               # concept model, FSRS, sync, sessions
 └── report_generation/      # templates, generate, TZ-aware scheduling, writeback sanitize
 
-brain2_telegram/            # Telegram bot add-on (brain2-telegram)
-├── config.py               # env-driven bot config (fail-fast on missing vars)
-├── bot.py                  # PTB Application assembly + run() (polling / webhook)
-├── api_client.py           # Brain2Client — thin httpx wrapper for /api/v1
-├── session_store.py        # per-chat SQLite session cache
-├── flows.py                # auth helpers: authed_list_ops, authed_run_op, parse_kv
-├── formatting.py           # render_result, ops_keyboard, render_error
-└── handlers/
-    ├── start.py            # /start routing + main menu
-    ├── bootstrap.py        # /setup — first-run owner wizard
-    ├── link.py             # /link — account linking (password or owner-passwordless)
-    ├── ops.py              # /ops inline menu + /op direct dispatch
-    └── admin.py            # /create_user, /list_users
-
 brain2-web/                 # Web Console (React + Vite + TypeScript)
 ├── src/
 │   ├── App.tsx             # Router; pages mounted inside AppShell
@@ -418,11 +307,14 @@ brain2-web/                 # Web Console (React + Vite + TypeScript)
 │   │   ├── Sources/        # list/detail + IngestModal
 │   │   └── Wiki/           # Read/Edit/History/Sources/Graph + AuditDrawer + GraphView
 │   ├── lib/                # data layer — sources.ts / wiki.ts / inbox.ts
-│   │                       #   (currently mock; live REST wiring is in flight,
-│   │                       #    see docs/superpowers/specs/ for the design)
+│   │                       #   (live REST wiring in-flight; see docs/superpowers/specs/)
 │   ├── styles/             # global.css + tokens.css (theme + accent)
 │   └── hooks/              # useTheme, useMedia
 └── package.json            # react-router-dom only; intentionally minimal deps
+
+scripts/
+├── setup.py                # complete fresh-install setup (tenant/user/vault/seed)
+└── seed_dev_vault.py       # seed test vaults only (subset of setup.py --with-seed)
 
 docs/design/v1/             # authoritative visual prototypes (HTML/JSX) the Web
                             #   Console is recreated from pixel-for-pixel
@@ -452,6 +344,9 @@ A few things that aren't obvious from the tree:
   raw binary.
 - **Tenant is never defaulted in business logic.** `RequestContext.tenant_id` is the
   first argument to every Store call; isolation tests will catch ambient access.
+- **Migrations are automatic.** `build_app_context()` calls `store.migrate()` — you
+  never need to run `brain2-migrate` manually. It exists as a standalone CLI for
+  offline inspection or scripted deployments only.
 
 The authoritative design lives under [docs/superpowers/](docs/superpowers/) — start with
 the **[master plan](docs/superpowers/plans/2026-05-24-brain2-master-plan.md)** (build
@@ -463,8 +358,8 @@ specs in [docs/superpowers/specs/](docs/superpowers/specs/).
 
 ## Project status
 
-The platform, knowledge engine, add-ons, and interfaces are implemented and tested
-(`.venv/bin/python -m pytest` → **339 passed**):
+Built with strict TDD — tests are written first and watched to fail before
+implementation. Run `pytest` to see the current count.
 
 | Area | Plan | State |
 |------|------|-------|
@@ -482,8 +377,6 @@ The platform, knowledge engine, add-ons, and interfaces are implemented and test
 | REST `/api/v1` + MCP interfaces (`brain2-api` / `brain2-mcp`) | P12 | ✅ |
 | Ops hardening (metrics/logs/health, rate limit, merkle audit) | P13 | ✅ |
 | `PostgresStore` production swap + remaining DB connectors | P14 | 🟡 landing |
-| Telegram bot: service-key auth, `/telegram/*` API, session store | P15 | ✅ |
-| Telegram bot: conversations, ops surface, `brain2-telegram` entrypoint | P16 | ✅ |
 
 > **Note on backends:** `LocalStore` (SQLite) is fully runnable today. `PostgresStore`
 > and the pg/mysql/mongo connectors are the remaining swap — the conformance suite is
@@ -495,11 +388,8 @@ The platform, knowledge engine, add-ons, and interfaces are implemented and test
 
 ## Development
 
-Built with strict TDD — tests are written first and watched to fail before
-implementation.
-
 ```bash
-.venv/bin/python -m pytest                 # run everything (251 passing)
+.venv/bin/python -m pytest                     # run everything
 .venv/bin/python -m pytest tests/isolation/   # multi-tenant isolation suite
 .venv/bin/python -m pytest tests/test_wiki_merge.py   # one module
 ```
@@ -509,15 +399,9 @@ New add-ons register operations / events / storage through
 [addons/concepts/](addons/concepts/) and [addons/report_generation/](addons/report_generation/)
 for worked examples, and follow the cross-cutting invariants in the master plan.
 
-### Dev DB reset after pulling this branch
-
-This branch rewrites migration `0019` in place (the legacy wiki tables were
-restored by accident in an earlier draft; they're now gone for good). If you
-already applied the old 0019 to a dev DB, the checksum check will refuse to
-re-migrate. Reset with:
+### Dev DB reset
 
 ```bash
-rm "$BRAIN2_DB_PATH"           # or wherever your dev sqlite lives
-.venv/bin/brain2-migrate       # reapply all migrations cleanly
-.venv/bin/python scripts/seed_dev_vault.py    # repopulate the dev vault
+python scripts/setup.py --reset --yes        # wipe vault dirs + DB
+python scripts/setup.py --non-interactive --create-vault --with-seed   # re-seed
 ```
