@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
 import { Modal } from '@/components/ui/Modal';
@@ -7,8 +8,11 @@ import { Popover } from '@/components/ui/Popover';
 import { Button } from '@/components/ui/Button';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { useMe } from '@/hooks/me';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
+import { usePersona } from '@/hooks/usePersona';
 import { useAgents, useCreateSchedule, useGenerateReport, useReports } from '@/hooks/useReports';
+import { parsePersona } from '@/lib/persona';
 
 type ReportFormatId = 'doc' | 'deck' | 'video';
 type ScheduleId = 'oneoff' | 'weekly' | 'monthly' | 'quarterly';
@@ -96,13 +100,6 @@ const REPORT_FORMATS: ReportFormat[] = [
   { id: 'deck', label: 'Deck', sub: 'Slides · PDF', icon: 'panelLeft' },
   { id: 'video', label: 'Video', sub: 'Narrated overview', icon: 'play' },
 ];
-
-const REPORT_PERSONA = {
-  name: 'Alice',
-  role: 'Operations & Finance Lead',
-  basis: 'Tuned to your role, the sources you own, and what you open most',
-  signals: ['Owns 12 finance sources', 'Opens Q2 docs daily', 'Board meeting in 6 days'],
-};
 
 const SCHEDULE_OPTIONS = [
   { id: 'oneoff' as const, label: 'Run now', sub: 'generate now', icon: 'zap' as IconName },
@@ -845,6 +842,11 @@ export function ReportsPage() {
   const isMobile = useMedia(MOBILE_QUERY);
   const isNarrow = useMedia('(max-width: 1080px)');
   const { projectId } = useWorkspace();
+  const me = useMe().data;
+  const persona = usePersona();
+  const parsed = parsePersona(persona.data?.content ?? '');
+  const displayName = me?.display_name?.trim() || 'you';
+  const firstName = displayName.split(/\s+/)[0];
   const { data: recentReports = [] } = useReports(projectId);
   const [schedule, setSchedule] = useState<ScheduleId>('oneoff');
   const [catalogOpen, setCatalogOpen] = useState(false);
@@ -867,10 +869,16 @@ export function ReportsPage() {
               <ScheduleDropdown value={schedule} onChange={setSchedule} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 12 }}>
-              <PersonaCrest size={26} />
-              <span style={{ fontSize: 12.5, color: 'var(--fg-muted)', textWrap: 'pretty' }}>
-                Tuned for <b style={{ color: 'var(--fg)', fontWeight: 600 }}>{REPORT_PERSONA.name}</b> · {REPORT_PERSONA.role} — {REPORT_PERSONA.basis}
-              </span>
+              <PersonaCrest size={26} pulse={persona.isLoading} />
+              {parsed.isEmpty ? (
+                <span style={{ fontSize: 12.5, color: 'var(--fg-muted)', textWrap: 'pretty' }}>
+                  <Link to="/settings" style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}>Set up your persona</Link> to tailor these suggestions.
+                </span>
+              ) : (
+                <span style={{ fontSize: 12.5, color: 'var(--fg-muted)', textWrap: 'pretty' }}>
+                  Tuned for <b style={{ color: 'var(--fg)', fontWeight: 600 }}>{displayName}</b>{parsed.summary ? <> — {parsed.summary}</> : null}
+                </span>
+              )}
             </div>
           </header>
 
@@ -883,7 +891,7 @@ export function ReportsPage() {
                   </button>
                 }
               >
-                Suggested for {REPORT_PERSONA.name}
+                Suggested for {firstName}
               </SectionLabel>
 
               {scheduled && (
@@ -933,13 +941,19 @@ export function ReportsPage() {
                 </div>
               </Panel>
               <Panel title="Persona signals">
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {REPORT_PERSONA.signals.map((signal) => (
-                    <span key={signal} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '3px 9px' }}>
-                      <span style={{ width: 4, height: 4, borderRadius: '50%', background: 'var(--accent)' }} /> {signal}
-                    </span>
-                  ))}
-                </div>
+                {parsed.signals.length ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {parsed.signals.map((signal) => (
+                      <span key={signal} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '3px 9px' }}>
+                        <span style={{ width: 4, height: 4, borderRadius: '50%', background: 'var(--accent)' }} /> {signal}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: 'var(--fg-faint)', lineHeight: 1.5 }}>
+                    No persona notes yet — add some in <Link to="/settings" style={{ color: 'var(--accent)', textDecoration: 'none' }}>Settings → Profile</Link>.
+                  </div>
+                )}
               </Panel>
             </aside>
           </div>
