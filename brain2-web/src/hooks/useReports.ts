@@ -1,7 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { genIdempotencyKey, ops } from '@/lib/api';
 import { qk } from '@/lib/queryClient';
 import type { AgentStatus } from '@/lib/mockData';
+import { buildHistoryParams, type HistoryFilters, type ReportHistoryResult } from '@/pages/Reports/history';
 
 export interface ReportRow {
   report_id: string;
@@ -24,6 +25,7 @@ export interface GenerateReportVars {
   project_id: string | null;
   format: 'doc' | 'deck' | 'video';
   schedule: 'now' | 'weekly' | 'monthly' | 'quarterly';
+  category?: string;
 }
 
 export interface GenerateReportResult {
@@ -106,5 +108,15 @@ export function useAgents() {
         ...agent,
         status: normalizeAgentStatus(agent.status),
       }))),
+  });
+}
+
+export function useReportHistory(projectId: string | null, filters: HistoryFilters) {
+  const params = buildHistoryParams(filters);
+  return useQuery({
+    queryKey: qk.reportHistory(projectId, params),
+    queryFn: () =>
+      ops<ReportHistoryResult>('reports:history', { project_id: projectId, ...params }),
+    placeholderData: keepPreviousData,
   });
 }

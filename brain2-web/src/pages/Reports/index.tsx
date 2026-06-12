@@ -51,6 +51,7 @@ interface CatalogReport {
   icon: IconName;
   formats: ReportFormatId[];
   desc?: string;
+  category?: string;
 }
 
 interface ReportParamOption {
@@ -77,6 +78,7 @@ interface ReportAction {
   est?: string;
   sources?: number;
   coverage?: string;
+  category?: string;
   params: ReportParam[];
   initial: Record<string, string>;
   buildPrompt: (values: Record<string, string>) => string;
@@ -279,6 +281,7 @@ function reportActionConfig(report: SuggestedReport | CatalogReport, format: Rep
     est: 'est' in report ? report.est : '~2 min',
     sources: 'sources' in report ? report.sources : 12,
     coverage: 'desc' in report ? report.desc ?? fallbackDesc : fallbackDesc,
+    category: report.category,
     params,
     initial,
     buildPrompt: (values) => buildReportPrompt({
@@ -508,7 +511,7 @@ function CatalogOverlay({ schedule, onClose, onGenerate }: {
                 <button
                   key={report.id}
                   onClick={() => {
-                    onGenerate(reportActionConfig(report, report.formats[0]), schedule);
+                    onGenerate(reportActionConfig({ ...report, category: category.category }, report.formats[0]), schedule);
                   }}
                   style={{ display: 'flex', alignItems: 'center', gap: 11, textAlign: 'left', padding: '11px 13px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontFamily: 'var(--ui-font)' }}
                 >
@@ -724,6 +727,7 @@ function GenerateOverlay({ action, schedule, projectId, onClose }: {
       project_id: projectId,
       format: (values.format as ReportFormatId) ?? 'doc',
       schedule: 'now' as const,
+      ...(action.category ? { category: action.category } : {}),
     };
     const handlers = {
       onSuccess: () => window.setTimeout(onClose, 950),
@@ -994,7 +998,7 @@ export function ReportsPage() {
           onClose={() => setGenerateAction(null)}
         />
       )}
-      {historyOpen && <HistoryOverlay onClose={() => setHistoryOpen(false)} />}
+      {historyOpen && <HistoryOverlay projectId={projectId} onClose={() => setHistoryOpen(false)} />}
       {scheduledOpen && <ScheduledRunsOverlay onClose={() => setScheduledOpen(false)} />}
     </>
   );

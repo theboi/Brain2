@@ -1,21 +1,24 @@
 /*
- * Report History overlay — visual port of reports-history.jsx.
- * Opens from the "History" link on the Recent reports panel.
- * 115 mock entries, paginated 8/page, filterable by format + period + search.
- * Format + period are dropdowns (same component family as the Generate overlay).
- *
- * Mock data only — wiring to `reports:list` comes later.
+ * Report History overlay: live data via reports:history.
+ * Server-side filtering and pagination, rendered with the existing Reports UI.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '@/components/ui/Icon';
 import { Popover } from '@/components/ui/Popover';
+import { useReportHistory } from '@/hooks/useReports';
 import {
-  REPORT_HISTORY, HIST_FMT,
-  type HistoryReport, type HistFormat, type HistStatus,
-} from './historyMock';
+  HIST_PAGE_SIZE,
+  type HistFormat,
+  type HistStatus,
+  type HistoryItem,
+} from './history';
 
-const HIST_PAGE_SIZE = 8;
+const HIST_FMT: Record<HistFormat, { icon: 'file' | 'panelLeft' | 'play'; label: string }> = {
+  doc: { icon: 'file', label: 'Document' },
+  deck: { icon: 'panelLeft', label: 'Deck' },
+  video: { icon: 'play', label: 'Video' },
+};
 
 const FORMAT_OPTIONS: { id: 'all' | HistFormat; label: string }[] = [
   { id: 'all', label: 'All types' },
@@ -26,47 +29,43 @@ const FORMAT_OPTIONS: { id: 'all' | HistFormat; label: string }[] = [
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// Build { year: [month, ...] } map from the dataset
-function buildYMMap(): Record<number, number[]> {
-  const map: Record<number, Set<number>> = {};
-  REPORT_HISTORY.forEach((r) => {
-    if (!map[r.year]) map[r.year] = new Set();
-    map[r.year].add(r.month);
-  });
-  return Object.fromEntries(
-    Object.entries(map).map(([y, ms]) => [Number(y), [...ms].sort((a, b) => b - a)]),
-  );
-}
-
-// Smart ellipsis page range → array of page indices + '…' strings
-function buildPageRange(page: number, pages: number): (number | '…')[] {
+function buildPageRange(page: number, pages: number): (number | '...')[] {
   if (pages <= 7) return Array.from({ length: pages }, (_, i) => i);
   const show = new Set(
     [0, pages - 1, page - 1, page, page + 1].filter((p) => p >= 0 && p < pages),
   );
   const sorted = [...show].sort((a, b) => a - b);
-  const out: (number | '…')[] = [];
-  for (let i = 0; i < sorted.length; i++) {
-    if (i > 0 && sorted[i] > sorted[i - 1] + 1) out.push('…');
+  const out: (number | '...')[] = [];
+  for (let i = 0; i < sorted.length; i += 1) {
+    if (i > 0 && sorted[i] > sorted[i - 1] + 1) out.push('...');
     out.push(sorted[i]);
   }
   return out;
 }
 
 const histSectionLabel: React.CSSProperties = {
-  fontSize: 11, fontWeight: 600, letterSpacing: '0.06em',
-  textTransform: 'uppercase', color: 'var(--fg-faint)',
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
+  color: 'var(--fg-faint)',
 };
 
 function histIconBtn(): React.CSSProperties {
   return {
-    width: 30, height: 30, borderRadius: 7, border: '1px solid var(--border)',
-    background: 'transparent', display: 'flex', alignItems: 'center',
-    justifyContent: 'center', cursor: 'pointer', flexShrink: 0,
+    width: 30,
+    height: 30,
+    borderRadius: 7,
+    border: '1px solid var(--border)',
+    background: 'transparent',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    flexShrink: 0,
   };
 }
 
-// ── Status chip (only for non-ready) ──────────────────────────────────────
 function HistStatusChip({ status }: { status: HistStatus }) {
   if (status === 'ready') return null;
   const cfg = status === 'processing'
@@ -87,11 +86,10 @@ function HistStatusChip({ status }: { status: HistStatus }) {
 }
 
 function HistDot() {
-  return <span style={{ color: 'var(--border-strong)', userSelect: 'none', flexShrink: 0 }}>·</span>;
+  return <span style={{ color: 'var(--border-strong)', userSelect: 'none', flexShrink: 0 }}>.</span>;
 }
 
-// ── One history row — whole ready row opens in a new tab ────────────────────
-function HistoryRow({ r, border }: { r: HistoryReport; border: boolean }) {
+function HistoryRow({ r, border }: { r: HistoryItem; border: boolean }) {
   const f = HIST_FMT[r.format];
   const dim = r.status !== 'ready';
   const openable = r.status === 'ready';
@@ -104,7 +102,12 @@ function HistoryRow({ r, border }: { r: HistoryReport; border: boolean }) {
       onClick={open}
       role={openable ? 'button' : undefined}
       tabIndex={openable ? 0 : undefined}
-      onKeyDown={(e) => { if (openable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } }}
+      onKeyDown={(e) => {
+        if (openable && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          open();
+        }
+      }}
       className={openable ? 'b2-hist-row' : ''}
       style={{
         display: 'flex', alignItems: 'center', gap: 12, padding: '11px 8px', margin: '0 -4px',
@@ -140,8 +143,12 @@ function HistoryRow({ r, border }: { r: HistoryReport; border: boolean }) {
           <span style={{ color: 'var(--fg-faint)', flexShrink: 0 }}>{r.date}</span>
           <HistDot />
           <span style={{ flexShrink: 0 }}>{f.label}</span>
-          <HistDot />
-          <span style={{ flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.meta}</span>
+          {r.meta && (
+            <>
+              <HistDot />
+              <span style={{ flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.meta}</span>
+            </>
+          )}
           <HistDot />
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
             <Icon name={r.by === 'Schedule' ? 'calendar' : 'sparkles'} size={10} color="var(--fg-faint)" />
@@ -165,7 +172,6 @@ function HistoryRow({ r, border }: { r: HistoryReport; border: boolean }) {
   );
 }
 
-// ── Generic dropdown chip (same shape as Generate overlay's ParamChip) ─────
 function HistDropdown({
   icon, label, active, width = 250, children,
 }: {
@@ -221,7 +227,6 @@ function HistOption({ on, onClick, primary, hint }: { on: boolean; onClick: () =
   );
 }
 
-// ── Format-type dropdown ───────────────────────────────────────────────────
 function FormatDropdown({
   value, onChange, counts,
 }: {
@@ -250,17 +255,17 @@ function FormatDropdown({
   );
 }
 
-// ── Period (year + optional month) dropdown ────────────────────────────────
 function PeriodDropdown({
-  selYear, selMonth, onChange,
+  selYear, selMonth, periods, totalAll, onChange,
 }: {
   selYear: number | null;
   selMonth: number | null;
+  periods: Record<string, number[]>;
+  totalAll: number;
   onChange: (year: number | null, month: number | null) => void;
 }) {
-  const ymMap = useMemo(() => buildYMMap(), []);
-  const years = Object.keys(ymMap).map(Number).sort((a, b) => b - a);
-  const availMonths = selYear != null ? (ymMap[selYear] || []) : [];
+  const years = Object.keys(periods).map(Number).sort((a, b) => b - a);
+  const availMonths = selYear != null ? (periods[String(selYear)] || []) : [];
 
   let label = 'All time';
   if (selYear != null && selMonth != null) label = `${MONTH_LABELS[selMonth]} ${selYear}`;
@@ -286,16 +291,19 @@ function PeriodDropdown({
       {(close) => (
         <>
           <div style={{ ...histSectionLabel, padding: '6px 8px 4px' }}>Year</div>
-          <HistOption on={selYear == null} onClick={() => { onChange(null, null); close(); }} primary="All time" hint={`${REPORT_HISTORY.length} reports`} />
-          {years.map((y) => (
-            <HistOption
-              key={y}
-              on={selYear === y}
-              onClick={() => onChange(y, null)}
-              primary={String(y)}
-              hint={`${REPORT_HISTORY.filter((r) => r.year === y).length} reports`}
-            />
-          ))}
+          <HistOption on={selYear == null} onClick={() => { onChange(null, null); close(); }} primary="All time" hint={`${totalAll} reports`} />
+          {years.map((y) => {
+            const count = periods[String(y)]?.length ?? 0;
+            return (
+              <HistOption
+                key={y}
+                on={selYear === y}
+                onClick={() => onChange(y, null)}
+                primary={String(y)}
+                hint={`${count} month${count === 1 ? '' : 's'}`}
+              />
+            );
+          })}
 
           {selYear != null && (
             <>
@@ -328,7 +336,6 @@ function PeriodDropdown({
   );
 }
 
-// ── Ellipsis-aware paginator ───────────────────────────────────────────────
 function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (p: number) => void }) {
   if (pages <= 1) return null;
   const range = buildPageRange(page, pages);
@@ -348,8 +355,8 @@ function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (
         <Icon name="chevLeft" size={14} />
       </button>
       {range.map((r, i) => (
-        r === '…'
-          ? <span key={`el${i}`} style={{ color: 'var(--fg-faint)', fontSize: 12, padding: '0 3px', userSelect: 'none', lineHeight: 1 }}>…</span>
+        r === '...'
+          ? <span key={`el${i}`} style={{ color: 'var(--fg-faint)', fontSize: 12, padding: '0 3px', userSelect: 'none', lineHeight: 1 }}>...</span>
           : <button key={r} onClick={() => onPage(r)} style={btn(r === page, false)}>{r + 1}</button>
       ))}
       <button disabled={page === pages - 1} onClick={() => onPage(page + 1)} style={btn(false, page === pages - 1)}>
@@ -359,44 +366,30 @@ function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (
   );
 }
 
-// ── Main overlay ───────────────────────────────────────────────────────────
-export function HistoryOverlay({ onClose }: { onClose: () => void }) {
+export function HistoryOverlay({ projectId, onClose }: { projectId: string | null; onClose: () => void }) {
   const [filter, setFilter] = useState<'all' | HistFormat>('all');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
   const [selYear, setSelYear] = useState<number | null>(null);
   const [selMonth, setSelMonth] = useState<number | null>(null);
 
-  // 1. period filter
-  const ymFiltered = useMemo(() =>
-    REPORT_HISTORY.filter((r) =>
-      (selYear == null || r.year === selYear) &&
-      (selMonth == null || r.month === selMonth),
-    ), [selYear, selMonth]);
-
-  // 2. counts for format dropdown (period result, before format/search)
-  const counts = useMemo(() => {
-    const c: Record<string, number> = { all: ymFiltered.length, doc: 0, deck: 0, video: 0 };
-    ymFiltered.forEach((r) => { c[r.format] = (c[r.format] || 0) + 1; });
-    return c;
-  }, [ymFiltered]);
-
-  // 3. format + search filter
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return ymFiltered.filter((r) =>
-      (filter === 'all' || r.format === filter) &&
-      (!q || r.title.toLowerCase().includes(q) || r.cat.toLowerCase().includes(q)),
-    );
-  }, [ymFiltered, filter, query]);
-
-  // Reset page when any filter changes
   useEffect(() => { setPage(0); }, [filter, query, selYear, selMonth]);
 
-  const pages = Math.max(1, Math.ceil(filtered.length / HIST_PAGE_SIZE));
+  const { data, isError, isPending, refetch } = useReportHistory(projectId, {
+    format: filter,
+    year: selYear,
+    month: selMonth,
+    q: query,
+    page,
+  });
+
+  const items = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const typeCounts = data?.type_counts ?? { all: 0, doc: 0, deck: 0, video: 0 };
+  const periods = data?.periods ?? {};
+  const pages = Math.max(1, Math.ceil(total / HIST_PAGE_SIZE));
   const safePage = Math.min(page, pages - 1);
   const start = safePage * HIST_PAGE_SIZE;
-  const shown = filtered.slice(start, start + HIST_PAGE_SIZE);
 
   return createPortal(
     <div
@@ -418,7 +411,6 @@ export function HistoryOverlay({ onClose }: { onClose: () => void }) {
           fontFamily: 'var(--ui-font)',
         }}
       >
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '17px 22px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <span style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--accent-soft)', color: 'var(--accent)' }}>
             <Icon name="history" size={17} />
@@ -429,18 +421,17 @@ export function HistoryOverlay({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        {/* Toolbar: type + period dropdowns + search */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 22px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', flexWrap: 'wrap', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
-            <FormatDropdown value={filter} onChange={setFilter} counts={counts} />
-            <PeriodDropdown selYear={selYear} selMonth={selMonth} onChange={(y, m) => { setSelYear(y); setSelMonth(m); }} />
+            <FormatDropdown value={filter} onChange={setFilter} counts={typeCounts} />
+            <PeriodDropdown selYear={selYear} selMonth={selMonth} periods={periods} totalAll={typeCounts.all ?? 0} onChange={(y, m) => { setSelYear(y); setSelMonth(m); }} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 11px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg)', width: 210, maxWidth: '100%' }}>
             <Icon name="search" size={14} color="var(--fg-muted)" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search reports…"
+              placeholder="Search reports..."
               style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13 }}
             />
             {query && (
@@ -451,27 +442,40 @@ export function HistoryOverlay({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        {/* List */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 22px 8px' }}>
-          {shown.length > 0
-            ? shown.map((r, i) => <HistoryRow key={r.id} r={r} border={i > 0} />)
-            : (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '52px 20px', textAlign: 'center' }}>
-                <span style={{ width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-2)', color: 'var(--fg-faint)' }}>
-                  <Icon name="search" size={20} />
-                </span>
-                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)' }}>No reports found</div>
-                <div style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>Try a different type, period, or search term.</div>
-              </div>
-            )}
+          {isError ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '52px 20px', textAlign: 'center' }}>
+              <span style={{ width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--destructive-soft)', color: 'var(--destructive)' }}>
+                <Icon name="alert" size={20} />
+              </span>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)' }}>Could not load history</div>
+              <button onClick={() => refetch()} style={{ marginTop: 2, height: 32, padding: '0 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg)', cursor: 'pointer', fontFamily: 'var(--ui-font)', fontSize: 13, fontWeight: 600 }}>Retry</button>
+            </div>
+          ) : isPending ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '52px 20px', textAlign: 'center' }}>
+              <span className="b2-spin" style={{ color: 'var(--fg-faint)', display: 'inline-flex' }}>
+                <Icon name="loader" size={22} />
+              </span>
+              <div style={{ fontSize: 13, color: 'var(--fg-muted)' }}>Loading history...</div>
+            </div>
+          ) : items.length > 0 ? (
+            items.map((r, i) => <HistoryRow key={r.report_id} r={r} border={i > 0} />)
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '52px 20px', textAlign: 'center' }}>
+              <span style={{ width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-2)', color: 'var(--fg-faint)' }}>
+                <Icon name="search" size={20} />
+              </span>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)' }}>No reports found</div>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>Try a different type, period, or search term.</div>
+            </div>
+          )}
         </div>
 
-        {/* Pagination row */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 22px', borderTop: '1px solid var(--border)', background: 'var(--surface)', flexWrap: 'wrap', flexShrink: 0 }}>
           <span style={{ fontSize: 11.5, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)' }}>
-            {filtered.length === 0
+            {total === 0
               ? 'No results'
-              : `${start + 1}–${Math.min(start + HIST_PAGE_SIZE, filtered.length)} of ${filtered.length}`}
+              : `${start + 1}-${Math.min(start + HIST_PAGE_SIZE, total)} of ${total}`}
           </span>
           <Pager page={safePage} pages={pages} onPage={setPage} />
         </div>

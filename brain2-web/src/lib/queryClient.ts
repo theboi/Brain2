@@ -31,6 +31,8 @@ export const qk = {
   sourceDiff: (pid: string, sourceId: string, version: number) =>
     ['sources', pid, sourceId, 'diff', version] as const,
   reports: (pid: string | null) => ['reports', pid] as const,
+  reportHistory: (pid: string | null, filters: object) =>
+    ['report-history', pid, filters] as const,
   statsOverview: () => ['stats', 'overview'] as const,
   statsSources: (d: number) => ['stats', 'sources', d] as const,
   statsQueries: (d: number) => ['stats', 'queries', d] as const,
