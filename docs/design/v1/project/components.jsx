@@ -72,6 +72,7 @@ const ICONS = {
   wand: <><path d="M5 19 14 10M14.5 5.5 16 4M19 9l1.5-1.5M9.5 4.5 11 3M15 9.5l1 1" /></>,
   clipboard: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M9 11h6M9 15h4" /></>,
   graph: <><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="17" r="2.4" /><circle cx="14" cy="6" r="2.4" /><path d="M7.7 16.3 12.4 7.7M15.9 15.4 8.1 17.4M12.6 7.9 16.7 14.9" /></>,
+  repeat: <><path d="M17 2.5 21 6.5l-4 4" /><path d="M3 11V9a3 3 0 0 1 3-3h15" /><path d="M7 21.5 3 17.5l4-4" /><path d="M21 13v2a3 3 0 0 1-3 3H3" /></>,
 };
 
 function Icon({ name, size = 18, sw = 1.75, style, color }) {
@@ -170,7 +171,7 @@ function WorkspaceMenu({ current, onPick, onClose }) {
         </button>
       ))}
       <div style={{ height: 1, background: 'var(--border)', margin: '5px 4px' }} />
-      <a href="Settings.html" style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px', borderRadius: 8, textDecoration: 'none', color: 'var(--fg-muted)', fontSize: 13, fontWeight: 500 }}><Icon name="plus" size={15} /> New workspace</a>
+      <a href="Settings.html#workspaces" style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px', borderRadius: 8, textDecoration: 'none', color: 'var(--fg-muted)', fontSize: 13, fontWeight: 500 }}><Icon name="plus" size={15} /> New workspace</a>
     </Popover>
   );
 }

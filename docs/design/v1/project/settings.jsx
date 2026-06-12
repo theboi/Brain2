@@ -52,12 +52,12 @@ function Toggle({ on, onClick }) {
   );
 }
 function sbtn(kind) {
-  const base = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 13px', borderRadius: 8, fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', border: '1px solid transparent' };
+  const base = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 13px', borderRadius: 8, fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', border: '1px solid transparent', whiteSpace: 'nowrap' };
   if (kind === 'primary') return { ...base, background: 'var(--accent)', color: '#fff' };
   if (kind === 'danger') return { ...base, background: 'transparent', color: 'var(--destructive)', borderColor: 'var(--border)' };
   return { ...base, background: 'transparent', color: 'var(--fg)', borderColor: 'var(--border)' };
 }
-const ROLE_TONE = { Owner: 'accent', Admin: 'accent', Editor: 'success', Viewer: 'muted' };
+const ROLE_TONE = { Owner: 'accent', Admin: 'accent', Editor: 'success', Viewer: 'muted', Member: 'muted' };
 function RoleBadge({ role }) {
   return <span style={{ fontSize: 11, fontWeight: 600, color: STONE[ROLE_TONE[role]], background: 'var(--surface-2)', borderRadius: 6, padding: '2px 8px' }}>{role}</span>;
 }
@@ -100,41 +100,235 @@ function ProfileSection() {
   );
 }
 
-// ── Members / user management ────────────────────────────────────────────────
-const MEMBERS = [
-  { name: 'Alice Chen', email: 'alice@brain2.dev', role: 'Owner', you: true, status: 'active' },
-  { name: 'Bob Ng', email: 'bob@brain2.dev', role: 'Admin', status: 'active' },
-  { name: 'Carol Diaz', email: 'carol@brain2.dev', role: 'Editor', status: 'active' },
-  { name: 'Dan Park', email: 'dan@brain2.dev', role: 'Viewer', status: 'invited' },
+// ── Members — TENANT-LEVEL directory ─────────────────────────────────────────
+// Everyone in the organization, with org-wide roles (Owner / Admin / Member).
+// A person's role can differ per workspace — that's shown when a row expands.
+const TENANT_ROLE_DESC = {
+  Owner: 'Full control of the organization, billing and every workspace.',
+  Admin: 'Manage members, workspaces and organization settings.',
+  Member: 'Access only the workspaces they are added to.',
+};
+const WS_LABEL = { default: 'default', 'research-q3': 'research-q3', engineering: 'engineering', personal: 'personal' };
+const TENANT_SEED = [
+  { u: 'alice', role: 'Owner', you: true, status: 'active', last: 'Active now', ws: [
+    { w: 'default', role: 'Owner' }, { w: 'research-q3', role: 'Admin' }, { w: 'engineering', role: 'Viewer' }, { w: 'personal', role: 'Owner' } ] },
+  { u: 'bob', role: 'Admin', status: 'active', last: '2h ago', ws: [
+    { w: 'engineering', role: 'Admin' }, { w: 'default', role: 'Editor' }, { w: 'research-q3', role: 'Viewer' } ] },
+  { u: 'grace', role: 'Admin', status: 'active', last: '1d ago', ws: [
+    { w: 'engineering', role: 'Admin' } ] },
+  { u: 'carol', role: 'Member', status: 'active', last: '5h ago', ws: [
+    { w: 'default', role: 'Editor' }, { w: 'research-q3', role: 'Editor' }, { w: 'engineering', role: 'Viewer' } ] },
+  { u: 'eve', role: 'Member', status: 'active', last: '3d ago', ws: [
+    { w: 'research-q3', role: 'Viewer' } ] },
+  { u: 'frank', role: 'Member', status: 'active', last: '1w ago', ws: [
+    { w: 'research-q3', role: 'Editor' }, { w: 'engineering', role: 'Editor' } ] },
+  { u: 'henry', role: 'Member', status: 'active', last: '4h ago', ws: [
+    { w: 'engineering', role: 'Editor' }, { w: 'default', role: 'Viewer' } ] },
+  { u: 'dan', role: 'Member', status: 'invited', last: 'Invited 2d ago', ws: [] },
 ];
+
+// small confirm / notice modal
+function ConfirmDialog({ title, body, confirmLabel = 'Confirm', danger, onConfirm, onClose }) {
+  React.useEffect(() => {
+    const k = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', k);
+    return () => document.removeEventListener('keydown', k);
+  }, [onClose]);
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(3px)' }} />
+      <div style={{ position: 'relative', width: 420, maxWidth: '100%', background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 16, boxShadow: '0 28px 80px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+        <div style={{ padding: '20px 20px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ width: 38, height: 38, borderRadius: 10, background: 'var(--surface-2)', color: danger ? 'var(--destructive)' : 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name={danger ? 'shield' : 'key'} size={19} /></span>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--fg)', fontFamily: 'var(--display-font)' }}>{title}</div>
+          </div>
+          <p style={{ margin: '14px 0 0', fontSize: 13, color: 'var(--fg-muted)', lineHeight: 1.55 }}>{body}</p>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '18px 20px' }}>
+          <button onClick={onClose} style={sbtn()}>{onConfirm ? 'Cancel' : 'OK'}</button>
+          {onConfirm && <button onClick={() => { onConfirm(); onClose(); }} style={danger ? { ...sbtn('danger'), background: 'var(--destructive)', color: '#fff', borderColor: 'transparent' } : sbtn('primary')}>{confirmLabel}</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MembersSection() {
+  const [members, setMembers] = React.useState(TENANT_SEED);
+  const [query, setQuery] = React.useState('');
+  const [filter, setFilter] = React.useState('all');
+  const [email, setEmail] = React.useState('');
+  const [inviteRole, setInviteRole] = React.useState('Member');
+  const [expanded, setExpanded] = React.useState(() => new Set());
+  const [dialog, setDialog] = React.useState(null);
+
+  const dir = (u) => (window.WS_PEOPLE && window.WS_PEOPLE[u]) || { name: u, email: u };
+  const ownerCount = members.filter((m) => m.role === 'Owner').length;
+  const counts = {
+    all: members.length,
+    owner: ownerCount,
+    admin: members.filter((m) => m.role === 'Admin').length,
+    member: members.filter((m) => m.role === 'Member').length,
+  };
+  const q = query.trim().toLowerCase();
+  const shown = members.filter((m) => {
+    const p = dir(m.u);
+    if (filter === 'owner' && m.role !== 'Owner') return false;
+    if (filter === 'admin' && m.role !== 'Admin') return false;
+    if (filter === 'member' && m.role !== 'Member') return false;
+    if (q && !(p.name.toLowerCase().includes(q) || (p.email || '').toLowerCase().includes(q))) return false;
+    return true;
+  }).sort((a, b) => ['Owner', 'Admin', 'Member'].indexOf(a.role) - ['Owner', 'Admin', 'Member'].indexOf(b.role));
+
+  const setRole = (u, role) => setMembers((ms) => ms.map((m) => m.u === u ? { ...m, role } : m));
+  const removeM = (u) => setMembers((ms) => ms.filter((m) => m.u !== u));
+  const toggleExp = (u) => setExpanded((s) => { const n = new Set(s); n.has(u) ? n.delete(u) : n.add(u); return n; });
+
+  // role change requests are routed through here so ownership rules apply
+  const requestRole = (m, v) => {
+    const demotingOwner = m.role === 'Owner' && v !== 'Owner';
+    if (demotingOwner && ownerCount <= 1) {
+      setDialog({ title: 'Keep at least one owner', body: 'Your organization must always have an owner. Promote someone else to Owner before stepping this person down.', onConfirm: null });
+      return;
+    }
+    if (demotingOwner && m.you) {
+      setDialog({ title: 'Step down as owner?', danger: true, confirmLabel: 'Step down', body: `You'll lose full control of the organization and become a ${v}. Another owner can restore you later — this can't be undone on your own.`, onConfirm: () => setRole(m.u, v) });
+      return;
+    }
+    setRole(m.u, v);
+  };
+  const requestRemove = (m) => {
+    if (m.you) { setDialog({ title: "You can't remove yourself", body: 'Ask another owner to remove your account, or step down first.', onConfirm: null }); return; }
+    if (m.role === 'Owner' && ownerCount <= 1) { setDialog({ title: 'Keep at least one owner', body: 'Promote another member to Owner before removing the last one.', onConfirm: null }); return; }
+    setDialog({ title: `Remove ${dir(m.u).name}?`, danger: true, confirmLabel: 'Remove', body: 'They lose access to the organization and all its workspaces. Their content stays.', onConfirm: () => removeM(m.u) });
+  };
+
+  const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
+  const exists = members.some((m) => (dir(m.u).email || '').toLowerCase() === email.trim().toLowerCase());
+  const invite = () => {
+    if (!validEmail || exists) return;
+    const addr = email.trim();
+    const handle = addr.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    if (window.WS_PEOPLE && !window.WS_PEOPLE[addr]) window.WS_PEOPLE[addr] = { name: handle, email: addr };
+    setMembers((ms) => [...ms, { u: addr, role: inviteRole, status: 'invited', last: 'Invited just now', ws: [] }]);
+    setEmail(''); setInviteRole('Member');
+  };
+
+  const filters = [
+    { id: 'all', label: 'All', n: counts.all },
+    { id: 'owner', label: 'Owners', n: counts.owner },
+    { id: 'admin', label: 'Admins', n: counts.admin },
+    { id: 'member', label: 'Members', n: counts.member },
+  ];
+  const roleOpts = ['Owner', 'Admin', 'Member'].map((r) => ({ id: r, label: r, icon: 'shield', desc: TENANT_ROLE_DESC[r] }));
+  const inviteInput = { flex: 1, minWidth: 0, height: 38, padding: '0 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13.5, outline: 'none' };
+
   return (
     <div>
-      <SCard title="Members" desc="People with access to the default workspace. Roles map to the operations each member can call."
-        action={<button style={sbtn('primary')}><Icon name="plus" size={14} color="#fff" /> Invite</button>}>
+      <SCard title="Organization members" desc="Everyone in your Brain2 organization. These roles are org-wide. A person's role inside a given workspace can differ — expand a row to see it.">
+        {/* invite bar */}
+        <div style={{ padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)', marginBottom: 18 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 10 }}>Invite someone to the organization</div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <input value={email} type="email" placeholder="Enter email address" style={inviteInput}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') invite(); }} />
+            <LevelSelect value={inviteRole} options={roleOpts} onPick={setInviteRole} width={210} />
+            <button onClick={invite} disabled={!validEmail || exists} style={{ ...sbtn('primary'), height: 38, opacity: (validEmail && !exists) ? 1 : 0.5, cursor: (validEmail && !exists) ? 'pointer' : 'not-allowed' }}>
+              <Icon name="plus" size={14} color="#fff" /> Invite
+            </button>
+          </div>
+          {email.trim() && !validEmail && <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8 }}>Enter a valid email address.</div>}
+          {exists && <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8 }}>That person is already in your organization.</div>}
+        </div>
+
+        {/* toolbar: search + filter chips */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6, flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative', flex: '1 1 220px', minWidth: 0 }}>
+            <span style={{ position: 'absolute', left: 11, top: 9, color: 'var(--fg-faint)', pointerEvents: 'none' }}><Icon name="search" size={15} color="var(--fg-faint)" /></span>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people…"
+              style={{ width: '100%', height: 34, padding: '0 12px 0 34px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13, outline: 'none' }} />
+          </div>
+          <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--surface-2)', borderRadius: 9 }}>
+            {filters.map((f) => {
+              const on = filter === f.id;
+              return (
+                <button key={f.id} onClick={() => setFilter(f.id)} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 28, padding: '0 11px', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'var(--ui-font)', fontSize: 12, fontWeight: on ? 600 : 500, background: on ? 'var(--surface)' : 'transparent', color: on ? 'var(--fg)' : 'var(--fg-muted)', boxShadow: on ? 'var(--shadow-card)' : 'none' }}>
+                  {f.label}<span style={{ fontSize: 11, color: on ? 'var(--fg-muted)' : 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{f.n}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* rows */}
         <div>
-          {MEMBERS.map((m, i) => (
-            <div key={m.email} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 0', borderBottom: i === MEMBERS.length - 1 ? 'none' : '1px solid var(--border)' }}>
-              <span style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--surface-2)', color: 'var(--fg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600 }}>{m.name[0]}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', display: 'flex', alignItems: 'center', gap: 7 }}>{m.name}{m.you && <span style={{ fontSize: 10.5, color: 'var(--fg-muted)' }}>you</span>}</div>
-                <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{m.email}</div>
+          {shown.map((m, i) => {
+            const p = dir(m.u);
+            const isOwner = m.role === 'Owner';
+            const last = i === shown.length - 1;
+            const open = expanded.has(m.u);
+            return (
+              <div key={m.u} style={{ borderBottom: last && !open ? 'none' : '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0', cursor: 'pointer' }} onClick={() => toggleExp(m.u)}>
+                  <Icon name="chevRight" size={14} color="var(--fg-faint)" style={{ flexShrink: 0, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
+                  <Avatar u={m.u} size={36} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', display: 'flex', alignItems: 'center', gap: 7 }}>
+                      {p.name}
+                      {m.you && <span style={{ fontSize: 10.5, color: 'var(--fg-muted)', fontWeight: 400 }}>you</span>}
+                      {m.status === 'invited' && <span style={{ fontSize: 10, color: 'var(--warning)', background: 'var(--warning-soft)', borderRadius: 5, padding: '1px 6px', display: 'inline-flex', alignItems: 'center', gap: 3 }}><Icon name="clock" size={10} /> invited</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--fg-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.email}</div>
+                  </div>
+
+                  <div className="b2-hide-sm" style={{ width: 150, flexShrink: 0, textAlign: 'right' }}>
+                    <div style={{ fontSize: 12, color: 'var(--fg)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5 }}>
+                      {m.ws.length > 0
+                        ? <React.Fragment><Icon name="layers" size={12} color="var(--fg-muted)" /><span>{m.ws.length} workspace{m.ws.length === 1 ? '' : 's'}</span></React.Fragment>
+                        : <span style={{ color: 'var(--fg-faint)' }}>No workspaces yet</span>}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--fg-faint)', marginTop: 2 }}>{m.last}</div>
+                  </div>
+
+                  <div style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                    {isOwner && m.you && ownerCount <= 1
+                      ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 9px' }}><RoleBadge role="Owner" /></span>
+                      : <MiniSelect value={m.role} width={210} icon="shield"
+                          options={[...roleOpts, { id: '__remove', label: 'Remove from organization', icon: 'trash', danger: true, divider: true }]}
+                          onPick={(v) => { if (v === '__remove') requestRemove(m); else requestRole(m, v); }} />}
+                  </div>
+                </div>
+
+                {open && (
+                  <div style={{ padding: '4px 0 16px 60px' }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--fg-faint)', marginBottom: 8 }}>Workspace roles</div>
+                    {m.ws.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {m.ws.map((x) => (
+                          <div key={x.w} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+                            <span style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)', flexShrink: 0 }}><Icon name="layers" size={13} /></span>
+                            <span style={{ flex: 1, fontSize: 13, color: 'var(--fg)', fontWeight: 500 }}>{WS_LABEL[x.w] || x.w}</span>
+                            <RoleBadge role={x.role} />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12.5, color: 'var(--fg-faint)' }}>Not a member of any workspace yet.{m.status === 'invited' ? ' Their invite is still pending.' : ''}</div>
+                    )}
+                  </div>
+                )}
               </div>
-              {m.status === 'invited' && <span style={{ fontSize: 11, color: 'var(--warning)', background: 'var(--warning-soft)', borderRadius: 6, padding: '2px 8px', display: 'flex', alignItems: 'center', gap: 4 }}><Icon name="clock" size={11} /> invited</span>}
-              <button style={{ display: 'flex', alignItems: 'center', gap: 6, height: 30, padding: '0 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', cursor: m.you ? 'default' : 'pointer', fontFamily: 'var(--ui-font)', fontSize: 12.5, opacity: m.you ? 0.6 : 1 }}>
-                <RoleBadge role={m.role} /> {!m.you && <Icon name="chevDown" size={12} color="var(--fg-muted)" />}
-              </button>
-              <button style={{ ...iconBtn(), width: 30, height: 30, opacity: m.you ? 0.4 : 1 }}><Icon name="more" size={15} color="var(--fg-muted)" /></button>
-            </div>
-          ))}
+            );
+          })}
+          {shown.length === 0 && (
+            <div style={{ padding: '28px 10px', textAlign: 'center', fontSize: 13, color: 'var(--fg-faint)' }}>No people match your search.</div>
+          )}
         </div>
       </SCard>
-      <SCard title="Ownership" desc="Transfer ownership of this workspace to another admin. This cannot be undone.">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ flex: 1 }}><Field value="" placeholder="Select an admin to transfer to…" /></div>
-          <button style={sbtn('danger')}>Transfer ownership</button>
-        </div>
-      </SCard>
+
+      {dialog && <ConfirmDialog {...dialog} onClose={() => setDialog(null)} />}
     </div>
   );
 }

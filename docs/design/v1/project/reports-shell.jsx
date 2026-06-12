@@ -203,7 +203,7 @@ function RecentRow({ r, border = true }) {
         <div style={{ fontSize: 13, color: 'var(--fg)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.title}</div>
         <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)', marginTop: 1 }}>{r.meta} · {r.when}</div>
       </div>
-      <Icon name="download" size={15} color="var(--fg-faint)" />
+      <Icon name="external" size={15} color="var(--fg-faint)" />
     </div>
   );
 }

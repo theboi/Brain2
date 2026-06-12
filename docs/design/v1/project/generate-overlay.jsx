@@ -106,6 +106,7 @@ const GEN_SCHEDULE = [
   { id: 'weekly', label: 'Every week', sub: 'Mondays · 9:00', icon: 'calendar' },
   { id: 'monthly', label: 'Every month', sub: '1st · 9:00', icon: 'calendar' },
   { id: 'quarterly', label: 'Every quarter', sub: 'start of quarter', icon: 'calendar' },
+  { id: 'custom', label: 'Custom', sub: 'cron schedule', icon: 'sliders' },
 ];
 const genScheduleById = (id) => GEN_SCHEDULE.find((o) => o.id === id) || GEN_SCHEDULE[0];
 

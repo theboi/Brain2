@@ -3,41 +3,25 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Brain2 Console — Reports</title>
+<title>Brain2 — Scheduled Runs · Proposals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
-  body { background: #0B0D10; overflow: hidden; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  body { background: #0B0D10; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
   #root { height: 100vh; }
-  button { font-family: inherit; }
-  input::placeholder { color: var(--fg-faint); }
-  ::selection { background: rgba(124,140,255,0.28); }
-  main::-webkit-scrollbar { width: 10px; }
-  main::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.28); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
   @keyframes b2pulse { 0% { transform: scale(0.7); opacity: 0.55; } 70% { transform: scale(2); opacity: 0; } 100% { opacity: 0; } }
   .b2-pulse { animation: b2pulse 1.8s ease-out infinite; }
   @keyframes b2spin { to { transform: rotate(360deg); } }
   .b2-spin { animation: b2spin 0.9s linear infinite; }
-  @keyframes b2flash { 0%,100% { transform: scale(0.6); opacity: 0; } 45% { transform: scale(2.4); opacity: 0.6; } }
-  .b2-flash { animation: b2flash 1.5s ease-out infinite; }
-  .b2-noscroll::-webkit-scrollbar { height: 0; width: 0; background: transparent; }
-  @media (prefers-reduced-motion: reduce) { .b2-spin, .b2-flash { animation: none; } }
-  .b2-hist-row { transition: background 0.12s ease; }
-  .b2-hist-row:hover { background: var(--surface-2); }
-  @media (prefers-reduced-motion: reduce) { .b2-pulse { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .b2-spin, .b2-pulse { animation: none; } }
   .b2-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: #8B8F98; font-family: system-ui, sans-serif; font-size: 14px; }
-  .b2-show-sm { display: none !important; }
-  @media (max-width: 820px) {
-    .b2-hide-sm { display: none !important; }
-    .b2-show-sm { display: flex !important; }
-  }
 </style>
 </head>
 <body>
-<div id="root"><div class="b2-loading">Loading Reports…</div></div>
+<div id="root"><div class="b2-loading">Loading proposals…</div></div>
 
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
@@ -46,14 +30,22 @@
 <script src="tokens.js"></script>
 <script src="reports-data.js"></script>
 <script src="scheduled-data.js"></script>
-<script src="actions-data.js"></script>
 <script type="text/babel" src="components.jsx"></script>
-<script type="text/babel" src="generate-overlay.jsx"></script>
-<script type="text/babel" src="cards.jsx"></script>
-<script type="text/babel" src="reports-shell.jsx"></script>
-<script type="text/babel" src="reports-history.jsx"></script>
-<script type="text/babel" src="reports-studio.jsx"></script>
-<script type="text/babel" src="scheduled-overlay.jsx"></script>
-<script type="text/babel" src="app-reports.jsx"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="scheduled-proposals.jsx"></script>
+<script type="text/babel">
+function ProposalsApp() {
+  return (
+    <DesignCanvas>
+      <DCSection id="sched" title="Scheduled runs · overlay" subtitle="A daily-calendar timeline of every scheduled report run — three directions">
+        <DCArtboard id="a" label="A · Vertical day calendar" width={820} height={940}><DirectionA /></DCArtboard>
+        <DCArtboard id="b" label="B · Timeline ribbon + agenda" width={820} height={760}><DirectionB /></DCArtboard>
+        <DCArtboard id="c" label="C · Agent swimlanes" width={940} height={620}><DirectionC /></DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<ProposalsApp />);
+</script>
 </body>
 </html>

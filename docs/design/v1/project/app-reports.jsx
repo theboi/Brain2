@@ -79,6 +79,9 @@ function ReportsStudio() {
   const scheduled = schedule !== 'oneoff';
   const sOpt = scheduleById(schedule);
   const [catalogOpen, setCatalogOpen] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [schedRunsOpen, setSchedRunsOpen] = React.useState(false);
+  const activeSchedCount = SCHEDULES.filter((s) => s.enabled).length;
 
   return (
     <div style={{ ...vars, height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 14 }}>
@@ -95,7 +98,14 @@ function ReportsStudio() {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
                 <h1 style={{ margin: 0, fontFamily: 'var(--display-font)', fontWeight: 700, fontSize: 27, letterSpacing: 'var(--display-track)', color: 'var(--fg)' }}>Generate a report</h1>
-                <ScheduleDropdown value={schedule} onChange={setSchedule} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <button onClick={() => setSchedRunsOpen(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 36, padding: '0 13px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                    <Icon name="calendar" size={15} color="var(--accent)" />
+                    Scheduled runs
+                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 20, height: 20, borderRadius: 10, background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 11, fontWeight: 700, fontFamily: 'var(--mono-font)', padding: '0 5px' }}>{activeSchedCount}</span>
+                  </button>
+                  <ScheduleDropdown value={schedule} onChange={setSchedule} />
+                </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 12 }}>
                 <PersonaCrest size={26} pulse={false} />
@@ -125,7 +135,7 @@ function ReportsStudio() {
 
               {/* recent (kept from direction A) */}
               <aside style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0, position: isNarrow ? 'static' : 'sticky', top: 0 }}>
-                <Panel title="Recent reports" action={<MoreLink>History</MoreLink>}>
+                <Panel title="Recent reports" action={<MoreLink onClick={() => setHistoryOpen(true)}>History</MoreLink>}>
                   <div style={{ marginTop: -4 }}>{RECENT_REPORTS.map((r, i) => <RecentRow key={r.id} r={r} border={i > 0} />)}</div>
                 </Panel>
               </aside>
@@ -135,6 +145,8 @@ function ReportsStudio() {
       </div>
       <BottomNav active="reports" />
       {catalogOpen && <CatalogOverlay schedule={schedule} onClose={() => setCatalogOpen(false)} />}
+      {historyOpen && <HistoryOverlay onClose={() => setHistoryOpen(false)} />}
+      {schedRunsOpen && <ScheduledRunsOverlay onClose={() => setSchedRunsOpen(false)} />}
     </div>
   );
 }
