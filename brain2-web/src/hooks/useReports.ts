@@ -79,6 +79,7 @@ export function useGenerateReport(projectId: string | null) {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.reports(projectId) });
+      qc.invalidateQueries({ queryKey: ['report-history', projectId] });
     },
   });
 }
