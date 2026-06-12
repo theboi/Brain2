@@ -1,6 +1,7 @@
 """Report ops: persist report runs and dispatch generation to an agent."""
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -13,6 +14,44 @@ def _now() -> str:
 
 def _row_to_dict(row) -> dict:
     return {k: row[k] for k in row.keys()}
+
+
+_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+_STATUS_MAP = {
+    "ready": "ready", "done": "ready",
+    "generating": "processing", "pending": "processing", "running": "processing",
+    "failed": "failed",
+}
+
+
+def _hist_status(status: str) -> str:
+    """Map a stored report status to the overlay's ready|processing|failed."""
+    return _STATUS_MAP.get(status, "processing")
+
+
+def _hist_meta(inputs_json) -> str:
+    """Derive the meta line ('{n} sources') from the inputs JSON array."""
+    if not inputs_json:
+        return ""
+    try:
+        items = json.loads(inputs_json)
+    except (ValueError, TypeError):
+        return ""
+    n = len(items) if isinstance(items, list) else 0
+    return f"{n} sources" if n else ""
+
+
+def _hist_by(schedule: str) -> str:
+    """'Schedule' for any recurring cadence, else 'You'."""
+    return "You" if schedule == "now" else "Schedule"
+
+
+def _hist_date_parts(created_at: str):
+    """(formatted 'MMM D, YYYY', UTC year, 0-indexed UTC month) from an ISO ts."""
+    dt = datetime.fromisoformat(created_at).astimezone(timezone.utc)
+    return f"{_MONTHS[dt.month - 1]} {dt.day}, {dt.year}", dt.year, dt.month - 1
 
 
 def make_reports_generate(store):
@@ -34,6 +73,7 @@ def make_reports_generate(store):
         project_id = params.get("project_id") or ctx.project_id
         title = params["title"]
         fmt = params.get("format", "doc")
+        category = params.get("category")
         raw_prompt = params["prompt"]
         preamble = persona_preamble(store, ctx.tenant_id, ctx.user_id)
         prompt = f"{preamble}\n{raw_prompt}" if preamble else raw_prompt
@@ -57,10 +97,11 @@ def make_reports_generate(store):
         with store.transaction() as cx:
             cx.execute(
                 "INSERT INTO reports(report_id, tenant_id, project_id, title, format, "
-                "prompt, agent_id, conversation_id, status, schedule, created_by, "
-                "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "prompt, agent_id, conversation_id, status, schedule, category, "
+                "created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (report_id, ctx.tenant_id, project_id, title, fmt, raw_prompt,
-                 agent_id, conversation_id, status, schedule, ctx.user_id, now, now),
+                 agent_id, conversation_id, status, schedule, category, ctx.user_id,
+                 now, now),
             )
 
         return {
@@ -103,11 +144,95 @@ def make_reports_get(store):
     return handler
 
 
+def make_reports_history(store):
+    def handler(ctx, params):
+        fmt = params.get("format") or "all"
+        year = params.get("year")
+        month = params.get("month")
+        q = (params.get("q") or "").strip().lower()
+        limit = int(params.get("limit", 8))
+        offset = int(params.get("offset", 0))
+        project_id = params.get("project_id") or ctx.project_id
+        if month is not None and year is None:
+            raise ValueError("month requires year")
+        year = int(year) if year is not None else None
+        month = int(month) if month is not None else None
+
+        where = ["tenant_id = ?", "status != 'scheduled'"]
+        args = [ctx.tenant_id]
+        if project_id:
+            where.append("project_id = ?")
+            args.append(project_id)
+        rows = store._conn.execute(
+            "SELECT report_id, title, format, status, schedule, inputs, category, "
+            "created_at FROM reports WHERE " + " AND ".join(where) +
+            " ORDER BY created_at DESC",
+            tuple(args),
+        ).fetchall()
+
+        decorated = []
+        for r in rows:
+            date, ry, rm = _hist_date_parts(r["created_at"])
+            decorated.append({
+                "report_id": r["report_id"],
+                "title": r["title"],
+                "format": r["format"],
+                "date": date,
+                "year": ry,
+                "month": rm,
+                "meta": _hist_meta(r["inputs"]),
+                "by": _hist_by(r["schedule"]),
+                "status": _hist_status(r["status"]),
+                "category": r["category"],
+            })
+
+        period_sets: dict[str, set[int]] = {}
+        for d in decorated:
+            period_sets.setdefault(str(d["year"]), set()).add(d["month"])
+        periods = {y: sorted(ms, reverse=True) for y, ms in period_sets.items()}
+
+        period_set = [
+            d for d in decorated
+            if (year is None or d["year"] == year)
+            and (month is None or d["month"] == month)
+        ]
+        type_counts = {"all": len(period_set), "doc": 0, "deck": 0, "video": 0}
+        for d in period_set:
+            if d["format"] in type_counts:
+                type_counts[d["format"]] += 1
+
+        matched = [
+            d for d in period_set
+            if (fmt == "all" or d["format"] == fmt)
+            and (not q
+                 or q in d["title"].lower()
+                 or q in (d["category"] or "").lower())
+        ]
+        total = len(matched)
+        return {
+            "items": matched[offset:offset + limit],
+            "total": total,
+            "type_counts": type_counts,
+            "periods": periods,
+        }
+    return handler
+
+
 def register_report_ops(ops, store) -> None:
     ops.register("reports:list", action="use_agents", handler=make_reports_list(store),
                  summary="List reports, newest first",
                  params=[{"name": "project_id", "type": "str", "required": False},
                          {"name": "limit", "type": "int", "required": False}])
+    ops.register("reports:history", action="use_agents",
+                 handler=make_reports_history(store),
+                 summary="Filtered, paginated report history with facet counts",
+                 params=[{"name": "project_id", "type": "str", "required": False},
+                         {"name": "format", "type": "str", "required": False},
+                         {"name": "year", "type": "int", "required": False},
+                         {"name": "month", "type": "int", "required": False},
+                         {"name": "q", "type": "str", "required": False},
+                         {"name": "limit", "type": "int", "required": False},
+                         {"name": "offset", "type": "int", "required": False}])
     ops.register("reports:get", action="use_agents", handler=make_reports_get(store),
                  summary="Get one report",
                  params=[{"name": "report_id", "type": "str", "required": True}])
@@ -119,4 +244,5 @@ def register_report_ops(ops, store) -> None:
                          {"name": "agent_id", "type": "str", "required": True},
                          {"name": "project_id", "type": "str", "required": False},
                          {"name": "format", "type": "str", "required": False},
-                         {"name": "schedule", "type": "str", "required": False}])
+                         {"name": "schedule", "type": "str", "required": False},
+                         {"name": "category", "type": "str", "required": False}])
