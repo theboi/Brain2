@@ -12,6 +12,7 @@ import { SettingsPage } from '@/pages/Settings';
 import { InboxPage } from '@/pages/Inbox';
 import { SourcesPage } from '@/pages/Sources';
 import { WikiPage } from '@/pages/Wiki';
+import { ReportsPage } from '@/pages/Reports';
 
 function App() {
   const { theme, accent, setTheme, setAccent, toggleTheme } = useTheme();
@@ -47,6 +48,7 @@ function App() {
                     <Route path="/wiki" element={<WikiPage />} />
                     <Route path="/wiki/:topic" element={<WikiPage />} />
                     <Route path="/chats/*" element={<StubPage title="Chats" />} />
+                    <Route path="/reports" element={<ReportsPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>
                 </AppShell>

@@ -20,6 +20,7 @@ const ITEMS: NavItem[] = [
   { id: 'sources', icon: 'sources', label: 'Sources', href: '/sources' },
   { id: 'wiki',    icon: 'wiki',    label: 'Wiki',    href: '/wiki' },
   { id: 'chats',   icon: 'chats',   label: 'Chats',   href: '/chats', badge: 2 },
+  { id: 'reports', icon: 'file',    label: 'Reports', href: '/reports' },
 ];
 
 const BOTTOM: NavItem[] = [
