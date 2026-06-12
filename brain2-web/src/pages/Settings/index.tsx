@@ -20,9 +20,10 @@ import { ToolsSection } from './sections/ToolsSection';
 import { AuditSection } from './sections/AuditSection';
 import { DangerSection } from './sections/DangerSection';
 import { VaultAccessSection } from './sections/VaultAccessSection';
+import { WorkspacesSection } from './sections/workspaces/WorkspacesSection';
 import { useMe } from '@/hooks/me';
 
-type SectionId = 'profile' | 'people' | 'members' | 'integrations' | 'providers' | 'appearance' | 'tools' | 'audit' | 'vault-access' | 'danger';
+type SectionId = 'profile' | 'people' | 'members' | 'workspaces' | 'integrations' | 'providers' | 'appearance' | 'tools' | 'audit' | 'vault-access' | 'danger';
 
 interface NavItem {
   id: SectionId;
@@ -35,6 +36,7 @@ const NAV: NavItem[] = [
   { id: 'profile',      icon: 'user',     label: 'Profile',      subtitle: 'Manage your personal details and sign-in.' },
   { id: 'people',       icon: 'users',    label: 'People',       subtitle: 'Manage tenant members and guests.' },
   { id: 'members',      icon: 'users',    label: 'Members',      subtitle: 'Invite teammates and manage their roles.' },
+  { id: 'workspaces',   icon: 'layers',   label: 'Workspaces',   subtitle: 'Organise vaults into workspaces and manage access.' },
   { id: 'integrations', icon: 'plug',     label: 'Integrations', subtitle: 'Connect Telegram, Slack and other channels.' },
   { id: 'providers',    icon: 'key',      label: 'Providers',    subtitle: 'Bring your own model API keys.' },
   { id: 'appearance',   icon: 'sparkles', label: 'Appearance',   subtitle: 'Theme, accent and interface preferences.' },
@@ -66,6 +68,7 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
     profile:      <ProfileSection />,
     people:       <PeopleSection />,
     members:      <MembersSection />,
+    workspaces:   <WorkspacesSection />,
     integrations: <IntegrationsSection />,
     providers:    <ProvidersSection />,
     appearance:   <AppearanceSection theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />,

@@ -1,0 +1,151 @@
+/*
+ * Mock data for the Report History overlay (visual port of reports-history.jsx).
+ * 115 entries spanning Jun 2025 – Jun 2026, newest first. `month` is 0-indexed.
+ * This is placeholder data — the overlay will be wired to `reports:list` later.
+ */
+
+export type HistFormat = 'doc' | 'deck' | 'video';
+export type HistStatus = 'ready' | 'processing' | 'failed';
+
+export interface HistoryReport {
+  id: string;
+  title: string;
+  format: HistFormat;
+  date: string;
+  year: number;
+  month: number; // 0-indexed
+  mon: string;
+  meta: string;
+  status: HistStatus;
+  by: 'Schedule' | 'You';
+  cat: string;
+}
+
+export const REPORT_HISTORY: HistoryReport[] = [
+  { id: 'h001', title: 'Jun Financial Report', format: 'doc', date: 'Jun 8, 2026', year: 2026, month: 5, mon: 'Jun', meta: '14 pages · 11 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h002', title: 'Revenue Breakdown · Q2 2026', format: 'deck', date: 'Jun 7, 2026', year: 2026, month: 5, mon: 'Jun', meta: '10 slides', status: 'processing', by: 'You', cat: 'Financial' },
+  { id: 'h003', title: 'Weekly Ops Review', format: 'deck', date: 'Jun 5, 2026', year: 2026, month: 5, mon: 'Jun', meta: '8 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h004', title: 'Investor Update — Jun', format: 'doc', date: 'Jun 4, 2026', year: 2026, month: 5, mon: 'Jun', meta: '5 pages · 16 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h005', title: 'Headcount & Cost Snapshot — Jun', format: 'doc', date: 'Jun 4, 2026', year: 2026, month: 5, mon: 'Jun', meta: '6 pages · 7 sources', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h006', title: 'May Financial Report', format: 'doc', date: 'May 30, 2026', year: 2026, month: 4, mon: 'May', meta: '8 pages · 12 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h007', title: 'Weekly Ops Review', format: 'deck', date: 'May 28, 2026', year: 2026, month: 4, mon: 'May', meta: '8 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h008', title: 'Investor Update — May', format: 'doc', date: 'May 24, 2026', year: 2026, month: 4, mon: 'May', meta: '7 pages · 19 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h009', title: 'Sales Performance Summary — May', format: 'doc', date: 'May 21, 2026', year: 2026, month: 4, mon: 'May', meta: '9 pages · 8 sources', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h010', title: 'SLA & Uptime Report — May', format: 'deck', date: 'May 18, 2026', year: 2026, month: 4, mon: 'May', meta: '6 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h011', title: 'Research Digest', format: 'video', date: 'May 15, 2026', year: 2026, month: 4, mon: 'May', meta: '5 min · narrated', status: 'failed', by: 'You', cat: 'Knowledge' },
+  { id: 'h012', title: 'Churn Analysis — May', format: 'deck', date: 'May 13, 2026', year: 2026, month: 4, mon: 'May', meta: '9 slides', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h013', title: 'Competitive Landscape', format: 'deck', date: 'May 9, 2026', year: 2026, month: 4, mon: 'May', meta: '12 slides', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h014', title: 'Support Trends — May', format: 'doc', date: 'May 6, 2026', year: 2026, month: 4, mon: 'May', meta: '8 pages · 7 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h015', title: 'Apr Financial Report', format: 'doc', date: 'Apr 30, 2026', year: 2026, month: 3, mon: 'Apr', meta: '9 pages · 10 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h016', title: 'Revenue Breakdown · Q2 2026', format: 'deck', date: 'Apr 27, 2026', year: 2026, month: 3, mon: 'Apr', meta: '10 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h017', title: 'Weekly Ops Review', format: 'deck', date: 'Apr 23, 2026', year: 2026, month: 3, mon: 'Apr', meta: '6 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h018', title: 'Investor Update — Apr', format: 'doc', date: 'Apr 21, 2026', year: 2026, month: 3, mon: 'Apr', meta: '7 pages · 18 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h019', title: 'Voice-of-Customer Summary', format: 'doc', date: 'Apr 17, 2026', year: 2026, month: 3, mon: 'Apr', meta: '14 pages · 20 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h020', title: 'Headcount & Cost Snapshot — Apr', format: 'doc', date: 'Apr 15, 2026', year: 2026, month: 3, mon: 'Apr', meta: '5 pages · 7 sources', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h021', title: 'Board Briefing — Apr', format: 'deck', date: 'Apr 12, 2026', year: 2026, month: 3, mon: 'Apr', meta: '10 slides', status: 'ready', by: 'You', cat: 'Executive' },
+  { id: 'h022', title: 'Q2 Earnings Walkthrough', format: 'video', date: 'Apr 9, 2026', year: 2026, month: 3, mon: 'Apr', meta: '5 min · narrated', status: 'ready', by: 'You', cat: 'Executive' },
+  { id: 'h023', title: 'Expense Audit', format: 'doc', date: 'Apr 5, 2026', year: 2026, month: 3, mon: 'Apr', meta: '9 pages · 8 sources', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h024', title: 'Mar Financial Report', format: 'doc', date: 'Mar 30, 2026', year: 2026, month: 2, mon: 'Mar', meta: '12 pages · 16 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h025', title: 'Weekly Ops Review', format: 'deck', date: 'Mar 28, 2026', year: 2026, month: 2, mon: 'Mar', meta: '6 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h026', title: 'Investor Update — Mar', format: 'doc', date: 'Mar 25, 2026', year: 2026, month: 2, mon: 'Mar', meta: '5 pages · 18 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h027', title: 'Sales Performance Summary — Mar', format: 'doc', date: 'Mar 22, 2026', year: 2026, month: 2, mon: 'Mar', meta: '8 pages · 10 sources', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h028', title: 'SLA & Uptime Report — Mar', format: 'deck', date: 'Mar 18, 2026', year: 2026, month: 2, mon: 'Mar', meta: '5 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h029', title: 'Research Digest', format: 'video', date: 'Mar 15, 2026', year: 2026, month: 2, mon: 'Mar', meta: '6 min · narrated', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h030', title: 'Incident Postmortem', format: 'doc', date: 'Mar 12, 2026', year: 2026, month: 2, mon: 'Mar', meta: '4 pages · 4 sources', status: 'ready', by: 'You', cat: 'Operations' },
+  { id: 'h031', title: 'Support Trends — Mar', format: 'doc', date: 'Mar 9, 2026', year: 2026, month: 2, mon: 'Mar', meta: '7 pages · 5 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h032', title: 'Burn & Runway · Q1 2026', format: 'deck', date: 'Mar 6, 2026', year: 2026, month: 2, mon: 'Mar', meta: '10 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h033', title: 'Feb Financial Report', format: 'doc', date: 'Feb 28, 2026', year: 2026, month: 1, mon: 'Feb', meta: '12 pages · 12 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h034', title: 'Revenue Breakdown · Q1 2026', format: 'deck', date: 'Feb 25, 2026', year: 2026, month: 1, mon: 'Feb', meta: '11 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h035', title: 'Weekly Ops Review', format: 'deck', date: 'Feb 21, 2026', year: 2026, month: 1, mon: 'Feb', meta: '6 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h036', title: 'Investor Update — Feb', format: 'doc', date: 'Feb 19, 2026', year: 2026, month: 1, mon: 'Feb', meta: '6 pages · 15 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h037', title: 'Voice-of-Customer Summary', format: 'doc', date: 'Feb 15, 2026', year: 2026, month: 1, mon: 'Feb', meta: '12 pages · 24 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h038', title: 'Churn Analysis — Feb', format: 'deck', date: 'Feb 12, 2026', year: 2026, month: 1, mon: 'Feb', meta: '7 slides', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h039', title: 'Board Briefing — Feb', format: 'deck', date: 'Feb 10, 2026', year: 2026, month: 1, mon: 'Feb', meta: '13 slides', status: 'ready', by: 'You', cat: 'Executive' },
+  { id: 'h040', title: 'Literature Review', format: 'doc', date: 'Feb 6, 2026', year: 2026, month: 1, mon: 'Feb', meta: '23 pages · 30 sources', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h041', title: 'Q1 Earnings Walkthrough', format: 'video', date: 'Feb 3, 2026', year: 2026, month: 1, mon: 'Feb', meta: '4 min · narrated', status: 'ready', by: 'You', cat: 'Executive' },
+  { id: 'h042', title: 'Jan Financial Report', format: 'doc', date: 'Jan 31, 2026', year: 2026, month: 0, mon: 'Jan', meta: '10 pages · 15 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h043', title: 'Weekly Ops Review', format: 'deck', date: 'Jan 28, 2026', year: 2026, month: 0, mon: 'Jan', meta: '6 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h044', title: 'Investor Update — Jan', format: 'doc', date: 'Jan 25, 2026', year: 2026, month: 0, mon: 'Jan', meta: '5 pages · 16 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h045', title: 'SLA & Uptime Report — Jan', format: 'deck', date: 'Jan 22, 2026', year: 2026, month: 0, mon: 'Jan', meta: '7 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h046', title: 'Research Digest', format: 'video', date: 'Jan 18, 2026', year: 2026, month: 0, mon: 'Jan', meta: '5 min · narrated', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h047', title: 'Headcount & Cost Snapshot — Jan', format: 'doc', date: 'Jan 15, 2026', year: 2026, month: 0, mon: 'Jan', meta: '4 pages · 6 sources', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h048', title: 'Competitive Landscape', format: 'deck', date: 'Jan 12, 2026', year: 2026, month: 0, mon: 'Jan', meta: '14 slides', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h049', title: 'Support Trends — Jan', format: 'doc', date: 'Jan 9, 2026', year: 2026, month: 0, mon: 'Jan', meta: '7 pages · 7 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h050', title: 'Burn & Runway · Q1 2026', format: 'deck', date: 'Jan 7, 2026', year: 2026, month: 0, mon: 'Jan', meta: '8 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h051', title: 'Dec Financial Report', format: 'doc', date: 'Dec 31, 2025', year: 2025, month: 11, mon: 'Dec', meta: '12 pages · 13 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h052', title: 'Revenue Breakdown · Q4 2025', format: 'deck', date: 'Dec 28, 2025', year: 2025, month: 11, mon: 'Dec', meta: '9 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h053', title: 'Weekly Ops Review', format: 'deck', date: 'Dec 24, 2025', year: 2025, month: 11, mon: 'Dec', meta: '6 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h054', title: 'Investor Update — Dec', format: 'doc', date: 'Dec 21, 2025', year: 2025, month: 11, mon: 'Dec', meta: '6 pages · 17 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h055', title: 'Sales Performance Summary — Dec', format: 'doc', date: 'Dec 19, 2025', year: 2025, month: 11, mon: 'Dec', meta: '8 pages · 8 sources', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h056', title: 'Voice-of-Customer Summary', format: 'doc', date: 'Dec 15, 2025', year: 2025, month: 11, mon: 'Dec', meta: '16 pages · 21 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h057', title: 'Research Digest', format: 'video', date: 'Dec 12, 2025', year: 2025, month: 11, mon: 'Dec', meta: '4 min · narrated', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h058', title: 'Board Briefing — Dec', format: 'deck', date: 'Dec 10, 2025', year: 2025, month: 11, mon: 'Dec', meta: '12 slides', status: 'ready', by: 'You', cat: 'Executive' },
+  { id: 'h059', title: 'Q4 Earnings Walkthrough', format: 'video', date: 'Dec 6, 2025', year: 2025, month: 11, mon: 'Dec', meta: '4 min · narrated', status: 'ready', by: 'You', cat: 'Executive' },
+  { id: 'h060', title: 'Expense Audit', format: 'doc', date: 'Dec 3, 2025', year: 2025, month: 11, mon: 'Dec', meta: '11 pages · 9 sources', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h061', title: 'Nov Financial Report', format: 'doc', date: 'Nov 30, 2025', year: 2025, month: 10, mon: 'Nov', meta: '15 pages · 10 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h062', title: 'Weekly Ops Review', format: 'deck', date: 'Nov 27, 2025', year: 2025, month: 10, mon: 'Nov', meta: '8 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h063', title: 'Investor Update — Nov', format: 'doc', date: 'Nov 24, 2025', year: 2025, month: 10, mon: 'Nov', meta: '6 pages · 14 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h064', title: 'SLA & Uptime Report — Nov', format: 'deck', date: 'Nov 20, 2025', year: 2025, month: 10, mon: 'Nov', meta: '8 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h065', title: 'Voice-of-Customer Summary', format: 'doc', date: 'Nov 18, 2025', year: 2025, month: 10, mon: 'Nov', meta: '14 pages · 21 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h066', title: 'Headcount & Cost Snapshot — Nov', format: 'doc', date: 'Nov 15, 2025', year: 2025, month: 10, mon: 'Nov', meta: '5 pages · 8 sources', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h067', title: 'Board Briefing — Nov', format: 'deck', date: 'Nov 11, 2025', year: 2025, month: 10, mon: 'Nov', meta: '10 slides', status: 'ready', by: 'You', cat: 'Executive' },
+  { id: 'h068', title: 'Burn & Runway · Q4 2025', format: 'deck', date: 'Nov 9, 2025', year: 2025, month: 10, mon: 'Nov', meta: '7 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h069', title: 'Literature Review', format: 'doc', date: 'Nov 5, 2025', year: 2025, month: 10, mon: 'Nov', meta: '27 pages · 35 sources', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h070', title: 'Oct Financial Report', format: 'doc', date: 'Oct 31, 2025', year: 2025, month: 9, mon: 'Oct', meta: '15 pages · 16 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h071', title: 'Revenue Breakdown · Q4 2025', format: 'deck', date: 'Oct 28, 2025', year: 2025, month: 9, mon: 'Oct', meta: '8 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h072', title: 'Weekly Ops Review', format: 'deck', date: 'Oct 25, 2025', year: 2025, month: 9, mon: 'Oct', meta: '8 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h073', title: 'Investor Update — Oct', format: 'doc', date: 'Oct 21, 2025', year: 2025, month: 9, mon: 'Oct', meta: '6 pages · 14 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h074', title: 'Churn Analysis — Oct', format: 'deck', date: 'Oct 18, 2025', year: 2025, month: 9, mon: 'Oct', meta: '7 slides', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h075', title: 'Competitive Landscape', format: 'deck', date: 'Oct 16, 2025', year: 2025, month: 9, mon: 'Oct', meta: '10 slides', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h076', title: 'Incident Postmortem', format: 'doc', date: 'Oct 13, 2025', year: 2025, month: 9, mon: 'Oct', meta: '4 pages · 3 sources', status: 'ready', by: 'You', cat: 'Operations' },
+  { id: 'h077', title: 'Support Trends — Oct', format: 'doc', date: 'Oct 9, 2025', year: 2025, month: 9, mon: 'Oct', meta: '7 pages · 5 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h078', title: 'Q4 Earnings Walkthrough', format: 'video', date: 'Oct 7, 2025', year: 2025, month: 9, mon: 'Oct', meta: '5 min · narrated', status: 'ready', by: 'You', cat: 'Executive' },
+  { id: 'h079', title: 'Sep Financial Report', format: 'doc', date: 'Sep 30, 2025', year: 2025, month: 8, mon: 'Sep', meta: '10 pages · 16 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h080', title: 'Weekly Ops Review', format: 'deck', date: 'Sep 26, 2025', year: 2025, month: 8, mon: 'Sep', meta: '8 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h081', title: 'Investor Update — Sep', format: 'doc', date: 'Sep 24, 2025', year: 2025, month: 8, mon: 'Sep', meta: '6 pages · 19 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h082', title: 'Sales Performance Summary — Sep', format: 'doc', date: 'Sep 20, 2025', year: 2025, month: 8, mon: 'Sep', meta: '8 pages · 8 sources', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h083', title: 'SLA & Uptime Report — Sep', format: 'deck', date: 'Sep 18, 2025', year: 2025, month: 8, mon: 'Sep', meta: '7 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h084', title: 'Voice-of-Customer Summary', format: 'doc', date: 'Sep 15, 2025', year: 2025, month: 8, mon: 'Sep', meta: '10 pages · 18 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h085', title: 'Research Digest', format: 'video', date: 'Sep 11, 2025', year: 2025, month: 8, mon: 'Sep', meta: '4 min · narrated', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h086', title: 'Board Briefing — Sep', format: 'deck', date: 'Sep 9, 2025', year: 2025, month: 8, mon: 'Sep', meta: '13 slides', status: 'ready', by: 'You', cat: 'Executive' },
+  { id: 'h087', title: 'Burn & Runway · Q3 2025', format: 'deck', date: 'Sep 6, 2025', year: 2025, month: 8, mon: 'Sep', meta: '7 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h088', title: 'Expense Audit', format: 'doc', date: 'Sep 3, 2025', year: 2025, month: 8, mon: 'Sep', meta: '11 pages · 8 sources', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h089', title: 'Aug Financial Report', format: 'doc', date: 'Aug 30, 2025', year: 2025, month: 7, mon: 'Aug', meta: '8 pages · 10 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h090', title: 'Revenue Breakdown · Q3 2025', format: 'deck', date: 'Aug 27, 2025', year: 2025, month: 7, mon: 'Aug', meta: '10 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h091', title: 'Weekly Ops Review', format: 'deck', date: 'Aug 24, 2025', year: 2025, month: 7, mon: 'Aug', meta: '9 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h092', title: 'Investor Update — Aug', format: 'doc', date: 'Aug 21, 2025', year: 2025, month: 7, mon: 'Aug', meta: '6 pages · 14 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h093', title: 'Voice-of-Customer Summary', format: 'doc', date: 'Aug 19, 2025', year: 2025, month: 7, mon: 'Aug', meta: '17 pages · 25 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h094', title: 'Headcount & Cost Snapshot — Aug', format: 'doc', date: 'Aug 15, 2025', year: 2025, month: 7, mon: 'Aug', meta: '6 pages · 7 sources', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h095', title: 'Support Trends — Aug', format: 'doc', date: 'Aug 13, 2025', year: 2025, month: 7, mon: 'Aug', meta: '6 pages · 8 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h096', title: 'Literature Review', format: 'doc', date: 'Aug 10, 2025', year: 2025, month: 7, mon: 'Aug', meta: '18 pages · 32 sources', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h097', title: 'Q3 Earnings Walkthrough', format: 'video', date: 'Aug 7, 2025', year: 2025, month: 7, mon: 'Aug', meta: '6 min · narrated', status: 'ready', by: 'You', cat: 'Executive' },
+  { id: 'h098', title: 'Jul Financial Report', format: 'doc', date: 'Jul 30, 2025', year: 2025, month: 6, mon: 'Jul', meta: '13 pages · 12 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h099', title: 'Weekly Ops Review', format: 'deck', date: 'Jul 28, 2025', year: 2025, month: 6, mon: 'Jul', meta: '8 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h100', title: 'Investor Update — Jul', format: 'doc', date: 'Jul 25, 2025', year: 2025, month: 6, mon: 'Jul', meta: '5 pages · 15 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h101', title: 'SLA & Uptime Report — Jul', format: 'deck', date: 'Jul 22, 2025', year: 2025, month: 6, mon: 'Jul', meta: '8 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h102', title: 'Research Digest', format: 'video', date: 'Jul 18, 2025', year: 2025, month: 6, mon: 'Jul', meta: '4 min · narrated', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h103', title: 'Churn Analysis — Jul', format: 'deck', date: 'Jul 15, 2025', year: 2025, month: 6, mon: 'Jul', meta: '9 slides', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h104', title: 'Competitive Landscape', format: 'deck', date: 'Jul 13, 2025', year: 2025, month: 6, mon: 'Jul', meta: '13 slides', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h105', title: 'Incident Postmortem', format: 'doc', date: 'Jul 9, 2025', year: 2025, month: 6, mon: 'Jul', meta: '5 pages · 5 sources', status: 'ready', by: 'You', cat: 'Operations' },
+  { id: 'h106', title: 'Burn & Runway · Q3 2025', format: 'deck', date: 'Jul 7, 2025', year: 2025, month: 6, mon: 'Jul', meta: '9 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h107', title: 'Jun Financial Report', format: 'doc', date: 'Jun 30, 2025', year: 2025, month: 5, mon: 'Jun', meta: '9 pages · 13 sources', status: 'ready', by: 'Schedule', cat: 'Financial' },
+  { id: 'h108', title: 'Revenue Breakdown · Q2 2025', format: 'deck', date: 'Jun 27, 2025', year: 2025, month: 5, mon: 'Jun', meta: '9 slides', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h109', title: 'Weekly Ops Review', format: 'deck', date: 'Jun 24, 2025', year: 2025, month: 5, mon: 'Jun', meta: '8 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h110', title: 'Investor Update — Jun', format: 'doc', date: 'Jun 20, 2025', year: 2025, month: 5, mon: 'Jun', meta: '6 pages · 19 sources', status: 'ready', by: 'Schedule', cat: 'Executive' },
+  { id: 'h111', title: 'Sales Performance Summary — Jun', format: 'doc', date: 'Jun 18, 2025', year: 2025, month: 5, mon: 'Jun', meta: '9 pages · 12 sources', status: 'ready', by: 'You', cat: 'Financial' },
+  { id: 'h112', title: 'SLA & Uptime Report — Jun', format: 'deck', date: 'Jun 14, 2025', year: 2025, month: 5, mon: 'Jun', meta: '5 slides', status: 'ready', by: 'Schedule', cat: 'Operations' },
+  { id: 'h113', title: 'Voice-of-Customer Summary', format: 'doc', date: 'Jun 11, 2025', year: 2025, month: 5, mon: 'Jun', meta: '12 pages · 19 sources', status: 'ready', by: 'You', cat: 'Customer' },
+  { id: 'h114', title: 'Research Digest', format: 'video', date: 'Jun 9, 2025', year: 2025, month: 5, mon: 'Jun', meta: '6 min · narrated', status: 'ready', by: 'You', cat: 'Knowledge' },
+  { id: 'h115', title: 'Headcount & Cost Snapshot — Jun', format: 'doc', date: 'Jun 6, 2025', year: 2025, month: 5, mon: 'Jun', meta: '7 pages · 7 sources', status: 'ready', by: 'Schedule', cat: 'Operations' },
+];
+
+export interface HistFormatMeta {
+  icon: 'file' | 'panelLeft' | 'play';
+  label: string;
+}
+
+export const HIST_FMT: Record<HistFormat, HistFormatMeta> = {
+  doc: { icon: 'file', label: 'Document' },
+  deck: { icon: 'panelLeft', label: 'Deck' },
+  video: { icon: 'play', label: 'Video' },
+};

@@ -9,7 +9,7 @@ import {
   File, Filter, Folder, Globe, Hash, History, Home, Image, Key,
   Layers, Link2, Loader2, LogOut, Mail, MoreHorizontal, Moon,
   Paperclip, Pause, Pencil, Pin, Play, Plug, Plus, Presentation,
-  RefreshCw, Search, Send, Settings, Shield, Slash, Sliders,
+  RefreshCw, Repeat, Search, Send, Settings, Shield, Slash, Sliders,
   Sparkles, Square, Star, Sun, Tag, Trash2, TrendingUp, User,
   Users, Wand2, X, Zap, MessageSquare, Circle, Share2,
 } from 'lucide-react';
@@ -55,6 +55,8 @@ const ICON_MAP = {
   globe: Globe,
   history: History,
   panelLeft: Presentation,
+  presentation: Presentation,
+  repeat: Repeat,
   filter: Filter,
   send: Send,
   atSign: AtSign,

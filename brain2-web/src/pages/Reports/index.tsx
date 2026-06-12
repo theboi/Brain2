@@ -13,6 +13,9 @@ import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import { usePersona } from '@/hooks/usePersona';
 import { useAgents, useCreateSchedule, useGenerateReport, useReports } from '@/hooks/useReports';
 import { parsePersona } from '@/lib/persona';
+import { HistoryOverlay } from './HistoryOverlay';
+import { ScheduledRunsOverlay } from './ScheduledRunsOverlay';
+import { SCHEDULES } from './scheduledMock';
 
 type ReportFormatId = 'doc' | 'deck' | 'video';
 type ScheduleId = 'oneoff' | 'weekly' | 'monthly' | 'quarterly';
@@ -850,7 +853,10 @@ export function ReportsPage() {
   const { data: recentReports = [] } = useReports(projectId);
   const [schedule, setSchedule] = useState<ScheduleId>('oneoff');
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [scheduledOpen, setScheduledOpen] = useState(false);
   const [generateAction, setGenerateAction] = useState<{ action: ReportAction; schedule: ScheduleId } | null>(null);
+  const activeScheduleCount = SCHEDULES.filter((s) => s.enabled).length;
 
   const scheduled = schedule !== 'oneoff';
   const currentSchedule = scheduleById(schedule);
@@ -866,7 +872,17 @@ export function ReportsPage() {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
               <h1 style={{ margin: 0, fontFamily: 'var(--display-font)', fontWeight: 700, fontSize: 27, letterSpacing: 'var(--display-track)', color: 'var(--fg)' }}>Generate a report</h1>
-              <ScheduleDropdown value={schedule} onChange={setSchedule} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  onClick={() => setScheduledOpen(true)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 32, padding: '0 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--ui-font)', fontSize: 12, fontWeight: 600, border: '1px solid var(--border-strong)', background: 'var(--surface)', color: 'var(--fg)' }}
+                >
+                  <Icon name="calendar" size={14} color="var(--fg-muted)" />
+                  Scheduled runs
+                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--mono-font)', background: 'var(--accent-soft)', color: 'var(--accent)' }}>{activeScheduleCount}</span>
+                </button>
+                <ScheduleDropdown value={schedule} onChange={setSchedule} />
+              </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 12 }}>
               <PersonaCrest size={26} pulse={persona.isLoading} />
@@ -913,7 +929,7 @@ export function ReportsPage() {
             </div>
 
             <aside style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0, position: isNarrow ? 'static' : 'sticky', top: 0 }}>
-              <Panel title="Recent reports" action={<MoreLink>History</MoreLink>}>
+              <Panel title="Recent reports" action={<MoreLink onClick={() => setHistoryOpen(true)}>History</MoreLink>}>
                 <div style={{ marginTop: -4 }}>
                   {recentReports.length === 0 && (
                     <div style={{ padding: '14px 0', fontSize: 12.5, color: 'var(--fg-faint)' }}>
@@ -978,6 +994,8 @@ export function ReportsPage() {
           onClose={() => setGenerateAction(null)}
         />
       )}
+      {historyOpen && <HistoryOverlay onClose={() => setHistoryOpen(false)} />}
+      {scheduledOpen && <ScheduledRunsOverlay onClose={() => setScheduledOpen(false)} />}
     </>
   );
 }
