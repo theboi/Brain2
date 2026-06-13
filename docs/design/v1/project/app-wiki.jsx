@@ -51,14 +51,23 @@ function AuditDrawer({ open, onClose }) {
   const [prompt, setPrompt] = React.useState('Check the Origins section is accurate per the sources. Tighten wording and add a citation if one is missing.');
   const [scope, setScope] = React.useState('selection');
   const [logOpen, setLogOpen] = React.useState(false);
+  const [shown, setShown] = React.useState(false);
+  React.useEffect(() => {
+    if (!open) { setShown(false); return; }
+    const r = requestAnimationFrame(() => setShown(true));
+    const t = setTimeout(() => setShown(true), 30);
+    const k = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', k);
+    return () => { cancelAnimationFrame(r); clearTimeout(t); document.removeEventListener('keydown', k); };
+  }, [open, onClose]);
   const pending = sugs.filter((s) => s.status !== 'dismissed');
   if (!open) return null;
   const set = (id, status) => setSugs((xs) => xs.map((s) => s.id === id ? { ...s, status } : s));
 
   return (
-    <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 180, background: 'rgba(8,9,12,0.4)' }} />
-      <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 480, maxWidth: '100%', zIndex: 190, background: 'var(--bg)', borderLeft: '1px solid var(--border)', boxShadow: '-12px 0 40px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', animation: 'b2slide 0.22s ease-out' }}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)', opacity: shown ? 1 : 0, transition: 'opacity .2s' }} />
+      <div style={{ position: 'relative', width: 540, maxWidth: '100%', maxHeight: '88vh', background: 'var(--bg)', border: '1px solid var(--border-strong)', borderRadius: 16, boxShadow: '0 28px 80px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', overflow: 'hidden', transform: shown ? 'none' : 'translateY(10px) scale(.985)', opacity: shown ? 1 : 0, transition: 'all .22s cubic-bezier(.32,.72,0,1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '15px 18px', borderBottom: '1px solid var(--border)' }}>
           <Icon name="sparkles" size={17} color="var(--accent)" />
           <span style={{ fontFamily: 'var(--display-font)', fontSize: 15.5, fontWeight: 600, color: 'var(--fg)' }}>Audit: Cell theory</span>
@@ -118,7 +127,7 @@ function AuditDrawer({ open, onClose }) {
           ))}
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -126,7 +135,8 @@ function WikiApp() {
   const [theme, setTheme] = useStored('b2-theme', 'dark');
   const [accent] = useStored('b2-accent', 'indigo'); // chosen on Settings → Appearance
   const vars = getTokens(theme, accent, 'inter');
-  const [topic, setTopic] = React.useState('Cell theory');
+  const readHashTopic = () => { try { const m = /[#&]page=([^&]+)/.exec(location.hash); if (m) return decodeURIComponent(m[1]); } catch (e) {} return null; };
+  const [topic, setTopic] = React.useState(() => readHashTopic() || 'Cell theory');
   const [tab, setTab] = React.useState('Read');
   const [audit, setAudit] = React.useState(false);
   const isMobile = useIsMobile();
@@ -134,10 +144,19 @@ function WikiApp() {
   const [mobilePage, setMobilePage] = React.useState(null); // null = show picker first
   const page = WIKI_PAGE;
   const curProj = (WIKI_PAGES_FLAT.find((p) => p.topic === topic) || {}).project || page.project;
+  // map the wiki project this page lives in to its org-graph vault id, so the
+  // Graph tab shows just this vault's page graph in the shared graph UI
+  const WIKI_VAULT_OF = { 'default': 'v_general', 'research-q3': 'v_research', 'launch-docs': 'v_gateway' };
+  const vaultScope = WIKI_VAULT_OF[curProj] || 'v_general';
   const pad = isMobile ? '12px 16px 0' : '16px 28px 0';
   const bodyPad = isMobile ? '18px 16px 48px' : '22px 28px 40px';
   const editH = isMobile ? 'calc(100vh - 330px)' : 'calc(100vh - 260px)';
   const openPage = (t) => { setTopic(t); setTab('Read'); setMobilePage(t); };
+  React.useEffect(() => {
+    const onHash = () => { const t = readHashTopic(); if (t) { setTopic(t); setTab('Read'); setMobilePage(t); } };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   return (
     <div style={{ ...vars, height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 14 }}>
@@ -173,7 +192,7 @@ function WikiApp() {
           {/* body */}
           {tab === 'Graph' ? (
             <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
-              <GraphView project={curProj} selected={topic} onSelect={setTopic} isMobile={isMobile} />
+              <OrgGraphView theme={theme} isMobile={isMobile} scope={vaultScope} openGraphHref="Graph.html" />
             </div>
           ) : (
           <div style={{ flex: 1, overflowY: 'auto', padding: bodyPad, paddingBottom: isMobile ? 'calc(72px + env(safe-area-inset-bottom, 0px))' : undefined }}>

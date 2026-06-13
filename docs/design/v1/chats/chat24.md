@@ -259,3 +259,54 @@ _[tool: str_replace_edit]_
 
 Now rework `MembersSection` in settings.jsx — multiple owners, per-workspace roles, no Pending tab, no summary tiles, no transfer card, and a self-demotion danger dialog.
 
+## User
+
+continue
+
+## Assistant
+
+_[tool: show_html]_
+
+_[tool: sleep]_
+
+_[tool: eval_js]_
+
+_[tool: get_webview_logs]_
+
+_[tool: screenshot]_
+
+_[tool: eval_js]_
+
+Nav reorganized perfectly (Organization group above Settings, "People" label). Let me expand Bob to check the per-workspace roles.
+
+_[tool: screenshot]_
+
+_[tool: eval_js]_
+
+Bob's expanded view nails the requirement — org **Admin**, but **Admin** in engineering, **Editor** in default, **Viewer** in research-q3. Let me verify the multiple-owners + self-demotion popup flow by promoting someone to Owner, then attempting to demote Alice.
+
+_[tool: done]_
+
+The per-workspace roles and sole-owner lock both work correctly. The multiple-owners and self-demotion popup logic is wired (sole owner is locked; once a second owner exists, demoting yourself triggers the danger dialog). Let me hand off and have the verifier exercise the owner flow.
+
+_[tool: fork_verifier_agent]_
+
+All changes are in. Summary:
+
+- **Per-workspace roles** — a person's org role and their role in each workspace are now independent. Expand any row on the People tab to see their per-workspace role badges (e.g. Bob is org Admin, but Admin in engineering, Editor in default, Viewer in research-q3).
+- **Multiple owners** — Owner is now selectable both when inviting and in the per-member role dropdown.
+- **Pending removed as a tab** — invited people now appear within their assigned role group with an "invited" badge; filters are just All / Owners / Admins / Members.
+- **Removed the summary tiles** (8 / 3 / 1).
+- **Removed Transfer ownership** — to transfer, you promote a new Owner and step yourself down; demoting yourself fires a danger confirmation, and the system blocks demoting/removing the last remaining owner.
+- **Nav reorganized** — Workspaces and People (renamed from Members) now sit in an "Organization" group above the "Settings" group.
+
+A verifier is exercising the ownership flow in the background.
+
+## User
+
+No issues found
+
+## Assistant
+
+Verified and passing — all five changes plus the nav reorganization are working correctly, including the ownership rules (sole-owner lock, the "Step down as owner?" danger dialog, and the "keep at least one owner" guard).
+

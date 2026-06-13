@@ -55,6 +55,7 @@ const ICONS = {
   plug: <><path d="M12 22v-5" /><path d="M9 8V2M15 8V2" /><path d="M7 8h10v3a5 5 0 0 1-10 0V8Z" /></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5M21 12H9" /></>,
   shield: <><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3Z" /><path d="M9 12l2 2 4-4" /></>,
+  lock: <><rect x="4.5" y="10.5" width="15" height="10" rx="2" /><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" /></>,
   pin: <><path d="M12 17v5" /><path d="M9 3h6l-1 7 3 3H7l3-3-1-7Z" /></>,
   trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></>,
   telegram: <path d="M22 4 2.5 11.5 9 14l1.5 6 3.5-4.5 5 4L22 4Z" />,

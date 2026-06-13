@@ -62,6 +62,76 @@ function RoleBadge({ role }) {
   return <span style={{ fontSize: 11, fontWeight: 600, color: STONE[ROLE_TONE[role]], background: 'var(--surface-2)', borderRadius: 6, padding: '2px 8px' }}>{role}</span>;
 }
 
+// ── row overflow menu (3 dots) — holds destructive / secondary row actions ───
+function RowMenu({ items }) {
+  return (
+    <span onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, display: 'inline-flex' }}>
+      <IngMenu width={210} align="right" trigger={(open) => (
+        <button title="More actions" style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid ' + (open ? 'var(--border-strong)' : 'transparent'), background: open ? 'var(--surface-2)' : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name="more" size={16} color="var(--fg-muted)" />
+        </button>
+      )}>
+        {(close) => (
+          <div style={{ padding: 6 }}>
+            {items.map((it, i) => (
+              <React.Fragment key={i}>
+                {it.divider && <div style={{ height: 1, background: 'var(--border)', margin: '5px 6px' }} />}
+                <button onClick={() => { it.onClick(); close(); }} style={{ ...ingRowBtn(), color: it.danger ? 'var(--destructive)' : 'var(--fg)' }}>
+                  <Icon name={it.icon} size={14} color={it.danger ? 'var(--destructive)' : 'var(--fg-muted)'} />
+                  <span style={{ fontSize: 12.5, fontWeight: 500 }}>{it.label}</span>
+                </button>
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+      </IngMenu>
+    </span>
+  );
+}
+
+// ── email field with a directory suggestion dropdown ─────────────────────────
+// Suggests known people as you type; still accepts any free-typed email.
+function EmailSuggest({ value, onChange, candidates, onEnter, placeholder = 'Enter email address' }) {
+  const [focused, setFocused] = React.useState(false);
+  const [activeIdx, setActiveIdx] = React.useState(0);
+  const blurT = React.useRef(null);
+  const q = value.trim().toLowerCase();
+  const matches = (q ? candidates.filter((c) => c.name.toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q)) : candidates).slice(0, 6);
+  const open = focused && matches.length > 0;
+  const pick = (c) => { onChange(c.email); setFocused(false); setActiveIdx(0); };
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setFocused(true); setActiveIdx((i) => Math.min(i + 1, matches.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx((i) => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (open && matches[activeIdx]) pick(matches[activeIdx]); else onEnter && onEnter(); }
+    else if (e.key === 'Escape') { setFocused(false); }
+  };
+  return (
+    <div style={{ position: 'relative', width: '100%' }}>
+      <input value={value} type="email" placeholder={placeholder}
+        style={{ width: '100%', height: 38, padding: '0 34px 0 12px', borderRadius: 9, border: `1px solid ${focused ? 'var(--accent)' : 'var(--border)'}`, background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13.5, outline: 'none', boxShadow: focused ? '0 0 0 3px var(--accent-soft)' : 'none', transition: 'border-color .12s, box-shadow .12s' }}
+        onChange={(e) => { onChange(e.target.value); setActiveIdx(0); }}
+        onFocus={() => { clearTimeout(blurT.current); setFocused(true); }}
+        onBlur={() => { blurT.current = setTimeout(() => setFocused(false), 130); }}
+        onKeyDown={onKey} />
+      <span style={{ position: 'absolute', right: 11, top: 11, color: 'var(--fg-faint)', pointerEvents: 'none' }}><Icon name="search" size={15} color="var(--fg-faint)" /></span>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 11, boxShadow: '0 18px 50px rgba(0,0,0,0.4)', overflow: 'hidden', padding: 5 }}>
+          {matches.map((c, i) => (
+            <button key={c.u} onMouseDown={(e) => { e.preventDefault(); pick(c); }} onMouseEnter={() => setActiveIdx(i)}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '7px 8px', border: 'none', borderRadius: 8, background: activeIdx === i ? 'var(--surface-2)' : 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--ui-font)' }}>
+              <Avatar u={c.u} size={28} />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</span>
+                <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.email}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Profile ──────────────────────────────────────────────────────────────────
 function ProfileSection() {
   return (
@@ -100,32 +170,126 @@ function ProfileSection() {
   );
 }
 
-// ── Members — TENANT-LEVEL directory ─────────────────────────────────────────
-// Everyone in the organization, with org-wide roles (Owner / Admin / Member).
-// A person's role can differ per workspace — that's shown when a row expands.
+// ── Members — organization directory ─────────────────────────────────────────
+// People belong to the org and hold a role *per workspace* — Admin or Member.
+// The org Owner is implicitly admin of every workspace. Vault-only collaborators
+// (Editor / Viewer) are guests and live in their own tab.
 const TENANT_ROLE_DESC = {
-  Owner: 'Full control of the organization, billing and every workspace.',
+  Owner: 'Owns the organization — admin of every workspace, plus billing and org settings.',
   Admin: 'Manage members, workspaces and organization settings.',
   Member: 'Access only the workspaces they are added to.',
 };
 const WS_LABEL = { default: 'default', 'research-q3': 'research-q3', engineering: 'engineering', personal: 'personal' };
+const WS_LIST = Object.keys(WS_LABEL);
+const WS_ROLE_DESC = {
+  Admin: 'Manage members and every vault in this workspace.',
+  Member: 'Read and write all vaults in this workspace.',
+};
+const wsRoleOpts = ['Admin', 'Member'].map((r) => ({ id: r, label: r, icon: 'shield', desc: WS_ROLE_DESC[r] }));
+const wsOpts = WS_LIST.map((w) => ({ id: w, label: WS_LABEL[w] || w, icon: 'layers' }));
+
 const TENANT_SEED = [
-  { u: 'alice', role: 'Owner', you: true, status: 'active', last: 'Active now', ws: [
-    { w: 'default', role: 'Owner' }, { w: 'research-q3', role: 'Admin' }, { w: 'engineering', role: 'Viewer' }, { w: 'personal', role: 'Owner' } ] },
-  { u: 'bob', role: 'Admin', status: 'active', last: '2h ago', ws: [
-    { w: 'engineering', role: 'Admin' }, { w: 'default', role: 'Editor' }, { w: 'research-q3', role: 'Viewer' } ] },
-  { u: 'grace', role: 'Admin', status: 'active', last: '1d ago', ws: [
-    { w: 'engineering', role: 'Admin' } ] },
-  { u: 'carol', role: 'Member', status: 'active', last: '5h ago', ws: [
-    { w: 'default', role: 'Editor' }, { w: 'research-q3', role: 'Editor' }, { w: 'engineering', role: 'Viewer' } ] },
-  { u: 'eve', role: 'Member', status: 'active', last: '3d ago', ws: [
-    { w: 'research-q3', role: 'Viewer' } ] },
-  { u: 'frank', role: 'Member', status: 'active', last: '1w ago', ws: [
-    { w: 'research-q3', role: 'Editor' }, { w: 'engineering', role: 'Editor' } ] },
-  { u: 'henry', role: 'Member', status: 'active', last: '4h ago', ws: [
-    { w: 'engineering', role: 'Editor' }, { w: 'default', role: 'Viewer' } ] },
-  { u: 'dan', role: 'Member', status: 'invited', last: 'Invited 2d ago', ws: [] },
+  { u: 'alice', you: true, owner: true, presence: 'active', last: 'Active now', ws: [] },
+  { u: 'bob', presence: 'active', last: '2h ago', ws: [{ w: 'engineering', role: 'Admin' }, { w: 'default', role: 'Member' }, { w: 'research-q3', role: 'Member' }] },
+  { u: 'grace', presence: 'active', last: '1d ago', ws: [{ w: 'engineering', role: 'Admin' }] },
+  { u: 'carol', presence: 'active', last: '5h ago', ws: [{ w: 'default', role: 'Member' }, { w: 'research-q3', role: 'Member' }] },
+  { u: 'eve', presence: 'away', last: '3d ago', ws: [{ w: 'research-q3', role: 'Member' }] },
+  { u: 'frank', presence: 'away', last: '1w ago', ws: [{ w: 'research-q3', role: 'Member' }, { w: 'engineering', role: 'Member' }] },
+  { u: 'henry', presence: 'active', last: '4h ago', ws: [{ w: 'engineering', role: 'Member' }, { w: 'default', role: 'Member' }] },
+  { u: 'dan', status: 'invited', presence: 'offline', last: 'Invited 2d ago', ws: [{ w: 'default', role: 'Member' }] },
 ];
+
+// Vault-only guests — external collaborators with access to specific vaults only.
+const VAULT_LIST = ['Cell biology', 'Microscopy', 'Q3 research', 'Engineering docs'];
+const GUEST_LEVEL_DESC = { Editor: 'Read and write the vaults they are added to.', Viewer: 'Read-only access to specific vaults.' };
+const guestLevelOpts = ['Editor', 'Viewer'].map((r) => ({ id: r, label: r, icon: r === 'Editor' ? 'pencil' : 'file', desc: GUEST_LEVEL_DESC[r] }));
+const GUEST_SEED = [
+  { u: 'mia@partner.io', name: 'Mia Tran', presence: 'active', vaults: [{ v: 'Q3 research', level: 'Viewer' }] },
+  { u: 'leo@contractor.dev', name: 'Leo Marsh', presence: 'offline', vaults: [{ v: 'Engineering docs', level: 'Editor' }, { v: 'Cell biology', level: 'Viewer' }] },
+];
+
+// Groups bundle people so an access level can be granted once and applied to
+// everyone inside. Owner is intentionally excluded — ownership can't be auto-granted.
+const ROLE_RANK = { Owner: 3, Admin: 2, Member: 1 };
+
+// presence dot overlaid on an avatar
+function PresenceAvatar({ u, size = 36, presence }) {
+  const tone = presence === 'active' ? 'var(--success)' : presence === 'away' ? 'var(--warning)' : null;
+  return (
+    <span style={{ position: 'relative', flexShrink: 0, display: 'inline-flex' }}>
+      <Avatar u={u} size={size} />
+      {tone && <span title={presence === 'active' ? 'Active now' : 'Away'} style={{ position: 'absolute', right: -1, bottom: -1, width: Math.round(size * 0.3), height: Math.round(size * 0.3), borderRadius: '50%', background: tone, border: '2px solid var(--surface)' }} />}
+    </span>
+  );
+}
+
+// inline "add to workspace / share a vault" expander used in member + guest rows
+function AddScopeRow({ label, taken, allOpts, levelOpts, defaultLevel, onAdd }) {
+  const [open, setOpen] = React.useState(false);
+  const avail = allOpts.filter((o) => !taken.includes(o.id));
+  const [scope, setScope] = React.useState(avail.length ? avail[0].id : null);
+  const [level, setLevel] = React.useState(defaultLevel);
+  React.useEffect(() => { if (!avail.some((o) => o.id === scope)) setScope(avail.length ? avail[0].id : null); }, [taken]);
+  if (!avail.length) return null;
+  if (!open) return (
+    <button onClick={() => setOpen(true)} style={{ ...sbtn(), marginTop: 12, height: 32 }}><Icon name="plus" size={13} /> {label}</button>
+  );
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+      <LevelSelect value={scope} options={avail} onPick={setScope} width={180} />
+      <LevelSelect value={level} options={levelOpts} onPick={setLevel} width={150} />
+      <button onClick={() => { onAdd(scope, level); setOpen(false); }} style={{ ...sbtn('primary'), height: 38 }}>Add</button>
+      <button onClick={() => setOpen(false)} style={{ ...sbtn(), height: 38 }}>Cancel</button>
+    </div>
+  );
+}
+// Groups now carry per-workspace roles just like people — a group can be Admin
+// of one workspace and Member of another. Everyone in the group inherits them.
+const GROUP_SEED = [
+  { id: 'research-team', name: 'Research team', ws: [{ w: 'research-q3', role: 'Member' }, { w: 'default', role: 'Member' }], members: ['carol', 'eve', 'frank'] },
+  { id: 'eng-leads', name: 'Engineering leads', ws: [{ w: 'engineering', role: 'Admin' }, { w: 'default', role: 'Member' }], members: ['grace', 'henry'] },
+];
+
+// ── shared per-workspace role list ───────────────────────────────────────────
+// Used by BOTH people rows and group rows. Each workspace carries its own
+// Admin/Member level. `inherited` rows (granted by a group) render locked — they
+// can only be changed from the Groups tab.
+function WsRoleEditor({ ws, inherited = [], setRole, removeWs, addWs, emptyText = 'Not in any workspace yet.' }) {
+  const wsIcon = { width: 24, height: 24, borderRadius: 6, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)', flexShrink: 0 };
+  return (
+    <React.Fragment>
+      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--fg-faint)', marginBottom: 8 }}>Workspace roles</div>
+      {(ws.length > 0 || inherited.length > 0) ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {ws.map((x) => (
+            <div key={x.w} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+              <span style={wsIcon}><Icon name="layers" size={13} /></span>
+              <span style={{ flex: 1, fontSize: 13, color: 'var(--fg)', fontWeight: 500 }}>{WS_LABEL[x.w] || x.w}</span>
+              <MiniSelect value={x.role} width={210} icon="shield"
+                options={[...wsRoleOpts, { id: '__remove', label: 'Remove from workspace', icon: 'trash', danger: true, divider: true }]}
+                onPick={(v) => { if (v === '__remove') removeWs(x.w); else setRole(x.w, v); }} />
+            </div>
+          ))}
+          {inherited.map((x, i) => (
+            <div key={'inh-' + x.w + '-' + i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+              <span style={{ ...wsIcon, color: 'var(--fg-faint)' }}><Icon name="layers" size={13} /></span>
+              <span style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, color: 'var(--fg)', fontWeight: 500 }}>{WS_LABEL[x.w] || x.w}</span>
+                <span title={`Granted via the ${x.via} group`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 600, padding: '1px 7px', borderRadius: 5, color: 'var(--fg-muted)', background: 'var(--surface-2)' }}><Icon name="users" size={10} color="var(--fg-muted)" /> {x.via}</span>
+              </span>
+              <span title="Granted by a group — change it from the Groups tab" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg-muted)', fontSize: 12, fontWeight: 500, flexShrink: 0 }}>
+                <Icon name="lock" size={12} color="var(--fg-faint)" /> {x.role}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12.5, color: 'var(--fg-faint)' }}>{emptyText}</div>
+      )}
+      {addWs && <AddScopeRow label="Add to workspace" taken={ws.map((x) => x.w)} allOpts={wsOpts} levelOpts={wsRoleOpts} defaultLevel="Member" onAdd={addWs} />}
+    </React.Fragment>
+  );
+}
 
 // small confirm / notice modal
 function ConfirmDialog({ title, body, confirmLabel = 'Confirm', danger, onConfirm, onClose }) {
@@ -154,88 +318,326 @@ function ConfirmDialog({ title, body, confirmLabel = 'Confirm', danger, onConfir
   );
 }
 
+// ── Groups — access bundles ──────────────────────────────────────────────────
+// A group holds per-workspace roles + a member list. Every role on the group is
+// applied to all its members automatically — so a group can be Admin of one
+// workspace and Member of another, exactly like a person.
+function GroupsPanel({ groups, setGroups, members, dir, setDialog }) {
+  const [name, setName] = React.useState('');
+  const [expanded, setExpanded] = React.useState(() => new Set(groups.length ? [groups[0].id] : []));
+  const toggleExp = (id) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const nm = name.trim();
+  const dupName = groups.some((g) => g.name.toLowerCase() === nm.toLowerCase());
+  const create = () => {
+    if (!nm || dupName) return;
+    const id = nm.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Math.random().toString(36).slice(2, 5);
+    setGroups((gs) => [...gs, { id, name: nm, ws: [], members: [] }]);
+    setExpanded((s) => new Set([...s, id]));
+    setName('');
+  };
+  const setWsRole = (id, w, role) => setGroups((gs) => gs.map((g) => g.id === id ? { ...g, ws: g.ws.map((x) => x.w === w ? { ...x, role } : x) } : g));
+  const removeWs = (id, w) => setGroups((gs) => gs.map((g) => g.id === id ? { ...g, ws: g.ws.filter((x) => x.w !== w) } : g));
+  const addWs = (id, w, role) => setGroups((gs) => gs.map((g) => g.id === id ? (g.ws.some((x) => x.w === w) ? g : { ...g, ws: [...g.ws, { w, role }] }) : g));
+  const addMember = (id, u) => setGroups((gs) => gs.map((g) => g.id === id ? (g.members.includes(u) ? g : { ...g, members: [...g.members, u] }) : g));
+  const removeMember = (id, u) => setGroups((gs) => gs.map((g) => g.id === id ? { ...g, members: g.members.filter((x) => x !== u) } : g));
+  const removeGroup = (g) => setDialog({ title: `Delete “${g.name}”?`, danger: true, confirmLabel: 'Delete group', body: `The ${g.members.length} ${g.members.length === 1 ? 'person' : 'people'} in this group lose the workspace access it granted. Their own direct roles are unchanged.`, onConfirm: () => setGroups((gs) => gs.filter((x) => x.id !== g.id)) });
+
+  const groupTop = (g) => g.ws.some((x) => x.role === 'Admin') ? 'Admin' : 'Member';
+  const candidates = (g) => members.filter((m) => !g.members.includes(m.u)).map((m) => ({ u: m.u, name: dir(m.u).name, email: dir(m.u).email }));
+  const createInput = { flex: 1, minWidth: 0, height: 38, padding: '0 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13.5, outline: 'none' };
+
+  return (
+    <SCard title="Groups" desc="Bundle people together and grant workspace access once. Every role you set on a group applies to everyone in it — and a group can be admin of one workspace and member of another, just like a person.">
+      {/* create bar — just a name; grant workspace access after, per row */}
+      <div style={{ padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)', marginBottom: 18 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 10 }}>Create a group</div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <input value={name} placeholder="Group name — e.g. Research team" style={createInput}
+            onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} />
+          <button onClick={create} disabled={!nm || dupName} style={{ ...sbtn('primary'), height: 38, flexShrink: 0, opacity: (nm && !dupName) ? 1 : 0.5, cursor: (nm && !dupName) ? 'pointer' : 'not-allowed' }}>
+            <Icon name="plus" size={14} color="#fff" /> Create group
+          </button>
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', marginTop: 8 }}>New groups start with no workspace access — expand the group to grant it.</div>
+        {dupName && <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8 }}>A group with that name already exists.</div>}
+      </div>
+
+      {/* group rows — same shape as the People list */}
+      <div>
+        {groups.map((g, i) => {
+          const open = expanded.has(g.id);
+          const last = i === groups.length - 1;
+          const tr = groupTop(g);
+          return (
+            <div key={g.id} style={{ borderBottom: last && !open ? 'none' : '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0', cursor: 'pointer' }} onClick={() => toggleExp(g.id)}>
+                <Icon name="chevRight" size={14} color="var(--fg-faint)" style={{ flexShrink: 0, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
+                <span style={{ width: 36, height: 36, flexShrink: 0, borderRadius: 9, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="users" size={18} /></span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{g.name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{g.members.length} {g.members.length === 1 ? 'person' : 'people'}</div>
+                </div>
+                <div className="b2-hide-sm" style={{ width: 150, flexShrink: 0, textAlign: 'right' }}>
+                  <div style={{ fontSize: 12, color: 'var(--fg)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5 }}>
+                    {g.ws.length > 0
+                      ? <React.Fragment><Icon name="layers" size={12} color="var(--fg-muted)" /><span>{g.ws.length} workspace{g.ws.length === 1 ? '' : 's'}</span></React.Fragment>
+                      : <span style={{ color: 'var(--fg-faint)' }}>No access yet</span>}
+                  </div>
+                </div>
+                <div style={{ flexShrink: 0 }}><RoleBadge role={tr} /></div>
+                <RowMenu items={[{ label: 'Delete group', icon: 'trash', danger: true, onClick: () => removeGroup(g) }]} />
+              </div>
+
+              {open && (
+                <div style={{ padding: '4px 0 16px 60px' }}>
+                  <WsRoleEditor ws={g.ws}
+                    setRole={(w, v) => setWsRole(g.id, w, v)}
+                    removeWs={(w) => removeWs(g.id, w)}
+                    addWs={(w, role) => addWs(g.id, w, role)}
+                    emptyText="No workspace access yet — add one below." />
+
+                  <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--fg-faint)', margin: '18px 0 8px' }}>Members · {g.members.length}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 0 12px', fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.5 }}>
+                    <Icon name="shield" size={14} color="var(--accent)" style={{ flexShrink: 0 }} />
+                    <span>Everyone below inherits the roles above. They show on each person's row, locked.</span>
+                  </div>
+                  <AddPersonBar candidates={candidates(g)} hideLevel defaultLevel="__inherit" levelOptions={[]}
+                    placeholder="Add a person to this group" onAdd={(u) => addMember(g.id, u)} />
+                  <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {g.members.map((u) => {
+                      const p = dir(u);
+                      return (
+                        <div key={u} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0' }}>
+                          <Avatar u={u} size={30} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>{p.name}</div>
+                            <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.email}</div>
+                          </div>
+                          <button onClick={() => removeMember(g.id, u)} title="Remove from group" style={{ width: 28, height: 28, flexShrink: 0, borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="x" size={13} color="var(--fg-muted)" /></button>
+                        </div>
+                      );
+                    })}
+                    {g.members.length === 0 && <div style={{ fontSize: 12, color: 'var(--fg-faint)', padding: '8px 0' }}>No one in this group yet — add someone above.</div>}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {groups.length === 0 && (
+          <div style={{ padding: '28px 10px', textAlign: 'center', fontSize: 13, color: 'var(--fg-faint)' }}>No groups yet. Create one above to grant access in bulk.</div>
+        )}
+      </div>
+    </SCard>
+  );
+}
+
+// ── Guests — vault-only collaborators ────────────────────────────────────────
+// Guests aren't org members. Each is granted Editor/Viewer on specific vaults.
+function GuestsPanel({ guests, setGuests, setDialog }) {
+  const [email, setEmail] = React.useState('');
+  const [vault, setVault] = React.useState(VAULT_LIST[0]);
+  const [level, setLevel] = React.useState('Viewer');
+  const [expanded, setExpanded] = React.useState(() => new Set(guests.length ? [guests[0].u] : []));
+  const toggleExp = (u) => setExpanded((s) => { const n = new Set(s); n.has(u) ? n.delete(u) : n.add(u); return n; });
+  const guestVaultOpts = VAULT_LIST.map((v) => ({ id: v, label: v, icon: 'folder' }));
+
+  const addr = email.trim();
+  const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addr);
+  const exists = guests.some((g) => g.u.toLowerCase() === addr.toLowerCase());
+  // directory people not already guests → invite suggestions
+  const guestCandidates = Object.keys(window.WS_PEOPLE || {})
+    .filter((u) => { const em = (window.WS_PEOPLE[u].email || '').toLowerCase(); return !guests.some((g) => g.u.toLowerCase() === em); })
+    .map((u) => ({ u, name: window.WS_PEOPLE[u].name, email: window.WS_PEOPLE[u].email }));
+  const invite = () => {
+    if (!validEmail || exists) return;
+    const known = Object.keys(window.WS_PEOPLE || {}).find((u) => (window.WS_PEOPLE[u].email || '').toLowerCase() === addr.toLowerCase());
+    const handle = known ? window.WS_PEOPLE[known].name : addr.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    setGuests((gs) => [...gs, { u: addr, name: handle, presence: 'offline', vaults: [{ v: vault, level }] }]);
+    setExpanded((s) => new Set([...s, addr]));
+    setEmail(''); setVault(VAULT_LIST[0]); setLevel('Viewer');
+  };
+  const setVaultLevel = (u, v, lvl) => setGuests((gs) => gs.map((g) => g.u === u ? { ...g, vaults: g.vaults.map((x) => x.v === v ? { ...x, level: lvl } : x) } : g));
+  const removeVault = (u, v) => setGuests((gs) => gs.map((g) => g.u === u ? { ...g, vaults: g.vaults.filter((x) => x.v !== v) } : g));
+  const addVault = (u, v, lvl) => setGuests((gs) => gs.map((g) => g.u === u ? (g.vaults.some((x) => x.v === v) ? g : { ...g, vaults: [...g.vaults, { v, level: lvl }] }) : g));
+  const removeGuest = (g) => setDialog({ title: `Remove ${g.name}?`, danger: true, confirmLabel: 'Remove guest', body: 'They lose access to every vault shared with them. Your content stays.', onConfirm: () => setGuests((gs) => gs.filter((x) => x.u !== g.u)) });
+
+  const inviteInput = { flex: 1, minWidth: 0, height: 38, padding: '0 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13.5, outline: 'none' };
+
+  return (
+    <SCard title="Guests" desc="External collaborators with access to specific vaults only — never a whole workspace. Grant Editor or Viewer per vault.">
+      {/* invite bar */}
+      <div style={{ padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)', marginBottom: 18 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 10 }}>Invite a guest</div>
+        <EmailSuggest value={email} onChange={setEmail} candidates={guestCandidates} onEnter={invite} placeholder="Enter email or name…" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Share</span>
+          <LevelSelect value={vault} options={guestVaultOpts} onPick={setVault} width={180} />
+          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>as</span>
+          <LevelSelect value={level} options={guestLevelOpts} onPick={setLevel} width={150} />
+          <button onClick={invite} disabled={!validEmail || exists} style={{ ...sbtn('primary'), height: 38, marginLeft: 'auto', opacity: (validEmail && !exists) ? 1 : 0.5, cursor: (validEmail && !exists) ? 'pointer' : 'not-allowed' }}>
+            <Icon name="plus" size={14} color="#fff" /> Invite guest
+          </button>
+        </div>
+        {addr && !validEmail && <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8 }}>Enter a valid email address.</div>}
+        {exists && <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8 }}>That guest already has access.</div>}
+      </div>
+
+      {/* guest list — same row shape as the People tab */}
+      <div>
+        {guests.map((g, i) => {
+          const open = expanded.has(g.u);
+          const last = i === guests.length - 1;
+          const taken = g.vaults.map((x) => x.v);
+          const topLevel = g.vaults.some((x) => x.level === 'Editor') ? 'Editor' : 'Viewer';
+          return (
+            <div key={g.u} style={{ borderBottom: last && !open ? 'none' : '1px solid var(--border)' }}>
+              <div onClick={() => toggleExp(g.u)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0', cursor: 'pointer' }}>
+                <Icon name="chevRight" size={14} color="var(--fg-faint)" style={{ flexShrink: 0, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
+                <PresenceAvatar u={g.u} size={36} presence={g.presence} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', display: 'flex', alignItems: 'center', gap: 7 }}>{g.name}<span style={{ fontSize: 10, color: 'var(--fg-muted)', background: 'var(--surface-2)', borderRadius: 5, padding: '1px 6px' }}>guest</span></div>
+                  <div style={{ fontSize: 12, color: 'var(--fg-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.u}</div>
+                </div>
+                <div className="b2-hide-sm" style={{ width: 150, flexShrink: 0, textAlign: 'right' }}>
+                  <div style={{ fontSize: 12, color: 'var(--fg)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5 }}>
+                    {g.vaults.length > 0
+                      ? <React.Fragment><Icon name="folder" size={12} color="var(--fg-muted)" /><span>{g.vaults.length} vault{g.vaults.length === 1 ? '' : 's'}</span></React.Fragment>
+                      : <span style={{ color: 'var(--fg-faint)' }}>No vaults yet</span>}
+                  </div>
+                </div>
+                <div style={{ flexShrink: 0 }}><RoleBadge role={topLevel} /></div>
+                <RowMenu items={[{ label: 'Remove guest', icon: 'trash', danger: true, onClick: () => removeGuest(g) }]} />
+              </div>
+              {open && (
+                <div style={{ padding: '4px 0 16px 60px' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--fg-faint)', marginBottom: 8 }}>Vault access</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {g.vaults.map((x) => (
+                      <div key={x.v} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+                        <span style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)', flexShrink: 0 }}><Icon name="folder" size={13} /></span>
+                        <span style={{ flex: 1, fontSize: 13, color: 'var(--fg)', fontWeight: 500 }}>{x.v}</span>
+                        <MiniSelect value={x.level} width={188} icon="shield"
+                          options={[...guestLevelOpts, { id: '__remove', label: 'Remove vault', icon: 'trash', danger: true, divider: true }]}
+                          onPick={(v) => { if (v === '__remove') removeVault(g.u, x.v); else setVaultLevel(g.u, x.v, v); }} />
+                      </div>
+                    ))}
+                    {g.vaults.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--fg-faint)' }}>No vaults shared yet.</div>}
+                  </div>
+                  <AddScopeRow label="Share a vault" taken={taken} allOpts={guestVaultOpts} levelOpts={guestLevelOpts} defaultLevel="Viewer" onAdd={(v, lvl) => addVault(g.u, v, lvl)} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {guests.length === 0 && (
+          <div style={{ padding: '28px 10px', textAlign: 'center', fontSize: 13, color: 'var(--fg-faint)' }}>No guests yet. Invite one above to share a vault.</div>
+        )}
+      </div>
+    </SCard>
+  );
+}
+
 function MembersSection() {
   const [members, setMembers] = React.useState(TENANT_SEED);
+  const [groups, setGroups] = React.useState(GROUP_SEED);
+  const [guests, setGuests] = React.useState(GUEST_SEED);
+  const [view, setView] = React.useState('people');
   const [query, setQuery] = React.useState('');
   const [filter, setFilter] = React.useState('all');
   const [email, setEmail] = React.useState('');
+  const [inviteWs, setInviteWs] = React.useState('default');
   const [inviteRole, setInviteRole] = React.useState('Member');
   const [expanded, setExpanded] = React.useState(() => new Set());
   const [dialog, setDialog] = React.useState(null);
 
   const dir = (u) => (window.WS_PEOPLE && window.WS_PEOPLE[u]) || { name: u, email: u };
-  const ownerCount = members.filter((m) => m.role === 'Owner').length;
+  // roles a person picks up from the groups they belong to → [{ w, role, via }]
+  const inheritedWs = (u) => groups.filter((g) => g.members.includes(u)).flatMap((g) => g.ws.map((x) => ({ w: x.w, role: x.role, via: g.name })));
+  const isAdminAnywhere = (m) => !m.owner && (m.ws.some((x) => x.role === 'Admin') || inheritedWs(m.u).some((x) => x.role === 'Admin'));
+  const topRole = (m) => m.owner ? 'Owner' : (isAdminAnywhere(m) ? 'Admin' : 'Member');
   const counts = {
     all: members.length,
-    owner: ownerCount,
-    admin: members.filter((m) => m.role === 'Admin').length,
-    member: members.filter((m) => m.role === 'Member').length,
+    owner: members.filter((m) => m.owner).length,
+    admin: members.filter(isAdminAnywhere).length,
+    member: members.filter((m) => topRole(m) === 'Member').length,
   };
   const q = query.trim().toLowerCase();
   const shown = members.filter((m) => {
     const p = dir(m.u);
-    if (filter === 'owner' && m.role !== 'Owner') return false;
-    if (filter === 'admin' && m.role !== 'Admin') return false;
-    if (filter === 'member' && m.role !== 'Member') return false;
+    if (filter !== 'all' && topRole(m).toLowerCase() !== filter) return false;
     if (q && !(p.name.toLowerCase().includes(q) || (p.email || '').toLowerCase().includes(q))) return false;
     return true;
-  }).sort((a, b) => ['Owner', 'Admin', 'Member'].indexOf(a.role) - ['Owner', 'Admin', 'Member'].indexOf(b.role));
+  }).sort((a, b) => ROLE_RANK[topRole(b)] - ROLE_RANK[topRole(a)]);
 
-  const setRole = (u, role) => setMembers((ms) => ms.map((m) => m.u === u ? { ...m, role } : m));
   const removeM = (u) => setMembers((ms) => ms.filter((m) => m.u !== u));
   const toggleExp = (u) => setExpanded((s) => { const n = new Set(s); n.has(u) ? n.delete(u) : n.add(u); return n; });
-
-  // role change requests are routed through here so ownership rules apply
-  const requestRole = (m, v) => {
-    const demotingOwner = m.role === 'Owner' && v !== 'Owner';
-    if (demotingOwner && ownerCount <= 1) {
-      setDialog({ title: 'Keep at least one owner', body: 'Your organization must always have an owner. Promote someone else to Owner before stepping this person down.', onConfirm: null });
-      return;
-    }
-    if (demotingOwner && m.you) {
-      setDialog({ title: 'Step down as owner?', danger: true, confirmLabel: 'Step down', body: `You'll lose full control of the organization and become a ${v}. Another owner can restore you later — this can't be undone on your own.`, onConfirm: () => setRole(m.u, v) });
-      return;
-    }
-    setRole(m.u, v);
-  };
+  // per-workspace role management
+  const setWsRole = (u, w, role) => setMembers((ms) => ms.map((m) => m.u === u ? { ...m, ws: m.ws.map((x) => x.w === w ? { ...x, role } : x) } : m));
+  const removeWs = (u, w) => setMembers((ms) => ms.map((m) => m.u === u ? { ...m, ws: m.ws.filter((x) => x.w !== w) } : m));
+  const addWs = (u, w, role) => setMembers((ms) => ms.map((m) => m.u === u ? (m.ws.some((x) => x.w === w) ? m : { ...m, ws: [...m.ws, { w, role }] }) : m));
   const requestRemove = (m) => {
     if (m.you) { setDialog({ title: "You can't remove yourself", body: 'Ask another owner to remove your account, or step down first.', onConfirm: null }); return; }
-    if (m.role === 'Owner' && ownerCount <= 1) { setDialog({ title: 'Keep at least one owner', body: 'Promote another member to Owner before removing the last one.', onConfirm: null }); return; }
+    if (m.owner) { setDialog({ title: "Can't remove the owner", body: 'Transfer ownership to someone else before removing this person.', onConfirm: null }); return; }
     setDialog({ title: `Remove ${dir(m.u).name}?`, danger: true, confirmLabel: 'Remove', body: 'They lose access to the organization and all its workspaces. Their content stays.', onConfirm: () => removeM(m.u) });
   };
 
   const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
   const exists = members.some((m) => (dir(m.u).email || '').toLowerCase() === email.trim().toLowerCase());
+  // known directory people who aren't members yet → invite suggestions
+  const inviteCandidates = Object.keys(window.WS_PEOPLE || {})
+    .filter((u) => !members.some((m) => m.u === u || (dir(m.u).email || '').toLowerCase() === (window.WS_PEOPLE[u].email || '').toLowerCase()))
+    .map((u) => ({ u, name: window.WS_PEOPLE[u].name, email: window.WS_PEOPLE[u].email }));
   const invite = () => {
     if (!validEmail || exists) return;
     const addr = email.trim();
     const handle = addr.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-    if (window.WS_PEOPLE && !window.WS_PEOPLE[addr]) window.WS_PEOPLE[addr] = { name: handle, email: addr };
-    setMembers((ms) => [...ms, { u: addr, role: inviteRole, status: 'invited', last: 'Invited just now', ws: [] }]);
-    setEmail(''); setInviteRole('Member');
+    const known = Object.keys(window.WS_PEOPLE || {}).find((u) => (window.WS_PEOPLE[u].email || '').toLowerCase() === addr.toLowerCase());
+    const key = known || addr;
+    if (!known && window.WS_PEOPLE) window.WS_PEOPLE[addr] = { name: handle, email: addr };
+    setMembers((ms) => [...ms, { u: key, status: 'invited', presence: 'offline', last: 'Invited just now', ws: [{ w: inviteWs, role: inviteRole }] }]);
+    setEmail(''); setInviteWs('default'); setInviteRole('Member');
   };
 
   const filters = [
     { id: 'all', label: 'All', n: counts.all },
-    { id: 'owner', label: 'Owners', n: counts.owner },
+    { id: 'owner', label: 'Owner', n: counts.owner },
     { id: 'admin', label: 'Admins', n: counts.admin },
     { id: 'member', label: 'Members', n: counts.member },
   ];
-  const roleOpts = ['Owner', 'Admin', 'Member'].map((r) => ({ id: r, label: r, icon: 'shield', desc: TENANT_ROLE_DESC[r] }));
   const inviteInput = { flex: 1, minWidth: 0, height: 38, padding: '0 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13.5, outline: 'none' };
 
   return (
     <div>
-      <SCard title="Organization members" desc="Everyone in your Brain2 organization. These roles are org-wide. A person's role inside a given workspace can differ — expand a row to see it.">
+      {/* People / Groups toggle */}
+      <div style={{ display: 'inline-flex', gap: 3, padding: 3, background: 'var(--surface-2)', borderRadius: 10, marginBottom: 18 }}>
+        {[{ id: 'people', label: 'People', icon: 'user', n: members.length }, { id: 'groups', label: 'Groups', icon: 'users', n: groups.length }, { id: 'guests', label: 'Guests', icon: 'mail', n: guests.length }].map((t) => {
+          const on = view === t.id;
+          return (
+            <button key={t.id} onClick={() => setView(t.id)} style={{ display: 'flex', alignItems: 'center', gap: 7, height: 32, padding: '0 14px', border: 'none', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--ui-font)', fontSize: 13, fontWeight: on ? 600 : 500, background: on ? 'var(--surface)' : 'transparent', color: on ? 'var(--fg)' : 'var(--fg-muted)', boxShadow: on ? 'var(--shadow-card)' : 'none' }}>
+              <Icon name={t.icon} size={15} color={on ? 'var(--accent)' : 'var(--fg-muted)'} />{t.label}
+              <span style={{ fontSize: 11, color: on ? 'var(--fg-muted)' : 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{t.n}</span>
+            </button>
+          );
+        })}
+      </div>
+      {view === 'groups' ? (
+        <GroupsPanel groups={groups} setGroups={setGroups} members={members} dir={dir} setDialog={setDialog} />
+      ) : view === 'guests' ? (
+        <GuestsPanel guests={guests} setGuests={setGuests} setDialog={setDialog} />
+      ) : (
+      <SCard title="Organization members" desc="Everyone in your Brain2 organization. Roles are granted per workspace — expand a row to manage which workspaces someone belongs to and whether they're an admin or member.">
         {/* invite bar */}
         <div style={{ padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)', marginBottom: 18 }}>
           <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 10 }}>Invite someone to the organization</div>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            <input value={email} type="email" placeholder="Enter email address" style={inviteInput}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') invite(); }} />
-            <LevelSelect value={inviteRole} options={roleOpts} onPick={setInviteRole} width={210} />
-            <button onClick={invite} disabled={!validEmail || exists} style={{ ...sbtn('primary'), height: 38, opacity: (validEmail && !exists) ? 1 : 0.5, cursor: (validEmail && !exists) ? 'pointer' : 'not-allowed' }}>
+          <EmailSuggest value={email} onChange={setEmail} candidates={inviteCandidates} onEnter={invite} placeholder="Enter email or name…" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Add to</span>
+            <LevelSelect value={inviteWs} options={wsOpts} onPick={setInviteWs} width={180} />
+            <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>as</span>
+            <LevelSelect value={inviteRole} options={wsRoleOpts} onPick={setInviteRole} width={150} />
+            <button onClick={invite} disabled={!validEmail || exists} style={{ ...sbtn('primary'), height: 38, marginLeft: 'auto', opacity: (validEmail && !exists) ? 1 : 0.5, cursor: (validEmail && !exists) ? 'pointer' : 'not-allowed' }}>
               <Icon name="plus" size={14} color="#fff" /> Invite
             </button>
           </div>
@@ -266,14 +668,15 @@ function MembersSection() {
         <div>
           {shown.map((m, i) => {
             const p = dir(m.u);
-            const isOwner = m.role === 'Owner';
             const last = i === shown.length - 1;
             const open = expanded.has(m.u);
+            const mGroups = groups.filter((g) => g.members.includes(m.u));
+            const tr = topRole(m);
             return (
               <div key={m.u} style={{ borderBottom: last && !open ? 'none' : '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0', cursor: 'pointer' }} onClick={() => toggleExp(m.u)}>
                   <Icon name="chevRight" size={14} color="var(--fg-faint)" style={{ flexShrink: 0, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
-                  <Avatar u={m.u} size={36} />
+                  <PresenceAvatar u={m.u} size={36} presence={m.presence} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', display: 'flex', alignItems: 'center', gap: 7 }}>
                       {p.name}
@@ -281,41 +684,50 @@ function MembersSection() {
                       {m.status === 'invited' && <span style={{ fontSize: 10, color: 'var(--warning)', background: 'var(--warning-soft)', borderRadius: 5, padding: '1px 6px', display: 'inline-flex', alignItems: 'center', gap: 3 }}><Icon name="clock" size={10} /> invited</span>}
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--fg-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.email}</div>
+                    {mGroups.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
+                        {mGroups.map((g) => {
+                          const gAdmin = g.ws.some((x) => x.role === 'Admin');
+                          return (
+                            <span key={g.id} title={`Inherits this group's workspace roles${gAdmin ? ' (incl. Admin)' : ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 600, padding: '1px 7px', borderRadius: 5, color: gAdmin ? 'var(--accent)' : 'var(--fg-muted)', background: gAdmin ? 'var(--accent-soft)' : 'var(--surface-2)' }}>
+                              <Icon name="users" size={10} color={gAdmin ? 'var(--accent)' : 'var(--fg-muted)'} /> {g.name}{gAdmin ? ' · Admin' : ''}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   <div className="b2-hide-sm" style={{ width: 150, flexShrink: 0, textAlign: 'right' }}>
                     <div style={{ fontSize: 12, color: 'var(--fg)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5 }}>
-                      {m.ws.length > 0
-                        ? <React.Fragment><Icon name="layers" size={12} color="var(--fg-muted)" /><span>{m.ws.length} workspace{m.ws.length === 1 ? '' : 's'}</span></React.Fragment>
-                        : <span style={{ color: 'var(--fg-faint)' }}>No workspaces yet</span>}
+                      {m.owner
+                        ? <span style={{ color: 'var(--fg-muted)' }}>All workspaces</span>
+                        : m.ws.length > 0
+                          ? <React.Fragment><Icon name="layers" size={12} color="var(--fg-muted)" /><span>{m.ws.length} workspace{m.ws.length === 1 ? '' : 's'}</span></React.Fragment>
+                          : <span style={{ color: 'var(--fg-faint)' }}>No workspaces yet</span>}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--fg-faint)', marginTop: 2 }}>{m.last}</div>
+                    {m.presence !== 'active' && <div style={{ fontSize: 11, color: 'var(--fg-faint)', marginTop: 2 }}>{m.last}</div>}
                   </div>
 
-                  <div style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
-                    {isOwner && m.you && ownerCount <= 1
-                      ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 9px' }}><RoleBadge role="Owner" /></span>
-                      : <MiniSelect value={m.role} width={210} icon="shield"
-                          options={[...roleOpts, { id: '__remove', label: 'Remove from organization', icon: 'trash', danger: true, divider: true }]}
-                          onPick={(v) => { if (v === '__remove') requestRemove(m); else requestRole(m, v); }} />}
-                  </div>
+                  <div style={{ flexShrink: 0 }}><RoleBadge role={tr} /></div>
+                  {!m.you && <RowMenu items={[{ label: 'Remove from organization', icon: 'trash', danger: true, onClick: () => requestRemove(m) }]} />}
                 </div>
 
                 {open && (
                   <div style={{ padding: '4px 0 16px 60px' }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--fg-faint)', marginBottom: 8 }}>Workspace roles</div>
-                    {m.ws.length > 0 ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {m.ws.map((x) => (
-                          <div key={x.w} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
-                            <span style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)', flexShrink: 0 }}><Icon name="layers" size={13} /></span>
-                            <span style={{ flex: 1, fontSize: 13, color: 'var(--fg)', fontWeight: 500 }}>{WS_LABEL[x.w] || x.w}</span>
-                            <RoleBadge role={x.role} />
-                          </div>
-                        ))}
+                    {m.owner ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', borderRadius: 9, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                        <Icon name="shield" size={15} color="var(--accent)" />
+                        <span style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>As organization owner, {m.you ? 'you are' : 'they are'} an admin of every workspace automatically.</span>
                       </div>
                     ) : (
-                      <div style={{ fontSize: 12.5, color: 'var(--fg-faint)' }}>Not a member of any workspace yet.{m.status === 'invited' ? ' Their invite is still pending.' : ''}</div>
+                    <React.Fragment>
+                      <WsRoleEditor ws={m.ws} inherited={inheritedWs(m.u)}
+                        setRole={(w, v) => setWsRole(m.u, w, v)}
+                        removeWs={(w) => removeWs(m.u, w)}
+                        addWs={(w, role) => addWs(m.u, w, role)}
+                        emptyText={`Not in any workspace yet.${m.status === 'invited' ? ' Their invite is still pending.' : ''}`} />
+                    </React.Fragment>
                     )}
                   </div>
                 )}
@@ -327,6 +739,7 @@ function MembersSection() {
           )}
         </div>
       </SCard>
+      )}
 
       {dialog && <ConfirmDialog {...dialog} onClose={() => setDialog(null)} />}
     </div>

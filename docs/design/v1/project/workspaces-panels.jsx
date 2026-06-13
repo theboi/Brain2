@@ -13,6 +13,12 @@ const WS_PEOPLE = {
   frank: { name: 'Frank Oyelaran', email: 'frank@brain2.dev' },
   grace: { name: 'Grace Kim', email: 'grace@brain2.dev' },
   henry: { name: 'Henry Voss', email: 'henry@brain2.dev' },
+  // colleagues in the directory who aren't members/guests yet — surfaced as invite suggestions
+  isla:  { name: 'Isla Romero', email: 'isla@brain2.dev' },
+  omar:  { name: 'Omar Haddad', email: 'omar@brain2.dev' },
+  priya: { name: 'Priya Nair', email: 'priya@brain2.dev' },
+  ravi:  { name: 'Ravi Shah', email: 'ravi@brain2.dev' },
+  tess:  { name: 'Tess Okafor', email: 'tess@brain2.dev' },
 };
 const ROLE_ORDER = ['Owner', 'Admin', 'Editor', 'Viewer'];
 const ROLE_DESC = {
@@ -159,7 +165,7 @@ function LevelSelect({ value, options, onPick, width = 200 }) {
 // the right → press "+" to push onto the list. Used by every access surface.
 // onAdd(key, level): key is a directory id for known people, or the raw email
 // for an external invite.
-function AddPersonBar({ candidates, levelOptions, defaultLevel, onAdd, placeholder = 'Enter email or name' }) {
+function AddPersonBar({ candidates, levelOptions, defaultLevel, onAdd, placeholder = 'Enter email or name', hideLevel = false }) {
   const [query, setQuery] = React.useState('');
   const [picked, setPicked] = React.useState(null); // candidate {u, name, email}
   const [level, setLevel] = React.useState(defaultLevel);
@@ -228,7 +234,7 @@ function AddPersonBar({ candidates, levelOptions, defaultLevel, onAdd, placehold
           </div>
         )}
       </div>
-      <LevelSelect value={level} options={levelOptions} onPick={setLevel} />
+      {!hideLevel && <LevelSelect value={level} options={levelOptions} onPick={setLevel} />}
       <button onMouseDown={(e) => e.preventDefault()} onClick={commit} disabled={!canAdd} title="Add to list"
         style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 9, border: 'none', background: canAdd ? 'var(--accent)' : 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canAdd ? 'pointer' : 'not-allowed' }}>
         <Icon name="plus" size={18} color={canAdd ? '#fff' : 'var(--fg-faint)'} />
