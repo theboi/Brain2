@@ -27,7 +27,6 @@ import argparse
 import os
 import shutil
 import sys
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -143,104 +142,15 @@ class Setup:
         return vault_path
 
     def seed_test_data(self, tenant_id: str) -> None:
-        """Seed optional test vaults and data (like seed_dev_vault.py)."""
-        from brain2.vault.indexer import reindex_vault
-        from brain2.vault.fs import write_text_atomic
-
-        print("\n  Seeding test vaults and data...")
-
-        # Workspace 1: Science
-        ws1_id = self.create_workspace(tenant_id, "Science")
-
-        # Vault A: Cells & Microscopy
-        vault_a_id = "cells-and-microscopy"
-        vault_a_path = self.create_vault(
-            tenant_id, vault_a_id, "Cells & Microscopy", ws1_id)
-
-        pages_a = {
-            "Cell theory": "# Cell theory\n\nAll living things are made of cells. "
-                          "First described by [[Robert Hooke]] in [[Micrographia]] "
-                          "(1665) and generalised by Schleiden and Schwann.\n",
-            "Micrographia": "# Micrographia\n\n1665 work by [[Robert Hooke]] "
-                           "describing observations made with a [[Microscopy|microscope]].\n",
-            "Robert Hooke": "# Robert Hooke\n\nNatural philosopher; coined 'cell' "
-                           "in [[Micrographia]].\n",
-            "Microscopy": "# Microscopy\n\nThe technical art of seeing the small. "
-                         "Enables [[Cell theory]] and modern biology.\n",
-        }
-
-        wiki_a = vault_a_path / "wiki"
-        wiki_a.mkdir(parents=True, exist_ok=True)
-        for topic, body in pages_a.items():
-            fp = wiki_a / f"{topic}.md"
-            if not fp.exists():
-                write_text_atomic(fp, body)
-                print(f"    Created wiki page: {topic}")
-
-        reindex_vault(self.store, vault_a_id, vault_a_path)
-
-        # Seed some sources
-        sources_a = [
-            ("file", "Hooke 1665.pdf", "Micrographia"),
-            ("text", "Cell theory notes.txt", "Cell theory"),
-        ]
-        for kind, filename, topic in sources_a:
-            existing = self.store._conn.execute(
-                "SELECT source_id FROM sources WHERE tenant_id=? "
-                "AND project_id=? AND filename=?",
-                (tenant_id, vault_a_id, filename)
-            ).fetchone()
-            if not existing:
-                self.store._conn.execute(
-                    "INSERT INTO sources(source_id, tenant_id, project_id, kind, "
-                    "filename, size_bytes, topic, status, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, 0, ?, 'extracted', ?, ?)",
-                    (uuid.uuid4().hex, tenant_id, vault_a_id, kind, filename, topic,
-                     _now(), _now()))
-        self.store._conn.commit()
-
-        # Workspace 2: Research
-        ws2_id = self.create_workspace(tenant_id, "Research")
-
-        # Vault B: Q3 User Research
-        vault_b_id = "q3-user-research"
-        vault_b_path = self.create_vault(
-            tenant_id, vault_b_id, "Q3 User Research", ws2_id)
-
-        pages_b = {
-            "Q3 themes": "# Q3 themes\n\nSee [[Personas]] and [[Churn analysis]].\n",
-            "Personas": "# Personas\n\nDerived from [[Q3 themes]].\n",
-            "Churn analysis": "# Churn analysis\n\nLinked to [[Personas]].\n",
-        }
-
-        wiki_b = vault_b_path / "wiki"
-        wiki_b.mkdir(parents=True, exist_ok=True)
-        for topic, body in pages_b.items():
-            fp = wiki_b / f"{topic}.md"
-            if not fp.exists():
-                write_text_atomic(fp, body)
-                print(f"    Created wiki page: {topic}")
-
-        reindex_vault(self.store, vault_b_id, vault_b_path)
-
-        # Seed source for vault B
-        sources_b = [("url", "https://example.com/survey", "Q3 themes")]
-        for kind, filename, topic in sources_b:
-            existing = self.store._conn.execute(
-                "SELECT source_id FROM sources WHERE tenant_id=? "
-                "AND project_id=? AND filename=?",
-                (tenant_id, vault_b_id, filename)
-            ).fetchone()
-            if not existing:
-                self.store._conn.execute(
-                    "INSERT INTO sources(source_id, tenant_id, project_id, kind, "
-                    "filename, size_bytes, topic, status, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, 0, ?, 'extracted', ?, ?)",
-                    (uuid.uuid4().hex, tenant_id, vault_b_id, kind, filename, topic,
-                     _now(), _now()))
-        self.store._conn.commit()
-
-        print(f"    Seeded {len(pages_a) + len(pages_b)} wiki pages across 2 vaults")
+        """Seed Meridian Aerial Systems demo data by delegating to seed_dev_vault.py."""
+        # Import and call the canonical seed so there is only one source of truth.
+        import sys
+        import os
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from seed_dev_vault import run_seed
+        run_seed()
 
     def reset(self) -> None:
         """Reset everything: delete vault directories and DB file."""
