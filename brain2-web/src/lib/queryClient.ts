@@ -13,6 +13,7 @@ export const queryClient = new QueryClient({
 
 export const qk = {
   workspaces: () => ['workspaces'] as const,
+  workspacesOverview: () => ['workspaces-overview'] as const,
   projects: (workspaceId: string | null) => ['projects', workspaceId] as const,
   vaultIndex: (pid: string) => ['vault', pid, 'index'] as const,
   vaultPage: (pid: string, topic: string) => ['vault', pid, 'page', topic] as const,
@@ -31,6 +32,9 @@ export const qk = {
   sourceDiff: (pid: string, sourceId: string, version: number) =>
     ['sources', pid, sourceId, 'diff', version] as const,
   reports: (pid: string | null) => ['reports', pid] as const,
+  schedules: () => ['schedules'] as const,
+  scheduleOccurrences: (start: string, end: string) =>
+    ['schedule-occurrences', start, end] as const,
   reportHistory: (pid: string | null, filters: object) =>
     ['report-history', pid, filters] as const,
   statsOverview: () => ['stats', 'overview'] as const,

@@ -32,12 +32,13 @@ def test_secret_key_from_env(monkeypatch):
     assert cfg.secret_key == key_bytes
 
 
-def test_secret_key_generates_when_absent(monkeypatch):
+def test_secret_key_generates_when_absent(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("BRAIN2_SECRET_KEY", raising=False)
+    monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
     import warnings
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         cfg = importlib.reload(config_module).load_config()
     assert len(cfg.secret_key) == 32
     assert any("BRAIN2_SECRET_KEY" in str(warning.message) for warning in w)
-

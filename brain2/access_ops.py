@@ -16,7 +16,7 @@ from brain2.context import RequestContext
 from brain2.errors import Conflict, NotFound
 from brain2.store.base import Store
 
-_GUEST_ROLES = {"viewer", "editor"}
+_GUEST_ROLES = {"viewer", "editor", "admin"}
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +286,8 @@ def register_access_ops(ops, store: Store) -> None:
         params=[
             {"name": "project_id", "type": "str", "required": True},
             {"name": "user_id", "type": "str", "required": True},
-            {"name": "role", "type": "str", "required": True, "choices": ["viewer", "editor"]},
+            {"name": "role", "type": "str", "required": True,
+             "choices": ["viewer", "editor", "admin"]},
         ],
     )
     ops.register(
@@ -297,7 +298,8 @@ def register_access_ops(ops, store: Store) -> None:
         params=[
             {"name": "project_id", "type": "str", "required": True},
             {"name": "user_id", "type": "str", "required": True},
-            {"name": "role", "type": "str", "required": True, "choices": ["viewer", "editor"]},
+            {"name": "role", "type": "str", "required": True,
+             "choices": ["viewer", "editor", "admin"]},
         ],
     )
     ops.register(

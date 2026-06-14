@@ -94,3 +94,37 @@ export interface VaultAccessEntry {
   role: string;
   source: 'owner' | 'workspace_admin' | 'workspace_member' | 'guest';
 }
+
+export type WorkspaceRole = 'owner' | 'admin' | 'member';
+export type VaultMode = 'wiki' | 'static' | 'dynamic';
+
+export interface OverviewMember {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  role: 'admin' | 'member';
+}
+
+export interface OverviewVault {
+  project_id: string;
+  name: string;
+  mode: VaultMode;
+  source_count: number;
+  updated_at: string;
+  archived_at: string | null;
+}
+
+export interface OverviewWorkspace {
+  workspace_id: string;
+  name: string;
+  description: string | null;
+  archived_at: string | null;
+  role: WorkspaceRole;
+  members: OverviewMember[];
+  vaults: OverviewVault[];
+}
+
+export interface WorkspacesOverview {
+  can_create: boolean;
+  workspaces: OverviewWorkspace[];
+}

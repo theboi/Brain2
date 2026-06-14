@@ -173,15 +173,9 @@ class LocalStore:
     # --- projects ---
     def create_project(self, tenant_id: str, project_id: str, name: str, *,
                        workspace_id: str | None = None) -> Project:
-        wid = workspace_id or "default"
+        wid = workspace_id
         now = _now_iso()
         with self.transaction() as cx:
-            # Ensure the target workspace exists (auto-create "default" if needed).
-            cx.execute(
-                "INSERT OR IGNORE INTO workspaces(tenant_id, workspace_id, name, created_at) "
-                "VALUES (?, 'default', 'Default', ?)",
-                (tenant_id, now),
-            )
             try:
                 cx.execute(
                     "INSERT INTO projects(project_id, tenant_id, name, created_at, workspace_id) "
@@ -200,6 +194,7 @@ class LocalStore:
             name=row["name"],
             workspace_id=row["workspace_id"] if "workspace_id" in keys else None,
             vault_path=row["vault_path"] if "vault_path" in keys else None,
+            created_at=row["created_at"] if "created_at" in keys else _now_iso(),
         )
 
     def get_project(self, tenant_id: str, project_id: str) -> Project | None:
@@ -207,6 +202,30 @@ class LocalStore:
             "SELECT * FROM projects WHERE tenant_id=? AND project_id=?",
             (tenant_id, project_id)).fetchone()
         return self._row_to_project(row) if row else None
+
+    def project_meta(self, tenant_id: str, project_id: str) -> dict:
+        """Derived vault metadata for settings/overview surfaces."""
+        prow = self._conn.execute(
+            "SELECT created_at, mode, archived_at FROM projects "
+            "WHERE tenant_id=? AND project_id=?",
+            (tenant_id, project_id)).fetchone()
+        if prow is None:
+            raise NotFound(f"project {project_id!r} not found")
+        cnt = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM sources "
+            "WHERE tenant_id=? AND project_id=? AND status!='deleted'",
+            (tenant_id, project_id)).fetchone()["n"]
+        src_ts = self._conn.execute(
+            "SELECT MAX(updated_at) AS t FROM sources "
+            "WHERE tenant_id=? AND project_id=? AND status!='deleted'",
+            (tenant_id, project_id)).fetchone()["t"]
+        commit_ts = self._conn.execute(
+            "SELECT MAX(created_at) AS t FROM vault_commits WHERE project_id=?",
+            (project_id,)).fetchone()["t"]
+        updated_at = max([v for v in (prow["created_at"], src_ts, commit_ts) if v],
+                         default=prow["created_at"])
+        return {"mode": prow["mode"], "archived_at": prow["archived_at"],
+                "source_count": int(cnt), "updated_at": updated_at}
 
     def list_projects(self, tenant_id: str, *,
                       workspace_id: str | None = None) -> list[Project]:
@@ -225,6 +244,40 @@ class LocalStore:
             cx.execute(
                 "UPDATE projects SET vault_path=? WHERE tenant_id=? AND project_id=?",
                 (vault_path, tenant_id, project_id))
+
+    def set_project_workspace(self, tenant_id: str, project_id: str,
+                              workspace_id: str) -> None:
+        with self.transaction() as cx:
+            cur = cx.execute(
+                "UPDATE projects SET workspace_id=? WHERE tenant_id=? AND project_id=?",
+                (workspace_id, tenant_id, project_id))
+            if cur.rowcount == 0:
+                raise NotFound(f"project {project_id!r} not found")
+
+    def set_project_mode(self, tenant_id: str, project_id: str, mode: str) -> None:
+        with self.transaction() as cx:
+            cur = cx.execute(
+                "UPDATE projects SET mode=? WHERE tenant_id=? AND project_id=?",
+                (mode, tenant_id, project_id))
+            if cur.rowcount == 0:
+                raise NotFound(f"project {project_id!r} not found")
+
+    def rename_project(self, tenant_id: str, project_id: str, name: str) -> None:
+        with self.transaction() as cx:
+            cur = cx.execute(
+                "UPDATE projects SET name=? WHERE tenant_id=? AND project_id=?",
+                (name, tenant_id, project_id))
+            if cur.rowcount == 0:
+                raise NotFound(f"project {project_id!r} not found")
+
+    def set_project_archived(self, tenant_id: str, project_id: str,
+                             archived: bool) -> None:
+        with self.transaction() as cx:
+            cur = cx.execute(
+                "UPDATE projects SET archived_at=? WHERE tenant_id=? AND project_id=?",
+                (_now_iso() if archived else None, tenant_id, project_id))
+            if cur.rowcount == 0:
+                raise NotFound(f"project {project_id!r} not found")
 
     def find_project_by_vault_path(self, abs_path: str) -> Project | None:
         """Return the project whose vault_path is a prefix of abs_path."""
@@ -275,6 +328,36 @@ class LocalStore:
             cur = cx.execute(
                 "UPDATE workspaces SET name=? WHERE tenant_id=? AND workspace_id=?",
                 (name, tenant_id, workspace_id))
+            if cur.rowcount == 0:
+                raise NotFound(f"workspace {workspace_id!r} not found")
+
+    def update_workspace(self, tenant_id: str, workspace_id: str,
+                         name: str | None = None,
+                         description: str | None = None) -> None:
+        sets, vals = [], []
+        if name is not None:
+            sets.append("name=?")
+            vals.append(name)
+        if description is not None:
+            sets.append("description=?")
+            vals.append(description)
+        if not sets:
+            return
+        vals.extend([tenant_id, workspace_id])
+        with self.transaction() as cx:
+            cur = cx.execute(
+                f"UPDATE workspaces SET {', '.join(sets)} "
+                "WHERE tenant_id=? AND workspace_id=?", tuple(vals))
+            if cur.rowcount == 0:
+                raise NotFound(f"workspace {workspace_id!r} not found")
+
+    def set_workspace_archived(self, tenant_id: str, workspace_id: str,
+                               archived: bool) -> None:
+        with self.transaction() as cx:
+            cur = cx.execute(
+                "UPDATE workspaces SET archived_at=? "
+                "WHERE tenant_id=? AND workspace_id=?",
+                (_now_iso() if archived else None, tenant_id, workspace_id))
             if cur.rowcount == 0:
                 raise NotFound(f"workspace {workspace_id!r} not found")
 

@@ -90,13 +90,15 @@ export function useCreateSchedule(projectId: string | null) {
     mutationFn: (vars: {
       op_name: string;
       op_params: object;
-      frequency: 'weekly' | 'monthly' | 'quarterly';
+      frequency?: 'weekly' | 'monthly' | 'quarterly';
+      cron_expr?: string;
     }) =>
       ops('schedules:create', { project_id: projectId, ...vars }, {
         idempotencyKey: genIdempotencyKey(),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.reports(projectId) });
+      qc.invalidateQueries({ queryKey: qk.schedules() });
     },
   });
 }

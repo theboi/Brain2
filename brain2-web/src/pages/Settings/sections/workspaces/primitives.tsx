@@ -12,7 +12,6 @@ import {
 import { createPortal } from 'react-dom';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
-import { WS_PEOPLE } from './mockData';
 
 // ── localStorage-backed state ───────────────────────────────────────────────
 export function useStored<T extends string>(key: string, init: T): [T, (v: T) => void] {
@@ -97,11 +96,11 @@ export function IngMenu({ trigger, width = 240, align = 'left', full = false, ch
 }
 
 // ── Avatar ──────────────────────────────────────────────────────────────────
-export function Avatar({ u, size = 32 }: { u: string; size?: number }) {
-  const p = WS_PEOPLE[u] || { name: u };
+export function Avatar({ u, label, size = 32 }: { u: string; label?: string; size?: number }) {
+  const initial = (label || u || '?')[0].toUpperCase();
   return (
     <span style={{ width: size, height: size, flexShrink: 0, borderRadius: '50%', background: 'var(--surface-2)', color: 'var(--fg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.4, fontWeight: 600 }}>
-      {p.name[0]}
+      {initial}
     </span>
   );
 }
@@ -341,7 +340,7 @@ export function AddPersonBar({ candidates, levelOptions, defaultLevel, onAdd, pl
                 onMouseEnter={() => setActiveIdx(i)}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '7px 8px', border: 'none', borderRadius: 8, background: activeIdx === i ? 'var(--surface-2)' : 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--ui-font)' }}
               >
-                <Avatar u={c.u} size={28} />
+                <Avatar u={c.u} label={c.name} size={28} />
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</span>
                   {c.email && <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.email}</span>}

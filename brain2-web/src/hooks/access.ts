@@ -3,6 +3,8 @@ import { ops } from '@/lib/api';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { VaultAccessEntry } from '@/lib/types';
 
+type GuestRole = 'viewer' | 'editor' | 'admin';
+
 export function useVaultAccess(projectId: string | null) {
   return useQuery({
     queryKey: ['vault-access', projectId],
@@ -15,7 +17,7 @@ export function useVaultAccess(projectId: string | null) {
 export function useAddGuest(projectId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (params: { project_id: string; user_id: string; role: string }) =>
+    mutationFn: (params: { project_id: string; user_id: string; role: GuestRole }) =>
       ops('vault_access:add_guest', params),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['vault-access', projectId] }),
   });
@@ -24,7 +26,7 @@ export function useAddGuest(projectId: string | null) {
 export function useSetGuestRole(projectId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (params: { project_id: string; user_id: string; role: string }) =>
+    mutationFn: (params: { project_id: string; user_id: string; role: GuestRole }) =>
       ops('vault_access:set_guest_role', params),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['vault-access', projectId] }),
   });

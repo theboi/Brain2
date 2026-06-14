@@ -1,17 +1,22 @@
-/*
- * Scheduled runs overlay — visual port of scheduled-overlay.jsx.
- * A multi-day timeline strip that scrolls horizontally beneath a fixed selector
- * lens. The agenda list shows every run currently under the lens. Header date is
- * clickable → calendar to jump to a date. Upcoming-soon runs flash on the
- * timeline. Each row has an on/off switch plus a ⋯ menu (Skip / Delete).
- *
- * Fully interactive against mock React state — wiring to `schedules:list` later.
- */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
-import { SCHEDULES, SCHED_NOW, hhmm, type Schedule, type SchedFormat } from './scheduledMock';
+import { CronBuilder } from '@/components/reports/CronBuilder';
+import {
+  useDeleteSchedule,
+  useRunNow,
+  useScheduleOccurrences,
+  useSetScheduleEnabled,
+  useSkipRun,
+  useUnskipRun,
+  useUpdateSchedule,
+  type OccurrenceRow,
+  type OccurrenceState,
+} from '@/hooks/useSchedules';
+
+type SchedFormat = 'doc' | 'deck' | 'video';
+const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
 // ── Format metadata ───────────────────────────────────────────────────────
 const SO_FMT: Record<SchedFormat, { c: string; s: string; icon: IconName; label: string }> = {
@@ -30,29 +35,38 @@ const INNER_W = DAY_W - DAY_PAD * 2;
 const HOUR_TICKS = [8, 12, 16];
 const SOON_MIN = 180; // a run is "upcoming soon" within this many minutes
 
-// Date model — a window of days around today (Jun 9, 2026 = day 9).
-const RANGE_START_DAY = 4; // Jun 4
-const RANGE_END_DAY = 13; // Jun 13
-const TODAY_DAY = 9; // Jun 9
+// Date model — a rolling window centred on today.
+const WINDOW_DAYS = 19;
+const HALF_WINDOW = Math.floor(WINDOW_DAYS / 2);
 const WD_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WD_MIN = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 interface DayMeta {
-  idx: number; day: number; wd: number; weekday: string; label: string; short: string;
+  idx: number; date: Date; day: number; wd: number; weekday: string; label: string; short: string;
 }
+
+function startOfDay(d: Date): Date {
+  const c = new Date(d);
+  c.setHours(0, 0, 0, 0);
+  return c;
+}
+
+const NOW_DATE = new Date();
+const TODAY_START = startOfDay(NOW_DATE);
+const WINDOW_START_DATE = new Date(TODAY_START);
+WINDOW_START_DATE.setDate(WINDOW_START_DATE.getDate() - HALF_WINDOW);
 
 const DAYS: DayMeta[] = [];
-for (let d = RANGE_START_DAY; d <= RANGE_END_DAY; d++) {
-  const date = new Date(2026, 5, d);
+for (let i = 0; i < WINDOW_DAYS; i++) {
+  const date = new Date(WINDOW_START_DATE);
+  date.setDate(date.getDate() + i);
   DAYS.push({
-    idx: DAYS.length, day: d, wd: date.getDay(), weekday: WD_SHORT[date.getDay()],
-    label: `${WD_SHORT[date.getDay()]} Jun ${d}`, short: `Jun ${d}`,
+    idx: i, date, day: date.getDate(), wd: date.getDay(), weekday: WD_SHORT[date.getDay()],
+    label: `${WD_SHORT[date.getDay()]} ${MONTH_SHORT[date.getMonth()]} ${date.getDate()}`,
+    short: `${MONTH_SHORT[date.getMonth()]} ${date.getDate()}`,
   });
 }
-const TODAY_IDX = TODAY_DAY - RANGE_START_DAY;
-const NOW_ABS = TODAY_IDX * 1440 + SCHED_NOW;
-const TOTAL_W = DAYS.length * DAY_W;
-
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 const xOf = (dayIndex: number, time: number) =>
   dayIndex * DAY_W + DAY_PAD + clamp01((time - WH_START) / WH_SPAN) * INNER_W;
@@ -62,29 +76,20 @@ const xToMoment = (x: number) => {
   const minutes = WH_START + clamp01((within - DAY_PAD) / INNER_W) * WH_SPAN;
   return { dayIndex, minutes: Math.round(minutes) };
 };
+const TODAY_IDX = HALF_WINDOW;
+const SCHED_NOW = NOW_DATE.getHours() * 60 + NOW_DATE.getMinutes();
+const NOW_ABS = TODAY_IDX * 1440 + SCHED_NOW;
+const TOTAL_W = DAYS.length * DAY_W;
 const NOW_X = xOf(TODAY_IDX, SCHED_NOW);
 
-// Parse a cron expr → { dom, dow } fields (m h dom mon dow).
-function cronFields(expr: string) {
-  const p = expr.split(/\s+/);
-  return { dom: p[2], dow: p[4] || '*' };
-}
-// Does a schedule fire on this calendar day?
-function fires(sched: Schedule, dayMeta: DayMeta) {
-  const { dom, dow } = cronFields(sched.cronExpr);
-  if (sched.cadenceId === 'daily') return true;
-  if (sched.cadenceId === 'weekdays') return dayMeta.wd >= 1 && dayMeta.wd <= 5;
-  if (dow && dow !== '*') {
-    const base = parseInt(dow, 10);
-    if (!isNaN(base)) return dayMeta.wd === base;
-  }
-  if (dom && dom !== '*') return dayMeta.day === parseInt(dom, 10);
-  return false;
-}
+const WINDOW_START_ISO = WINDOW_START_DATE.toISOString();
+const WINDOW_END_DATE = new Date(WINDOW_START_DATE);
+WINDOW_END_DATE.setDate(WINDOW_END_DATE.getDate() + WINDOW_DAYS);
+const WINDOW_END_ISO = WINDOW_END_DATE.toISOString();
 
 interface Occurrence {
   key: string;
-  sched: Schedule;
+  row: OccurrenceRow;
   dayIndex: number;
   day: DayMeta;
   time: number;
@@ -92,22 +97,36 @@ interface Occurrence {
   x: number;
 }
 
-// Build the flat list of run occurrences across every day in range.
-function buildOccurrences(schedules: Schedule[]): Occurrence[] {
+function buildOccurrences(rows: OccurrenceRow[]): Occurrence[] {
   const out: Occurrence[] = [];
-  DAYS.forEach((dm) => {
-    schedules.forEach((s) => {
-      if (!fires(s, dm)) return;
-      out.push({
-        key: `${s.id}@${dm.day}`, sched: s, dayIndex: dm.idx, day: dm,
-        time: s.time, absMin: dm.idx * 1440 + s.time, x: xOf(dm.idx, s.time),
-      });
+  rows.forEach((r) => {
+    const dt = new Date(r.run_at);
+    const dayStart = startOfDay(dt);
+    const dayIndex = Math.round((dayStart.getTime() - WINDOW_START_DATE.getTime()) / 86400000);
+    if (dayIndex < 0 || dayIndex >= DAYS.length) return;
+    const time = dt.getHours() * 60 + dt.getMinutes();
+    out.push({
+      key: `${r.schedule_id}@${r.run_at}`,
+      row: r,
+      dayIndex,
+      day: DAYS[dayIndex],
+      time,
+      absMin: dayIndex * 1440 + time,
+      x: xOf(dayIndex, time),
     });
   });
   return out.sort((a, b) => a.absMin - b.absMin);
 }
 
 interface Status { kind: 'ran' | 'off' | 'skipped' | 'queued'; label: string; icon: IconName; c: string }
+
+const STATUS_BY_STATE: Record<OccurrenceState, Status> = {
+  ran: { kind: 'ran', label: 'Ran', icon: 'check', c: 'var(--fg-faint)' },
+  off: { kind: 'off', label: 'Off', icon: 'pause', c: 'var(--fg-faint)' },
+  skipped: { kind: 'skipped', label: 'Skipped', icon: 'pause', c: 'var(--warning)' },
+  queued: { kind: 'queued', label: 'Queued', icon: 'clock', c: 'var(--fg-muted)' },
+};
+const statusOf = (o: Occurrence): Status => STATUS_BY_STATE[o.row.state];
 
 // ── Small atoms ───────────────────────────────────────────────────────────
 function SchedToggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
@@ -132,8 +151,8 @@ function soBtn(extra?: React.CSSProperties): React.CSSProperties {
   };
 }
 
-function CadenceChip({ sched }: { sched: Schedule }) {
-  const custom = sched.cadenceId === 'custom';
+function CadenceChip({ row }: { row: OccurrenceRow }) {
+  const custom = row.cadence_detail.startsWith('Custom');
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 600,
@@ -141,7 +160,7 @@ function CadenceChip({ sched }: { sched: Schedule }) {
       border: '1px solid var(--border)', borderRadius: 6, padding: '2px 7px', whiteSpace: 'nowrap', flexShrink: 0,
     }}>
       <Icon name={custom ? 'sliders' : 'repeat'} size={10} color="var(--fg-faint)" />
-      {sched.cadenceDetail}
+      {row.cadence_detail}
     </span>
   );
 }
@@ -168,8 +187,8 @@ function Pop({ onClose, style, children }: { onClose: () => void; style?: React.
 // ── Calendar popover (day → month → year drill-down) ─────────────────────────
 const CAL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const CAL_MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const DATA_YEAR = 2026;
-const DATA_MONTH = 5; // June — the only month with schedulable days
+const DATA_YEAR = TODAY_START.getFullYear();
+const DATA_MONTH = TODAY_START.getMonth();
 
 function CalendarPopover({ focusDay, onPick, onClose }: { focusDay: number; onPick: (dayIndex: number) => void; onClose: () => void }) {
   const [mode, setMode] = useState<'days' | 'months' | 'years'>('days');
@@ -177,8 +196,16 @@ function CalendarPopover({ focusDay, onPick, onClose }: { focusDay: number; onPi
   const [vMon, setVMon] = useState(DATA_MONTH);
   const [yearBase, setYearBase] = useState(DATA_YEAR - 4);
 
-  const isDataMonth = vYear === DATA_YEAR && vMon === DATA_MONTH;
-  const inRange = (d: number) => isDataMonth && d >= RANGE_START_DAY && d <= RANGE_END_DAY;
+  const dayIndexFor = (d: number): number => {
+    const target = new Date(vYear, vMon, d);
+    target.setHours(0, 0, 0, 0);
+    return Math.round((target.getTime() - WINDOW_START_DATE.getTime()) / 86400000);
+  };
+  const inRange = (d: number) => {
+    const idx = dayIndexFor(d);
+    return idx >= 0 && idx < DAYS.length;
+  };
+  const isDataMonth = DAYS.some((dm) => dm.date.getFullYear() === vYear && dm.date.getMonth() === vMon);
 
   const firstDow = new Date(vYear, vMon, 1).getDay();
   const daysInMonth = new Date(vYear, vMon + 1, 0).getDate();
@@ -228,13 +255,13 @@ function CalendarPopover({ focusDay, onPick, onClose }: { focusDay: number; onPi
             {cells.map((d, i) => {
               if (d === null) return <span key={`b${i}`} />;
               const ok = inRange(d);
-              const today = isDataMonth && d === TODAY_DAY;
+              const today = vYear === TODAY_START.getFullYear() && vMon === TODAY_START.getMonth() && d === TODAY_START.getDate();
               const sel = isDataMonth && d === focusDay;
               return (
                 <button
                   key={d}
                   disabled={!ok}
-                  onClick={() => { if (ok) { onPick(d - RANGE_START_DAY); onClose(); } }}
+                  onClick={() => { if (ok) { onPick(dayIndexFor(d)); onClose(); } }}
                   style={{
                     position: 'relative', height: 32, borderRadius: 7, border: 'none', cursor: ok ? 'pointer' : 'default',
                     fontFamily: 'var(--mono-font)', fontSize: 12.5, fontWeight: today ? 700 : 500,
@@ -291,7 +318,7 @@ function CalendarPopover({ focusDay, onPick, onClose }: { focusDay: number; onPi
       )}
 
       <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)', textAlign: 'center' }}>
-        Scheduling window · Jun 4 – Jun 13
+        Scheduling window · {DAYS[0].short} – {DAYS[DAYS.length - 1].short}
       </div>
     </Pop>
   );
@@ -458,14 +485,14 @@ function TimelineStrip({ occ, nextKey, soonKeys, scrollLeft, setScrollLeft, lens
 
             {/* Run markers */}
             {occ.map((o) => {
-              const f = SO_FMT[o.sched.format];
+              const f = SO_FMT[o.row.format];
               const st = statusOf(o);
               const soon = soonKeys.has(o.key);
               const isNext = o.key === nextKey;
               const grey = st.kind === 'off' || st.kind === 'skipped';
               const size = (isNext || soon) ? 13 : 10;
               return (
-                <div key={o.key} title={`${dm_label(o)} ${hhmm(o.time)} · ${o.sched.title}`} style={{ position: 'absolute', bottom: 24, left: o.x, transform: 'translateX(-50%)', zIndex: 3, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <div key={o.key} title={`${dm_label(o)} ${hhmm(o.time)} · ${o.row.title}`} style={{ position: 'absolute', bottom: 24, left: o.x, transform: 'translateX(-50%)', zIndex: 3, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <span style={{ position: 'relative', width: size, height: size, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {soon && <span className="b2-flash" style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: f.c }} />}
                     <span style={{ position: 'relative', width: size, height: size, borderRadius: '50%', border: '2px solid var(--surface)', background: grey ? 'var(--surface-3)' : f.c, opacity: grey ? 0.55 : st.kind === 'ran' ? 0.42 : 1, boxShadow: isNext && !soon ? `0 0 0 4px ${f.s}` : 'none' }} />
@@ -507,10 +534,11 @@ function TimelineStrip({ occ, nextKey, soonKeys, scrollLeft, setScrollLeft, lens
 // ── Agenda row ────────────────────────────────────────────────────────────
 function AgendaRow({ occ, status, isNext, onToggle, onEdit, onRunNow, onSkip, onUnskip, onDelete, border }: {
   occ: Occurrence; status: Status; isNext: boolean;
-  onToggle: (id: string) => void; onEdit: (id: string) => void; onRunNow: (key: string) => void;
-  onSkip: (key: string) => void; onUnskip: (key: string) => void; onDelete: (id: string) => void; border: boolean;
+  onToggle: (scheduleId: string) => void; onEdit: (scheduleId: string) => void;
+  onRunNow: (o: Occurrence) => void; onSkip: (o: Occurrence) => void;
+  onUnskip: (o: Occurrence) => void; onDelete: (scheduleId: string) => void; border: boolean;
 }) {
-  const f = SO_FMT[occ.sched.format];
+  const f = SO_FMT[occ.row.format];
   const dim = status.kind === 'ran' || status.kind === 'off' || status.kind === 'skipped';
   const struck = status.kind === 'skipped';
 
@@ -527,21 +555,21 @@ function AgendaRow({ occ, status, isNext, onToggle, onEdit, onRunNow, onSkip, on
         <Icon name={f.icon} size={15} />
       </span>
       <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: struck ? 'line-through' : 'none' }}>{occ.sched.title}</span>
+        <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: struck ? 'line-through' : 'none' }}>{occ.row.title}</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 3, fontSize: 11, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)' }}>
-          <Icon name="sparkles" size={10} color="var(--fg-faint)" /> {occ.sched.runner}
-          <span style={{ color: 'var(--border-strong)' }}>·</span> {occ.sched.sources} sources
+          <Icon name="sparkles" size={10} color="var(--fg-faint)" /> {occ.row.runner ?? occ.row.format}
+          <span style={{ color: 'var(--border-strong)' }}>·</span> {occ.row.sources ?? 0} sources
         </span>
       </span>
-      <CadenceChip sched={occ.sched} />
+      <CadenceChip row={occ.row} />
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, width: 70, fontSize: 11, fontWeight: 600, fontFamily: 'var(--mono-font)', color: status.c }}>
         <Icon name={status.icon} size={12} color={status.c} /> {status.label}
       </span>
-      <SchedToggle checked={occ.sched.enabled} onChange={() => onToggle(occ.sched.id)} />
+      <SchedToggle checked={occ.row.enabled} onChange={() => onToggle(occ.row.schedule_id)} />
       <RowMenu
         isSkipped={status.kind === 'skipped'} isPast={status.kind === 'ran'}
-        onEdit={() => onEdit(occ.sched.id)} onRunNow={() => onRunNow(occ.key)}
-        onSkip={() => onSkip(occ.key)} onUnskip={() => onUnskip(occ.key)} onDelete={() => onDelete(occ.sched.id)}
+        onEdit={() => onEdit(occ.row.schedule_id)} onRunNow={() => onRunNow(occ)}
+        onSkip={() => onSkip(occ)} onUnskip={() => onUnskip(occ)} onDelete={() => onDelete(occ.row.schedule_id)}
       />
     </div>
   );
@@ -549,23 +577,27 @@ function AgendaRow({ occ, status, isNext, onToggle, onEdit, onRunNow, onSkip, on
 
 // ── Main overlay ──────────────────────────────────────────────────────────
 export function ScheduledRunsOverlay({ onClose }: { onClose: () => void }) {
-  const [schedules, setSchedules] = useState<Schedule[]>(SCHEDULES);
-  const [skipped, setSkipped] = useState<Set<string>>(() => new Set());
-  const [deleted, setDeleted] = useState<Set<string>>(() => new Set());
+  const occQuery = useScheduleOccurrences(WINDOW_START_ISO, WINDOW_END_ISO);
+  const setEnabled = useSetScheduleEnabled();
+  const deleteSchedule = useDeleteSchedule();
+  const skipRun = useSkipRun();
+  const unskipRun = useUnskipRun();
+  const runNow = useRunNow();
+  const updateSchedule = useUpdateSchedule();
+
   const [scrollLeft, setScrollLeft] = useState(Math.max(0, NOW_X - 360));
   const [lens, setLens] = useState<LensState>(null);
   const [cw, setCw] = useState(0);
   const [calOpen, setCalOpen] = useState(false);
   const [notice, setNotice] = useState<{ icon: IconName; text: string } | null>(null);
+  const [editing, setEditing] = useState<{ scheduleId: string; title: string; cron: string } | null>(null);
 
-  // Transient confirmation toast (Edit / Run now).
   useEffect(() => {
     if (!notice) return;
     const t = setTimeout(() => setNotice(null), 2400);
     return () => clearTimeout(t);
   }, [notice]);
 
-  // Initialise lens + centre "now" once the container width is known.
   useEffect(() => {
     if (cw > 0 && lens === null) {
       const w = Math.min(340, Math.max(220, cw * 0.42));
@@ -575,33 +607,22 @@ export function ScheduledRunsOverlay({ onClose }: { onClose: () => void }) {
     }
   }, [cw, lens]);
 
-  const occ = useMemo(() => {
-    const all = buildOccurrences(schedules);
-    return all.filter((o) => !(deleted.has(o.sched.id) && o.absMin > NOW_ABS));
-  }, [schedules, deleted]);
-
-  // Status resolver for an occurrence.
-  const statusOf = (o: Occurrence): Status => {
-    if (o.absMin <= NOW_ABS) return { kind: 'ran', label: 'Ran', icon: 'check', c: 'var(--fg-faint)' };
-    if (!o.sched.enabled) return { kind: 'off', label: 'Off', icon: 'pause', c: 'var(--fg-faint)' };
-    if (skipped.has(o.key)) return { kind: 'skipped', label: 'Skipped', icon: 'pause', c: 'var(--warning)' };
-    return { kind: 'queued', label: 'Queued', icon: 'clock', c: 'var(--fg-muted)' };
-  };
+  const rows = occQuery.data ?? [];
+  const occ = useMemo(() => buildOccurrences(rows), [rows]);
 
   const nextKey = useMemo(() => {
-    const c = occ.filter((o) => o.sched.enabled && o.absMin > NOW_ABS && !skipped.has(o.key));
+    const c = occ.filter((o) => o.row.state === 'queued' && o.absMin > NOW_ABS);
     return c.length ? c[0].key : null;
-  }, [occ, skipped]);
+  }, [occ]);
 
   const soonKeys = useMemo(() => {
     const s = new Set<string>();
     occ.forEach((o) => {
-      if (o.sched.enabled && !skipped.has(o.key) && o.absMin > NOW_ABS && (o.absMin - NOW_ABS) <= SOON_MIN) s.add(o.key);
+      if (o.row.state === 'queued' && o.absMin > NOW_ABS && (o.absMin - NOW_ABS) <= SOON_MIN) s.add(o.key);
     });
     return s;
-  }, [occ, skipped]);
+  }, [occ]);
 
-  // Window under the lens.
   const lensReady = lens !== null && cw > 0;
   const loX = lensReady && lens ? scrollLeft + lens[0] : 0;
   const hiX = lensReady && lens ? scrollLeft + lens[1] : TOTAL_W;
@@ -614,26 +635,39 @@ export function ScheduledRunsOverlay({ onClose }: { onClose: () => void }) {
     ? `${DAYS[mLo.dayIndex].label} · ${hhmm(mLo.minutes)}–${hhmm(mHi.minutes)}`
     : `${DAYS[mLo.dayIndex].short} ${hhmm(mLo.minutes)} – ${DAYS[mHi.dayIndex].short} ${hhmm(mHi.minutes)}`;
 
-  // Counts.
-  const upcomingN = occ.filter((o) => o.sched.enabled && o.absMin > NOW_ABS && !skipped.has(o.key)).length;
-  const skippedN = skipped.size;
-  const activeN = schedules.filter((s) => s.enabled && !deleted.has(s.id)).length;
+  const upcomingN = occ.filter((o) => o.row.state === 'queued' && o.absMin > NOW_ABS).length;
+  const skippedN = occ.filter((o) => o.row.state === 'skipped').length;
+  const activeN = new Set(occ.filter((o) => o.row.enabled).map((o) => o.row.schedule_id)).size;
 
-  // Actions.
-  const toggleEnabled = (id: string) => setSchedules((ss) => ss.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)));
-  const skip = (key: string) => setSkipped((s) => new Set(s).add(key));
-  const unskip = (key: string) => setSkipped((s) => { const n = new Set(s); n.delete(key); return n; });
-  const del = (id: string) => setDeleted((d) => new Set(d).add(id));
-  const editSched = (id: string) => { const s = schedules.find((x) => x.id === id); setNotice({ icon: 'pencil', text: `Opening editor for “${s ? s.title : 'schedule'}”…` }); };
-  const runNow = (key: string) => { const o = occ.find((x) => x.key === key); setNotice({ icon: 'zap', text: `Queued “${o ? o.sched.title : 'run'}” to run now` }); };
+  const toggleEnabled = (scheduleId: string) => {
+    const cur = occ.find((o) => o.row.schedule_id === scheduleId)?.row.enabled ?? true;
+    setEnabled.mutate({ schedule_id: scheduleId, enabled: !cur });
+  };
+  const skip = (o: Occurrence) => skipRun.mutate({ schedule_id: o.row.schedule_id, run_at: o.row.run_at });
+  const unskip = (o: Occurrence) => unskipRun.mutate({ schedule_id: o.row.schedule_id, run_at: o.row.run_at });
+  const del = (scheduleId: string) => deleteSchedule.mutate({ schedule_id: scheduleId });
+  const doRunNow = (o: Occurrence) => {
+    runNow.mutate({ schedule_id: o.row.schedule_id });
+    setNotice({ icon: 'zap', text: `Queued "${o.row.title}" to run now` });
+  };
+  const editSched = (scheduleId: string) => {
+    const o = occ.find((x) => x.row.schedule_id === scheduleId);
+    if (!o) return;
+    setEditing({ scheduleId, title: o.row.title, cron: o.row.cron_expr });
+  };
+  const saveEdit = () => {
+    if (!editing) return;
+    updateSchedule.mutate(
+      { schedule_id: editing.scheduleId, cron_expr: editing.cron },
+      { onSuccess: () => { setEditing(null); setNotice({ icon: 'check', text: 'Schedule updated' }); } },
+    );
+  };
 
-  // Scroll helpers (clamp to content).
   const centreLens = () => (lensReady && lens ? (lens[0] + lens[1]) / 2 : cw / 2);
   const scrollTo = (x: number) => setScrollLeft(Math.max(0, Math.min(TOTAL_W - cw, x)));
   const nudgeDay = (dir: number) => scrollTo(scrollLeft + dir * DAY_W);
   const jumpToDay = (dayIndex: number) => scrollTo(dayIndex * DAY_W + DAY_W / 2 - centreLens());
 
-  // Group visible occurrences by day for the agenda.
   const groups: { dayIndex: number; day: DayMeta; items: Occurrence[] }[] = [];
   visible.forEach((o) => {
     const last = groups[groups.length - 1];
@@ -671,7 +705,7 @@ export function ScheduledRunsOverlay({ onClose }: { onClose: () => void }) {
               <Icon name="chevDown" size={13} color="var(--fg-muted)" />
             </button>
             <button onClick={() => nudgeDay(1)} style={soBtn()}><Icon name="chevRight" size={15} color="var(--fg-muted)" /></button>
-            {calOpen && <CalendarPopover focusDay={focusDayMeta ? focusDayMeta.day : TODAY_DAY} onPick={jumpToDay} onClose={() => setCalOpen(false)} />}
+            {calOpen && <CalendarPopover focusDay={focusDayMeta ? focusDayMeta.day : TODAY_START.getDate()} onPick={jumpToDay} onClose={() => setCalOpen(false)} />}
           </div>
           <button onClick={onClose} style={soBtn()}><Icon name="x" size={16} color="var(--fg-muted)" /></button>
         </div>
@@ -699,9 +733,17 @@ export function ScheduledRunsOverlay({ onClose }: { onClose: () => void }) {
 
         {/* Agenda list */}
         <div style={{ overflowY: 'auto', overflowX: 'hidden', padding: '2px 22px 8px', flex: 1 }}>
-          {visible.length === 0
-            ? <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-muted)', fontSize: 13 }}>No runs under the selector. Scroll the timeline or widen the window.</div>
-            : groups.map((g) => (
+          {occQuery.isPending ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-muted)', fontSize: 13 }}>Loading scheduled runs…</div>
+          ) : occQuery.isError ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-muted)', fontSize: 13 }}>
+              Couldn't load scheduled runs.{' '}
+              <button onClick={() => occQuery.refetch()} style={{ border: 'none', background: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: 'var(--ui-font)', fontSize: 13, fontWeight: 600 }}>Retry</button>
+            </div>
+          ) : visible.length === 0 ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-muted)', fontSize: 13 }}>No runs under the selector. Scroll the timeline or widen the window.</div>
+          ) : (
+            groups.map((g) => (
               <div key={g.dayIndex}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 0 6px' }}>
                   <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: g.dayIndex === TODAY_IDX ? 'var(--accent)' : 'var(--fg-faint)' }}>
@@ -712,11 +754,12 @@ export function ScheduledRunsOverlay({ onClose }: { onClose: () => void }) {
                 {g.items.map((o, i) => (
                   <AgendaRow
                     key={o.key} occ={o} status={statusOf(o)} isNext={o.key === nextKey}
-                    onToggle={toggleEnabled} onEdit={editSched} onRunNow={runNow} onSkip={skip} onUnskip={unskip} onDelete={del} border={i > 0}
+                    onToggle={toggleEnabled} onEdit={editSched} onRunNow={doRunNow} onSkip={skip} onUnskip={unskip} onDelete={del} border={i > 0}
                   />
                 ))}
               </div>
-            ))}
+            ))
+          )}
         </div>
 
         {/* Footer */}
@@ -733,6 +776,25 @@ export function ScheduledRunsOverlay({ onClose }: { onClose: () => void }) {
             Add new runs from the report page
           </span>
         </div>
+
+        {editing && (
+          <div onClick={() => setEditing(null)} style={{ position: 'absolute', inset: 0, zIndex: 30, background: 'rgba(8,10,13,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 14, padding: 20, boxShadow: '0 24px 60px rgba(0,0,0,0.5)' }}>
+              <div style={{ fontSize: 14.5, fontWeight: 700, fontFamily: 'var(--display-font)', letterSpacing: 'var(--display-track)', color: 'var(--fg)', marginBottom: 4 }}>Edit schedule</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 16 }}>{editing.title}</div>
+              <CronBuilder value={editing.cron} onChange={(cron) => setEditing((e) => (e ? { ...e, cron } : e))} />
+              {updateSchedule.isError && (
+                <div style={{ marginTop: 12, fontSize: 12, color: 'var(--destructive)' }}>Could not save this schedule.</div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+                <button onClick={() => setEditing(null)} style={{ height: 34, padding: '0 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg)', cursor: 'pointer', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600 }}>Cancel</button>
+                <button onClick={saveEdit} disabled={updateSchedule.isPending} style={{ height: 34, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, opacity: updateSchedule.isPending ? 0.6 : 1 }}>
+                  {updateSchedule.isPending ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Transient action toast */}
         {notice && (

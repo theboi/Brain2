@@ -12,14 +12,16 @@ import { useMe } from '@/hooks/me';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import { usePersona } from '@/hooks/usePersona';
 import { useAgents, useCreateSchedule, useGenerateReport, useReports } from '@/hooks/useReports';
+import { useSchedules } from '@/hooks/useSchedules';
+import { CronBuilder } from '@/components/reports/CronBuilder';
+import { buildCron, cadenceLabel } from '@/lib/cron';
 import { parsePersona } from '@/lib/persona';
 import { HistoryOverlay } from './HistoryOverlay';
 import { ScheduledRunsOverlay } from './ScheduledRunsOverlay';
-import { SCHEDULES } from './scheduledMock';
 
 type ReportFormatId = 'doc' | 'deck' | 'video';
-type ScheduleId = 'oneoff' | 'weekly' | 'monthly' | 'quarterly';
-type RunScheduleId = 'now' | 'weekly' | 'monthly' | 'quarterly';
+type ScheduleId = 'oneoff' | 'weekly' | 'monthly' | 'quarterly' | 'custom';
+type RunScheduleId = 'now' | 'weekly' | 'monthly' | 'quarterly' | 'custom';
 type ReportTone = 'accent' | 'success' | 'warning' | 'muted' | 'destructive';
 
 interface ReportFormat {
@@ -111,6 +113,7 @@ const SCHEDULE_OPTIONS = [
   { id: 'weekly' as const, label: 'Every week', sub: 'Mondays · 9:00', icon: 'calendar' as IconName },
   { id: 'monthly' as const, label: 'Every month', sub: '1st · 9:00', icon: 'calendar' as IconName },
   { id: 'quarterly' as const, label: 'Every quarter', sub: 'start of quarter', icon: 'calendar' as IconName },
+  { id: 'custom' as const, label: 'Custom cron', sub: 'pick a cadence + time', icon: 'sliders' as IconName },
 ];
 
 const RUN_SCHEDULE_OPTIONS = [
@@ -118,6 +121,7 @@ const RUN_SCHEDULE_OPTIONS = [
   { id: 'weekly' as const, label: 'Every week', sub: 'Mondays · 9:00', icon: 'calendar' as IconName },
   { id: 'monthly' as const, label: 'Every month', sub: '1st · 9:00', icon: 'calendar' as IconName },
   { id: 'quarterly' as const, label: 'Every quarter', sub: 'start of quarter', icon: 'calendar' as IconName },
+  { id: 'custom' as const, label: 'Custom cron', sub: 'pick a cadence + time', icon: 'sliders' as IconName },
 ];
 
 const REPORT_PARAMS: ReportParam[] = [
@@ -333,11 +337,17 @@ function PersonaCrest({ size = 26, pulse = false }: { size?: number; pulse?: boo
   );
 }
 
-function ScheduleDropdown({ value, onChange }: { value: ScheduleId; onChange: (value: ScheduleId) => void }) {
+function ScheduleDropdown({ value, onChange, cron, onCronChange }: {
+  value: ScheduleId;
+  onChange: (value: ScheduleId) => void;
+  cron: string;
+  onCronChange: (cron: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const opt = scheduleById(value);
   const active = value !== 'oneoff';
+  const label = value === 'custom' ? cadenceLabel(cron) : opt.label;
 
   return (
     <div style={{ position: 'relative', display: 'inline-flex' }}>
@@ -353,18 +363,18 @@ function ScheduleDropdown({ value, onChange }: { value: ScheduleId; onChange: (v
       >
         <Icon name={opt.icon} size={14} color={active ? 'var(--accent)' : 'var(--fg-muted)'} />
         <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: active ? 'var(--accent)' : 'var(--fg-faint)' }}>Schedule</span>
-        <span>{opt.label}</span>
+        <span>{label}</span>
         <Icon name="chevDown" size={12} color={active ? 'var(--accent)' : 'var(--fg-muted)'} />
       </button>
       {open && (
-        <Popover onClose={() => setOpen(false)} anchorRef={triggerRef} placement="bottom-end" style={{ width: 248, padding: 6 }}>
+        <Popover onClose={() => setOpen(false)} anchorRef={triggerRef} placement="bottom-end" style={{ width: 296, padding: 6 }}>
           <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '6px 8px 4px' }}>Schedule this report for...</div>
           {SCHEDULE_OPTIONS.map((o) => {
             const on = o.id === value;
             return (
               <button
                 key={o.id}
-                onClick={() => { onChange(o.id); setOpen(false); }}
+                onClick={() => { onChange(o.id); if (o.id !== 'custom') setOpen(false); }}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: 8, border: 'none', borderRadius: 8, background: on ? 'var(--accent-soft)' : 'transparent', cursor: 'pointer', fontFamily: 'var(--ui-font)' }}
               >
                 <span style={{ width: 28, height: 28, borderRadius: 7, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: on ? 'var(--surface)' : 'var(--surface-2)', color: on ? 'var(--accent)' : 'var(--fg-muted)' }}>
@@ -378,6 +388,11 @@ function ScheduleDropdown({ value, onChange }: { value: ScheduleId; onChange: (v
               </button>
             );
           })}
+          {value === 'custom' && (
+            <div style={{ padding: '8px 8px 4px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
+              <CronBuilder value={cron} onChange={onCronChange} />
+            </div>
+          )}
         </Popover>
       )}
     </div>
@@ -642,7 +657,12 @@ function AgentSelect({ value, onChange }: { value: string; onChange: (value: str
   );
 }
 
-function RunScheduleSelect({ value, onChange }: { value: RunScheduleId; onChange: (value: RunScheduleId) => void }) {
+function RunScheduleSelect({ value, onChange, cron, onCronChange }: {
+  value: RunScheduleId;
+  onChange: (value: RunScheduleId) => void;
+  cron: string;
+  onCronChange: (cron: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const current = runScheduleById(value);
@@ -663,14 +683,14 @@ function RunScheduleSelect({ value, onChange }: { value: RunScheduleId; onChange
         <Icon name="chevDown" size={13} color={active ? 'var(--accent)' : 'var(--fg-muted)'} />
       </button>
       {open && (
-        <Popover onClose={() => setOpen(false)} anchorRef={triggerRef} placement="bottom-start" style={{ width: 250, padding: 6 }}>
+        <Popover onClose={() => setOpen(false)} anchorRef={triggerRef} placement="bottom-start" style={{ width: 296, padding: 6 }}>
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', padding: '6px 8px 4px' }}>Run this report...</div>
           {RUN_SCHEDULE_OPTIONS.map((option) => {
             const on = option.id === value;
             return (
               <button
                 key={option.id}
-                onClick={() => { onChange(option.id); setOpen(false); }}
+                onClick={() => { onChange(option.id); if (option.id !== 'custom') setOpen(false); }}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: 8, border: 'none', borderRadius: 8, background: on ? 'var(--accent-soft)' : 'transparent', cursor: 'pointer', fontFamily: 'var(--ui-font)' }}
               >
                 <span style={{ width: 28, height: 28, borderRadius: 7, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: on ? 'var(--surface)' : 'var(--surface-2)', color: on ? 'var(--accent)' : 'var(--fg-muted)' }}>
@@ -684,15 +704,21 @@ function RunScheduleSelect({ value, onChange }: { value: RunScheduleId; onChange
               </button>
             );
           })}
+          {value === 'custom' && (
+            <div style={{ padding: '8px 8px 4px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
+              <CronBuilder value={cron} onChange={onCronChange} />
+            </div>
+          )}
         </Popover>
       )}
     </div>
   );
 }
 
-function GenerateOverlay({ action, schedule, projectId, onClose }: {
+function GenerateOverlay({ action, schedule, initialCron, projectId, onClose }: {
   action: ReportAction;
   schedule: ScheduleId;
+  initialCron: string;
   projectId: string | null;
   onClose: () => void;
 }) {
@@ -702,6 +728,7 @@ function GenerateOverlay({ action, schedule, projectId, onClose }: {
   const [values, setValues] = useState(action.initial);
   const [agent, setAgent] = useState(action.runner);
   const [runSchedule, setRunSchedule] = useState<RunScheduleId>(schedule === 'oneoff' ? 'now' : schedule);
+  const [cron, setCron] = useState<string>(initialCron);
   const [override, setOverride] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [page, setPage] = useState(0);
@@ -735,6 +762,12 @@ function GenerateOverlay({ action, schedule, projectId, onClose }: {
     };
     if (runSchedule === 'now') {
       generate.mutate(opParams, handlers);
+    } else if (runSchedule === 'custom') {
+      createSchedule.mutate({
+        op_name: 'reports:generate',
+        op_params: opParams,
+        cron_expr: cron,
+      }, handlers);
     } else {
       createSchedule.mutate({
         op_name: 'reports:generate',
@@ -816,7 +849,7 @@ function GenerateOverlay({ action, schedule, projectId, onClose }: {
             </div>
             <div style={{ minWidth: 180 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-faint)', marginBottom: 10 }}>Schedule</div>
-              <RunScheduleSelect value={runSchedule} onChange={setRunSchedule} />
+              <RunScheduleSelect value={runSchedule} onChange={setRunSchedule} cron={cron} onCronChange={setCron} />
             </div>
           </div>
           <div>
@@ -855,16 +888,19 @@ export function ReportsPage() {
   const displayName = me?.display_name?.trim() || 'you';
   const firstName = displayName.split(/\s+/)[0];
   const { data: recentReports = [] } = useReports(projectId);
+  const { data: schedules = [] } = useSchedules();
   const [schedule, setSchedule] = useState<ScheduleId>('oneoff');
+  const [headerCron, setHeaderCron] = useState<string>(() => buildCron('weekly', 9 * 60));
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scheduledOpen, setScheduledOpen] = useState(false);
-  const [generateAction, setGenerateAction] = useState<{ action: ReportAction; schedule: ScheduleId } | null>(null);
-  const activeScheduleCount = SCHEDULES.filter((s) => s.enabled).length;
+  const [generateAction, setGenerateAction] = useState<{ action: ReportAction; schedule: ScheduleId; cron: string } | null>(null);
+  const activeScheduleCount = schedules.filter((s) => Boolean(s.enabled)).length;
 
   const scheduled = schedule !== 'oneoff';
   const currentSchedule = scheduleById(schedule);
-  const openGenerate = (action: ReportAction, actionSchedule: ScheduleId) => setGenerateAction({ action, schedule: actionSchedule });
+  const openGenerate = (action: ReportAction, actionSchedule: ScheduleId) =>
+    setGenerateAction({ action, schedule: actionSchedule, cron: headerCron });
 
   return (
     <>
@@ -885,7 +921,7 @@ export function ReportsPage() {
                   Scheduled runs
                   <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--mono-font)', background: 'var(--accent-soft)', color: 'var(--accent)' }}>{activeScheduleCount}</span>
                 </button>
-                <ScheduleDropdown value={schedule} onChange={setSchedule} />
+                <ScheduleDropdown value={schedule} onChange={setSchedule} cron={headerCron} onCronChange={setHeaderCron} />
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 12 }}>
@@ -994,6 +1030,7 @@ export function ReportsPage() {
         <GenerateOverlay
           action={generateAction.action}
           schedule={generateAction.schedule}
+          initialCron={generateAction.cron}
           projectId={projectId}
           onClose={() => setGenerateAction(null)}
         />

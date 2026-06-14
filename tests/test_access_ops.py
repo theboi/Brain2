@@ -163,7 +163,7 @@ class TestAddVaultGuest:
         s, ws_id, pid = _setup()
         with pytest.raises(Conflict):
             make_add_vault_guest(s)(_owner_ctx(), {
-                "project_id": pid, "user_id": "guest1", "role": "admin"
+                "project_id": pid, "user_id": "guest1", "role": "superuser"
             })
 
     def test_workspace_admin_can_add_guest(self):
@@ -186,6 +186,24 @@ class TestAddVaultGuest:
             make_add_vault_guest(s)(_owner_ctx(), {
                 "project_id": "nope", "user_id": "guest1", "role": "viewer"
             })
+
+
+class TestAdminVaultGuest:
+    def test_add_guest_admin_role(self):
+        s, ws_id, pid = _setup()
+        result = make_add_vault_guest(s)(_owner_ctx(), {
+            "project_id": pid, "user_id": "guest1", "role": "admin"
+        })
+        assert result["role"] == "admin"
+        assert s.effective_project_role("t1", pid, "guest1") == "admin"
+
+    def test_set_guest_role_to_admin(self):
+        s, ws_id, pid = _setup()
+        s.grant_access("t1", pid, "user", "guest1", "viewer")
+        result = make_set_vault_guest_role(s)(_owner_ctx(), {
+            "project_id": pid, "user_id": "guest1", "role": "admin"
+        })
+        assert result["role"] == "admin"
 
 
 # ---------------------------------------------------------------------------

@@ -292,7 +292,10 @@ class Setup:
         vault_name = None
 
         if create_vault:
-            workspace_name = input("  Workspace name [Default Workspace]: ").strip() or "Default Workspace"
+            workspace_name = input("  Workspace name: ").strip() or None
+            if not workspace_name:
+                print("  Workspace name is required.")
+                return
             vault_id = input("  Vault/Project ID (short, kebab-case) [main-vault]: ").strip() or "main-vault"
             vault_name = input("  Vault name [Main Vault]: ").strip() or "Main Vault"
 
@@ -387,8 +390,8 @@ def main():
                   help="Vault/project ID (default: main-vault)")
     p.add_argument("--vault-name", default="Main Vault",
                   help="Vault display name (default: Main Vault)")
-    p.add_argument("--workspace-name", default="Default Workspace",
-                  help="Workspace name (default: Default Workspace)")
+    p.add_argument("--workspace-name", default=None,
+                  help="Workspace name (required when --create-vault is set)")
 
     p.add_argument("--with-seed", action="store_true",
                   help="Seed test vaults and data (like seed_dev_vault.py)")
@@ -423,6 +426,9 @@ def main():
                            args.password, role="owner")
 
         if args.create_vault:
+            if not args.workspace_name:
+                print("Error: --workspace-name is required when --create-vault is set.")
+                return
             print("\nWorkspace & Vault Setup")
             print("-" * 40)
             ws_id = setup.create_workspace(args.tenant_id, args.workspace_name)

@@ -1,24 +1,39 @@
 /*
- * New workspace modal — ported from workspaces-panels.jsx.
- * Name + description, an add-member bar, and a locked default Owner (you).
+ * New workspace modal: create + optional description + invited members, wired
+ * to live ops.
  */
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from '@/components/ui/Icon';
 import { RoleBadge } from '@/components/settings/SettingsCard';
-import { WS_PEOPLE, ROLE_DESC, CURRENT_USER, type Role } from './mockData';
+import { ops } from '@/lib/api';
+import { qk } from '@/lib/queryClient';
+import { useTenantUsers } from '@/hooks/people';
+import { useMe } from '@/hooks/me';
+import { ROLE_DESC } from './mockData';
 import { Avatar, AddPersonBar, iconBtn, sbtn, type SelectOption, type Candidate } from './primitives';
 
-interface Invite { u: string; role: Role }
+interface Invite {
+  u: string;
+  role: 'admin' | 'member';
+  name: string;
+  email: string;
+}
 
-export function NewWorkspaceModal({ onClose, onCreate }: {
+export function NewWorkspaceModal({ onClose, onCreated }: {
   onClose: () => void;
-  onCreate: (data: { name: string; desc: string; invited: Invite[] }) => void;
+  onCreated: () => void;
 }) {
+  const qc = useQueryClient();
+  const { data: me } = useMe();
+  const { data: tenantUsers } = useTenantUsers();
   const [shown, setShown] = useState(false);
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
   const [invited, setInvited] = useState<Invite[]>([]);
+  const [busy, setBusy] = useState(false);
+
   useEffect(() => {
     const r = requestAnimationFrame(() => setShown(true));
     const t = setTimeout(() => setShown(true), 30);
@@ -29,11 +44,43 @@ export function NewWorkspaceModal({ onClose, onCreate }: {
 
   const inputStyle: React.CSSProperties = { width: '100%', height: 38, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13.5, outline: 'none' };
   const labelStyle: React.CSSProperties = { display: 'block', fontSize: 12, color: 'var(--fg-muted)', marginBottom: 6, fontWeight: 500 };
-  const taken = new Set([...invited.map((i) => i.u), CURRENT_USER]);
-  const candidates: Candidate[] = Object.keys(WS_PEOPLE)
-    .filter((u) => !taken.has(u))
-    .map((u) => ({ u, name: WS_PEOPLE[u].name, email: WS_PEOPLE[u].email }));
-  const roleOpts: SelectOption[] = (['Admin', 'Editor', 'Viewer'] as Role[]).map((r) => ({ id: r, label: r, icon: 'shield', desc: ROLE_DESC[r] }));
+
+  const taken = new Set([...invited.map((i) => i.u), me?.user_id ?? '']);
+  const candidates: Candidate[] = (tenantUsers ?? [])
+    .filter((u) => !taken.has(u.user_id))
+    .map((u) => ({ u: u.user_id, name: u.display_name || u.email, email: u.email }));
+  const roleOpts: SelectOption[] = (['admin', 'member'] as const).map((r) => ({
+    id: r,
+    label: r === 'admin' ? 'Admin' : 'Member',
+    icon: 'shield',
+    desc: ROLE_DESC[r === 'admin' ? 'Admin' : 'Member'],
+  }));
+
+  const onAdd = (key: string, role: string) => {
+    const u = (tenantUsers ?? []).find((x) => x.user_id === key || x.email === key);
+    if (!u) return;
+    setInvited((prev) => prev.some((x) => x.u === u.user_id)
+      ? prev
+      : [...prev, { u: u.user_id, role: role as 'admin' | 'member', name: u.display_name || u.email, email: u.email }]);
+  };
+
+  const create = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    try {
+      const ws = await ops<{ workspace_id: string }>('workspaces:create', { name: name.trim() });
+      if (desc.trim()) {
+        await ops('workspaces:update', { workspace_id: ws.workspace_id, description: desc.trim() });
+      }
+      for (const inv of invited) {
+        await ops('workspace_members:add', { workspace_id: ws.workspace_id, user_id: inv.u, role: inv.role });
+      }
+      await qc.invalidateQueries({ queryKey: qk.workspacesOverview() });
+      onCreated();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return createPortal(
     <div style={{ position: 'fixed', inset: 0, zIndex: 220, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '8vh 20px 20px' }}>
@@ -45,7 +92,7 @@ export function NewWorkspaceModal({ onClose, onCreate }: {
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--fg)', fontFamily: 'var(--display-font)', letterSpacing: 'var(--display-track)' }}>New workspace</div>
             <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 1 }}>You'll be the owner.</div>
           </div>
-          <button onClick={onClose} style={{ ...iconBtn(), width: 32, height: 32 }}><Icon name="x" size={16} color="var(--fg-muted)" /></button>
+          <button onClick={onClose} style={{ ...iconBtn(), width: 32, height: 32 }} title="Close"><Icon name="x" size={16} color="var(--fg-muted)" /></button>
         </div>
 
         <div style={{ padding: 20, overflowY: 'auto' }}>
@@ -60,29 +107,25 @@ export function NewWorkspaceModal({ onClose, onCreate }: {
 
           <label style={labelStyle}>Members</label>
           <div style={{ marginBottom: 10 }}>
-            <AddPersonBar
-              candidates={candidates} levelOptions={roleOpts} defaultLevel="Editor" placeholder="Enter email or name"
-              onAdd={(u, role) => setInvited((prev) => prev.some((x) => x.u === u) ? prev : [...prev, { u, role: role as Role }])}
-            />
+            <AddPersonBar candidates={candidates} levelOptions={roleOpts} defaultLevel="member" placeholder="Enter email or name" onAdd={onAdd} />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {/* owner is always a member */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px', borderRadius: 9, background: 'var(--surface-2)' }}>
-              <Avatar u={CURRENT_USER} size={26} />
+              <Avatar u={me?.user_id ?? '?'} label={me?.display_name || me?.email || 'You'} size={26} />
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{WS_PEOPLE[CURRENT_USER].name} <span style={{ fontSize: 10.5, color: 'var(--fg-muted)', fontWeight: 400 }}>you</span></span>
+                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{me?.display_name || me?.email || 'You'} <span style={{ fontSize: 10.5, color: 'var(--fg-muted)', fontWeight: 400 }}>you</span></span>
               </span>
               <RoleBadge role="Owner" />
               <span style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-faint)' }} title="The owner can't be removed"><Icon name="key" size={13} color="var(--fg-faint)" /></span>
             </div>
             {invited.map((i) => (
               <div key={i.u} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px', borderRadius: 9, background: 'var(--surface-2)' }}>
-                <Avatar u={i.u} size={26} />
+                <Avatar u={i.u} label={i.name} size={26} />
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{WS_PEOPLE[i.u].name}</span>
-                  <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-muted)' }}>{WS_PEOPLE[i.u].email}</span>
+                  <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{i.name}</span>
+                  <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-muted)' }}>{i.email}</span>
                 </span>
-                <RoleBadge role={i.role} />
+                <RoleBadge role={i.role === 'admin' ? 'Admin' : 'Member'} />
                 <button onClick={() => setInvited(invited.filter((x) => x.u !== i.u))} style={{ ...iconBtn(), width: 26, height: 26, border: 'none' }} title="Remove"><Icon name="x" size={13} color="var(--fg-muted)" /></button>
               </div>
             ))}
@@ -91,7 +134,7 @@ export function NewWorkspaceModal({ onClose, onCreate }: {
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '14px 20px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
           <button onClick={onClose} style={sbtn()}>Cancel</button>
-          <button disabled={!name.trim()} onClick={() => onCreate({ name: name.trim(), desc: desc.trim(), invited })} style={{ ...sbtn('primary'), opacity: name.trim() ? 1 : 0.5 }}>Create workspace</button>
+          <button disabled={!name.trim() || busy} onClick={create} style={{ ...sbtn('primary'), opacity: (name.trim() && !busy) ? 1 : 0.5 }}>{busy ? 'Creating...' : 'Create workspace'}</button>
         </div>
       </div>
     </div>,
