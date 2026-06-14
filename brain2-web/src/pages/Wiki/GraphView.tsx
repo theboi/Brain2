@@ -6,19 +6,24 @@
  */
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useTheme } from '@/hooks/useTheme';
+import { useVaultGraphData } from '@/hooks/useGraph';
 import { OrgGraphView } from '@/pages/Graph/OrgGraphView';
-import { PROJECT_TO_VAULT } from '@/pages/Graph/mockData';
+import { installVaultGraphData } from '@/pages/Graph/graphDataset';
 
 export function GraphView({ isMobile }: { isMobile?: boolean }) {
   const { projectId } = useWorkspace();
   const { theme } = useTheme();
-  const scope = (projectId && PROJECT_TO_VAULT[projectId]) ?? PROJECT_TO_VAULT['default'] ?? 'v_general';
+  const { data, isLoading, error } = useVaultGraphData(projectId);
+
+  if (data) installVaultGraphData(data);
+  if (isLoading) return <div style={{ padding: 16, color: 'var(--fg-muted)' }}>Loading graph...</div>;
+  if (error || !projectId) return <div style={{ padding: 16, color: 'var(--destructive)' }}>Graph could not be loaded.</div>;
 
   return (
     <OrgGraphView
       theme={theme}
       isMobile={isMobile}
-      scope={scope}
+      scope={projectId}
       openGraphHref="/graph"
       wikiScope={true}
     />

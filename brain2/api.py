@@ -12,6 +12,7 @@ import logging
 import re as _re
 import time
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -97,6 +98,10 @@ def create_app(actx: AppContext) -> FastAPI:
         except Exception:
             raise HTTPException(status_code=401, detail="invalid token")
         user = actx.store.get_user(ctx.tenant_id, ctx.user_id)
+        if user is not None:
+            actx.store.update_last_seen(
+                ctx.tenant_id, ctx.user_id, datetime.now(timezone.utc).isoformat(),
+                min_gap_s=60)
         return dataclasses.replace(ctx, tenant_role=user.role if user else "member",
                                    idempotency_key=idempotency_key)
 
@@ -133,7 +138,7 @@ def create_app(actx: AppContext) -> FastAPI:
     def me(ctx: RequestContext = Depends(_auth)):
         user = actx.store.get_user(ctx.tenant_id, ctx.user_id)
         row = actx.store._conn.execute(
-            "SELECT must_change_password FROM users WHERE tenant_id=? AND user_id=?",
+            "SELECT must_change_password, last_seen_at FROM users WHERE tenant_id=? AND user_id=?",
             (ctx.tenant_id, ctx.user_id)
         ).fetchone()
         must_change = bool(row["must_change_password"]) if row else False
@@ -141,7 +146,17 @@ def create_app(actx: AppContext) -> FastAPI:
                 "role": ctx.tenant_role,
                 "display_name": user.display_name if user else None,
                 "email": user.email if user else None,
-                "must_change_password": must_change}
+                "must_change_password": must_change,
+                "last_seen_at": row["last_seen_at"] if row else None}
+
+    @app.post("/api/v1/auth/accept-invite")
+    def accept_invite_endpoint(body: dict):
+        from brain2.invite_ops import accept_invite
+        try:
+            return accept_invite(actx.store, actx.passwords, body["token"], body["password"])
+        except Brain2Error as exc:
+            status = next((s for cls, s in _STATUS.items() if isinstance(exc, cls)), 400)
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
 
     @app.patch("/api/v1/me")
     def patch_me(body: dict, ctx: RequestContext = Depends(_auth)):

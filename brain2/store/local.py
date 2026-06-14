@@ -141,34 +141,209 @@ class LocalStore:
             cx.execute("UPDATE users SET role=? WHERE tenant_id=? AND user_id=?",
                        (role, tenant_id, user_id))
 
+    def update_last_seen(self, tenant_id: str, user_id: str, now_iso: str,
+                         min_gap_s: int = 60) -> None:
+        row = self._conn.execute(
+            "SELECT last_seen_at FROM users WHERE tenant_id=? AND user_id=?",
+            (tenant_id, user_id)).fetchone()
+        if row is None:
+            return
+        prev = row["last_seen_at"]
+        if prev is not None and min_gap_s > 0:
+            try:
+                prev_dt = datetime.fromisoformat(prev.replace("Z", "+00:00"))
+                now_dt = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+                if (now_dt - prev_dt).total_seconds() < min_gap_s:
+                    return
+            except ValueError:
+                pass
+        with self.transaction() as cx:
+            cx.execute("UPDATE users SET last_seen_at=? WHERE tenant_id=? AND user_id=?",
+                       (now_iso, tenant_id, user_id))
+
+    def create_invite(self, tenant_id: str, user_id: str, token_hash: str,
+                      email: str, created_at: str, expires_at: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO invites"
+                "(tenant_id, user_id, token_hash, email, created_at, expires_at, accepted_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, NULL) "
+                "ON CONFLICT(tenant_id, user_id) DO UPDATE SET "
+                "token_hash=excluded.token_hash, email=excluded.email, "
+                "created_at=excluded.created_at, expires_at=excluded.expires_at, accepted_at=NULL",
+                (tenant_id, user_id, token_hash, email, created_at, expires_at))
+
+    def get_invite_by_token_hash(self, token_hash: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT tenant_id, user_id, email, created_at, expires_at, accepted_at "
+            "FROM invites WHERE token_hash=?", (token_hash,)).fetchone()
+        return dict(row) if row else None
+
+    def mark_invite_accepted(self, tenant_id: str, user_id: str, now_iso: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("UPDATE invites SET accepted_at=? WHERE tenant_id=? AND user_id=?",
+                       (now_iso, tenant_id, user_id))
+
+    def revoke_invite(self, tenant_id: str, user_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("DELETE FROM invites WHERE tenant_id=? AND user_id=?",
+                       (tenant_id, user_id))
+
+    def list_pending_invite_user_ids(self, tenant_id: str) -> set[str]:
+        rows = self._conn.execute(
+            "SELECT user_id FROM invites WHERE tenant_id=? AND accepted_at IS NULL "
+            "AND expires_at > ?",
+            (tenant_id, _now_iso())).fetchall()
+        return {r["user_id"] for r in rows}
+
     def list_users(self, tenant_id: str, limit: int = 50,
                    cursor: str | None = None) -> list[dict]:
         if cursor:
             rows = self._conn.execute(
-                "SELECT user_id, email, role, display_name "
+                "SELECT user_id, email, role, status, display_name, last_seen_at "
                 "FROM users WHERE tenant_id=? AND user_id > ? "
                 "ORDER BY user_id LIMIT ?",
                 (tenant_id, cursor, limit)).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT user_id, email, role, display_name "
+                "SELECT user_id, email, role, status, display_name, last_seen_at "
                 "FROM users WHERE tenant_id=? ORDER BY user_id LIMIT ?",
                 (tenant_id, limit)).fetchall()
+        pending = self.list_pending_invite_user_ids(tenant_id)
         return [{"user_id": r["user_id"], "email": r["email"], "role": r["role"],
-                 "display_name": r["display_name"]}
+                 "status": r["status"], "display_name": r["display_name"],
+                 "last_seen_at": r["last_seen_at"], "invited": r["user_id"] in pending}
                 for r in rows]
 
     # --- groups ---
     def create_group(self, tenant_id: str, group_id: str, name: str) -> None:
         with self.transaction() as cx:
-            cx.execute("INSERT INTO groups(group_id, tenant_id, name, created_at) "
-                       "VALUES (?,?,?,?)", (group_id, tenant_id, name, _now_iso()))
+            try:
+                cx.execute("INSERT INTO groups(group_id, tenant_id, name, created_at) "
+                           "VALUES (?,?,?,?)", (group_id, tenant_id, name, _now_iso()))
+            except sqlite3.IntegrityError as exc:
+                raise Conflict(f"group {group_id} conflict: {exc}") from exc
 
     def add_group_member(self, tenant_id: str, group_id: str, user_id: str) -> None:
         with self.transaction() as cx:
             cx.execute(
                 "INSERT OR IGNORE INTO group_membership(tenant_id, group_id, user_id) "
                 "VALUES (?,?,?)", (tenant_id, group_id, user_id))
+
+    def list_groups(self, tenant_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT group_id, name, created_at FROM groups WHERE tenant_id=? ORDER BY name",
+            (tenant_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_group(self, tenant_id: str, group_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT group_id, name, created_at FROM groups WHERE tenant_id=? AND group_id=?",
+            (tenant_id, group_id)).fetchone()
+        return dict(row) if row else None
+
+    def rename_group(self, tenant_id: str, group_id: str, name: str) -> None:
+        with self.transaction() as cx:
+            cur = cx.execute("UPDATE groups SET name=? WHERE tenant_id=? AND group_id=?",
+                             (name, tenant_id, group_id))
+            if cur.rowcount == 0:
+                raise NotFound(f"group {group_id!r} not found")
+
+    def delete_group(self, tenant_id: str, group_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute("DELETE FROM group_membership WHERE tenant_id=? AND group_id=?",
+                       (tenant_id, group_id))
+            cx.execute("DELETE FROM group_workspace_roles WHERE tenant_id=? AND group_id=?",
+                       (tenant_id, group_id))
+            cx.execute(
+                "DELETE FROM access_grants "
+                "WHERE tenant_id=? AND principal_type='group' AND principal_id=?",
+                (tenant_id, group_id))
+            cx.execute("DELETE FROM groups WHERE tenant_id=? AND group_id=?",
+                       (tenant_id, group_id))
+
+    def remove_group_member(self, tenant_id: str, group_id: str, user_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "DELETE FROM group_membership WHERE tenant_id=? AND group_id=? AND user_id=?",
+                (tenant_id, group_id, user_id))
+
+    def list_group_member_ids(self, tenant_id: str, group_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT user_id FROM group_membership WHERE tenant_id=? AND group_id=?",
+            (tenant_id, group_id)).fetchall()
+        return [r["user_id"] for r in rows]
+
+    def list_group_ids_for_user(self, tenant_id: str, user_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT group_id FROM group_membership WHERE tenant_id=? AND user_id=?",
+            (tenant_id, user_id)).fetchall()
+        return [r["group_id"] for r in rows]
+
+    def set_group_workspace_role(self, tenant_id: str, group_id: str,
+                                 workspace_id: str, role: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO group_workspace_roles"
+                "(tenant_id, group_id, workspace_id, role, created_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(tenant_id, group_id, workspace_id) DO UPDATE SET role=excluded.role",
+                (tenant_id, group_id, workspace_id, role, _now_iso()))
+
+    def remove_group_workspace_role(self, tenant_id: str, group_id: str,
+                                    workspace_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "DELETE FROM group_workspace_roles "
+                "WHERE tenant_id=? AND group_id=? AND workspace_id=?",
+                (tenant_id, group_id, workspace_id))
+
+    def list_group_workspace_roles(self, tenant_id: str, group_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT gwr.workspace_id, w.name, gwr.role "
+            "FROM group_workspace_roles gwr "
+            "JOIN workspaces w ON w.tenant_id=gwr.tenant_id AND w.workspace_id=gwr.workspace_id "
+            "WHERE gwr.tenant_id=? AND gwr.group_id=? ORDER BY w.name",
+            (tenant_id, group_id)).fetchall()
+        return [{"workspace_id": r["workspace_id"], "name": r["name"], "role": r["role"]}
+                for r in rows]
+
+    def list_group_vault_grants(self, tenant_id: str, group_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT ag.project_id, p.name, ag.role "
+            "FROM access_grants ag "
+            "JOIN projects p ON p.tenant_id=ag.tenant_id AND p.project_id=ag.project_id "
+            "WHERE ag.tenant_id=? AND ag.principal_type='group' AND ag.principal_id=? "
+            "ORDER BY p.name",
+            (tenant_id, group_id)).fetchall()
+        return [{"project_id": r["project_id"], "name": r["name"], "role": r["role"]}
+                for r in rows]
+
+    def inherited_workspace_roles_for_user(self, tenant_id: str, user_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT gwr.workspace_id, w.name AS ws_name, gwr.role, "
+            "       g.group_id, g.name AS group_name "
+            "FROM group_membership gm "
+            "JOIN group_workspace_roles gwr "
+            "  ON gwr.tenant_id=gm.tenant_id AND gwr.group_id=gm.group_id "
+            "JOIN groups g ON g.tenant_id=gm.tenant_id AND g.group_id=gm.group_id "
+            "JOIN workspaces w ON w.tenant_id=gwr.tenant_id AND w.workspace_id=gwr.workspace_id "
+            "WHERE gm.tenant_id=? AND gm.user_id=?",
+            (tenant_id, user_id)).fetchall()
+        rank = {"member": 1, "admin": 2}
+        best: dict[str, dict] = {}
+        for r in rows:
+            workspace_id = r["workspace_id"]
+            current = best.get(workspace_id)
+            if current is None or rank[r["role"]] > rank[current["role"]]:
+                best[workspace_id] = {
+                    "workspace_id": workspace_id,
+                    "name": r["ws_name"],
+                    "role": r["role"],
+                    "via": r["group_name"],
+                    "via_id": r["group_id"],
+                }
+        return sorted(best.values(), key=lambda item: item["name"])
 
     # --- projects ---
     def create_project(self, tenant_id: str, project_id: str, name: str, *,
@@ -420,6 +595,39 @@ class LocalStore:
                 "DELETE FROM access_grants "
                 "WHERE tenant_id=? AND project_id=? AND principal_type=? AND principal_id=?",
                 (tenant_id, project_id, principal_type, principal_id))
+
+    def list_guests(self, tenant_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT ag.principal_id AS user_id, u.email, u.display_name, u.last_seen_at, "
+            "       ag.project_id, p.name AS project_name, p.workspace_id, ag.role "
+            "FROM access_grants ag "
+            "JOIN users u ON u.tenant_id=ag.tenant_id AND u.user_id=ag.principal_id "
+            "JOIN projects p ON p.tenant_id=ag.tenant_id AND p.project_id=ag.project_id "
+            "WHERE ag.tenant_id=? AND ag.principal_type='user' "
+            "ORDER BY u.email, p.name",
+            (tenant_id,)).fetchall()
+        pending = self.list_pending_invite_user_ids(tenant_id)
+        by_user: dict[str, dict] = {}
+        for r in rows:
+            if self.get_workspace_member_role(tenant_id, r["workspace_id"], r["user_id"]) is not None:
+                continue
+            guest = by_user.get(r["user_id"])
+            if guest is None:
+                guest = {
+                    "user_id": r["user_id"],
+                    "email": r["email"],
+                    "display_name": r["display_name"],
+                    "last_seen_at": r["last_seen_at"],
+                    "invited": r["user_id"] in pending,
+                    "vaults": [],
+                }
+                by_user[r["user_id"]] = guest
+            guest["vaults"].append({
+                "project_id": r["project_id"],
+                "name": r["project_name"],
+                "role": r["role"],
+            })
+        return [guest for guest in by_user.values() if guest["vaults"]]
 
     def add_workspace_member(self, tenant_id: str, workspace_id: str,
                              user_id: str, role: str) -> None:
@@ -1085,6 +1293,34 @@ class LocalStore:
                 "SELECT * FROM vault_pages WHERE project_id=? ORDER BY path",
                 (project_id,)).fetchall()
         return [self._row_to_vault_page(r) for r in rows]
+
+    def vault_pages_and_links(self, project_id: str) -> dict:
+        pages = [p for p in self.list_vault_pages(project_id)
+                 if p.zone in ("wiki", "static", "dynamic")]
+        titles = [p.topic for p in pages]
+        title_set = set(titles)
+        links: list[list[str]] = []
+        for page in pages:
+            if page.zone != "wiki":
+                continue
+            for link in self.get_outgoing_links(project_id, page.path):
+                if link.target_topic in title_set:
+                    links.append([page.topic, link.target_topic])
+        return {"pages": titles, "links": links}
+
+    def vault_sources_with_cites(self, tenant_id: str, project_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT source_id, filename, url, kind, mime, topic FROM sources "
+            "WHERE tenant_id=? AND project_id=? AND status!='deleted' "
+            "ORDER BY filename",
+            (tenant_id, project_id)).fetchall()
+        out = []
+        for r in rows:
+            name = r["filename"] or r["url"] or r["source_id"]
+            cites = [r["topic"]] if r["topic"] else []
+            out.append({"id": r["source_id"], "name": name,
+                        "mime": r["mime"], "kind": r["kind"], "cites": cites})
+        return out
 
     def search_vault_pages(self, project_id: str, query: str,
                            limit: int = 20) -> list[dict]:

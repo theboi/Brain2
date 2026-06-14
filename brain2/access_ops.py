@@ -258,8 +258,50 @@ def make_access_for_user(store: Store):
             "user_id": user_id,
             "role": role,
             "workspaces": workspaces,
+            "inherited_workspaces": store.inherited_workspace_roles_for_user(ctx.tenant_id, user_id),
             "guest_vaults": guest_vaults,
         }
+    return handler
+
+
+# ---------------------------------------------------------------------------
+# Tenant-wide guests
+# ---------------------------------------------------------------------------
+
+_GUEST_INVITE_ROLES = {"viewer", "editor"}
+
+
+def make_list_guests(store: Store):
+    def handler(ctx: RequestContext, params: dict) -> dict:
+        return {"guests": store.list_guests(ctx.tenant_id)}
+    return handler
+
+
+def make_invite_guest(store: Store):
+    def handler(ctx: RequestContext, params: dict) -> dict:
+        import uuid
+        from brain2.invite_ops import _issue_invite
+
+        email = (params.get("email") or "").strip().lower()
+        project_id = params["project_id"]
+        role = params.get("role", "viewer")
+        if role not in _GUEST_INVITE_ROLES:
+            raise Conflict(f"role must be one of {sorted(_GUEST_INVITE_ROLES)}")
+        if not email or "@" not in email:
+            raise Conflict("a valid email is required")
+
+        project = _resolve_vault(store, ctx.tenant_id, project_id)
+        existing = store.get_user_id_by_email(ctx.tenant_id, email)
+        if existing is not None:
+            user_id = existing
+        else:
+            user_id = uuid.uuid4().hex
+            store.create_user(ctx.tenant_id, user_id, email, "member", email.split("@")[0])
+        if store.get_workspace_member_role(ctx.tenant_id, project.workspace_id, user_id) is not None:
+            raise Conflict("user is a workspace member; no guest grant needed")
+        store.grant_access(ctx.tenant_id, project_id, "user", user_id, role)
+        token = _issue_invite(store, ctx.tenant_id, user_id, email)
+        return {"user_id": user_id, "email": email, "token": token}
     return handler
 
 
@@ -320,4 +362,23 @@ def register_access_ops(ops, store: Store) -> None:
         handler=make_access_for_user(store),
         summary="Get full access overview for a user (workspaces + guest vaults)",
         params=[{"name": "user_id", "type": "str", "required": True}],
+    )
+    ops.register(
+        "guests:list",
+        action="manage_tenant",
+        handler=make_list_guests(store),
+        summary="Tenant-wide list of guest users and their vaults",
+        params=[],
+    )
+    ops.register(
+        "guests:invite",
+        action="manage_tenant",
+        handler=make_invite_guest(store),
+        summary="Invite an external guest and grant a vault",
+        params=[
+            {"name": "email", "type": "str", "required": True},
+            {"name": "project_id", "type": "str", "required": True},
+            {"name": "role", "type": "str", "required": True,
+             "choices": ["viewer", "editor"]},
+        ],
     )

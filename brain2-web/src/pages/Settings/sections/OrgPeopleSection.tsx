@@ -1,19 +1,35 @@
 /*
- * OrgPeopleSection — Organization → People page (mockup).
- *
- * Three tabs: People · Groups · Guests
- * Matches the design mockup from docs/design/v1/project/settings.jsx.
- * No live data — all state is seeded locally.
+ * OrgPeopleSection — Organization → People page.
  */
-import { useState, useRef } from 'react';
+import { useMemo, useState, useRef } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import { SCard } from '@/components/settings/SettingsCard';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
 import { Popover, ModalOverlay } from '@/components/ui/Popover';
+import { ops } from '@/lib/api';
+import { qk } from '@/lib/queryClient';
+import { formatLastSeen, presenceFromLastSeen } from '@/lib/lastSeen';
+import { useMe } from '@/hooks/me';
+import { useWorkspacesOverview } from '@/hooks/useWorkspaces';
+import { useTenantUsers, useInviteUser } from '@/hooks/people';
+import { useAddMember, useRemoveMember, useSetMemberRole } from '@/hooks/members';
+import {
+  useAddGroupMember,
+  useCreateGroup,
+  useDeleteGroup,
+  useGroups,
+  useRemoveGroupMember,
+  useRemoveGroupWorkspaceRole,
+  useSetGroupWorkspaceRole,
+} from '@/hooks/groups';
+import { useGuests, useInviteGuest } from '@/hooks/guests';
+import { useAddGuest, useRemoveGuest, useSetGuestRole } from '@/hooks/access';
+import type { UserAccess } from '@/lib/types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Presence = 'active' | 'away' | 'offline';
+type Presence = 'active' | 'offline';
 type WsRole = 'Admin' | 'Member';
 type VaultLevel = 'Editor' | 'Viewer';
 type TopRole = 'Owner' | 'Admin' | 'Member';
@@ -23,6 +39,7 @@ interface VaultAccess { v: string; level: VaultLevel }
 
 interface OrgMember {
   u: string;
+  userId: string;
   you?: boolean;
   owner?: boolean;
   status?: 'invited';
@@ -40,6 +57,7 @@ interface Group {
 
 interface Guest {
   u: string;
+  userId: string;
   name: string;
   presence: Presence;
   vaults: VaultAccess[];
@@ -98,27 +116,6 @@ const WS_LIST = Object.keys(WS_LABELS);
 
 const VAULT_LIST = ['Cell biology', 'Microscopy', 'Q3 research', 'Engineering docs'];
 
-const TENANT_SEED: OrgMember[] = [
-  { u: 'alice', you: true, owner: true, presence: 'active', last: 'Active now', ws: [] },
-  { u: 'bob',   presence: 'active', last: '2h ago',      ws: [{ w: 'engineering', role: 'Admin' }, { w: 'default', role: 'Member' }, { w: 'research-q3', role: 'Member' }] },
-  { u: 'grace', presence: 'active', last: '1d ago',      ws: [{ w: 'engineering', role: 'Admin' }] },
-  { u: 'carol', presence: 'active', last: '5h ago',      ws: [{ w: 'default', role: 'Member' }, { w: 'research-q3', role: 'Member' }] },
-  { u: 'eve',   presence: 'away',   last: '3d ago',      ws: [{ w: 'research-q3', role: 'Member' }] },
-  { u: 'frank', presence: 'away',   last: '1w ago',      ws: [{ w: 'research-q3', role: 'Member' }, { w: 'engineering', role: 'Member' }] },
-  { u: 'henry', presence: 'active', last: '4h ago',      ws: [{ w: 'engineering', role: 'Member' }, { w: 'default', role: 'Member' }] },
-  { u: 'dan',   status: 'invited', presence: 'offline', last: 'Invited 2d ago', ws: [{ w: 'default', role: 'Member' }] },
-];
-
-const GROUP_SEED: Group[] = [
-  { id: 'research-team', name: 'Research team',    ws: [{ w: 'research-q3', role: 'Member' }, { w: 'default', role: 'Member' }],          members: ['carol', 'eve', 'frank'] },
-  { id: 'eng-leads',     name: 'Engineering leads', ws: [{ w: 'engineering', role: 'Admin' }, { w: 'default', role: 'Member' }],           members: ['grace', 'henry'] },
-];
-
-const GUEST_SEED: Guest[] = [
-  { u: 'mia@partner.io',       name: 'Mia Tran',   presence: 'active',  vaults: [{ v: 'Q3 research', level: 'Viewer' }] },
-  { u: 'leo@contractor.dev',   name: 'Leo Marsh',   presence: 'offline', vaults: [{ v: 'Engineering docs', level: 'Editor' }, { v: 'Cell biology', level: 'Viewer' }] },
-];
-
 const ROLE_RANK: Record<TopRole, number> = { Owner: 3, Admin: 2, Member: 1 };
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
@@ -144,7 +141,7 @@ function Avatar({ u, size = 36 }: { u: string; size?: number }) {
 // ─── PresenceAvatar ───────────────────────────────────────────────────────────
 
 function PresenceAvatar({ u, size = 36, presence }: { u: string; size?: number; presence: Presence }) {
-  const tone = presence === 'active' ? 'var(--success)' : presence === 'away' ? 'var(--warning)' : null;
+  const tone = presence === 'active' ? 'var(--success)' : null;
   const dotSize = Math.round(size * 0.3);
   return (
     <span style={{ position: 'relative', flexShrink: 0, display: 'inline-flex' }}>
@@ -165,7 +162,7 @@ function PresenceAvatar({ u, size = 36, presence }: { u: string; size?: number; 
 function GuestAvatar({ name, size = 36, presence }: { name: string; size?: number; presence: Presence }) {
   const initials = name[0]?.toUpperCase() ?? '?';
   const hue = name.split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
-  const tone = presence === 'active' ? 'var(--success)' : presence === 'away' ? 'var(--warning)' : null;
+  const tone = presence === 'active' ? 'var(--success)' : null;
   const dotSize = Math.round(size * 0.3);
   return (
     <span style={{ position: 'relative', flexShrink: 0, display: 'inline-flex' }}>
@@ -614,11 +611,17 @@ function ConfirmDialog({ title, body, confirmLabel = 'Confirm', danger, onConfir
 
 // ─── GroupsPanel ──────────────────────────────────────────────────────────────
 
-function GroupsPanel({ groups, setGroups, members, setDialog }: {
+function GroupsPanel({ groups, members, setDialog, onCreateGroup, onSetWsRole, onRemoveWs, onAddWs, onAddMember, onRemoveMember, onRemoveGroup }: {
   groups: Group[];
-  setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
   members: OrgMember[];
   setDialog: (d: DialogState) => void;
+  onCreateGroup: (name: string) => void;
+  onSetWsRole: (id: string, w: string, role: WsRole) => void;
+  onRemoveWs: (id: string, w: string) => void;
+  onAddWs: (id: string, w: string, role: WsRole) => void;
+  onAddMember: (id: string, userId: string) => void;
+  onRemoveMember: (id: string, userId: string) => void;
+  onRemoveGroup: (id: string) => void;
 }) {
   const [name, setName] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.length ? [groups[0].id] : []));
@@ -630,23 +633,17 @@ function GroupsPanel({ groups, setGroups, members, setDialog }: {
 
   const create = () => {
     if (!nm || dupName) return;
-    const id = nm.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Math.random().toString(36).slice(2, 5);
-    setGroups((gs) => [...gs, { id, name: nm, ws: [], members: [] }]);
-    setExpanded((s) => new Set([...s, id]));
+    onCreateGroup(nm);
     setName('');
   };
 
-  const setWsRole = (id: string, w: string, role: WsRole) => setGroups((gs) => gs.map((g) => g.id === id ? { ...g, ws: g.ws.map((x) => x.w === w ? { ...x, role } : x) } : g));
-  const removeWs = (id: string, w: string) => setGroups((gs) => gs.map((g) => g.id === id ? { ...g, ws: g.ws.filter((x) => x.w !== w) } : g));
-  const addWs = (id: string, w: string, role: WsRole) => setGroups((gs) => gs.map((g) => g.id === id ? (g.ws.some((x) => x.w === w) ? g : { ...g, ws: [...g.ws, { w, role }] }) : g));
   const addMember = (id: string, email: string) => {
-    const u = Object.keys(PEOPLE_DIR).find((k) => PEOPLE_DIR[k].email === email);
-    if (!u) return;
-    setGroups((gs) => gs.map((g) => g.id === id ? (g.members.includes(u) ? g : { ...g, members: [...g.members, u] }) : g));
+    const member = members.find((m) => (PEOPLE_DIR[m.u]?.email ?? m.u) === email);
+    if (!member) return;
+    onAddMember(id, member.userId);
     setAddPerson((p) => ({ ...p, [id]: '' }));
   };
-  const removeMember = (id: string, u: string) => setGroups((gs) => gs.map((g) => g.id === id ? { ...g, members: g.members.filter((x) => x !== u) } : g));
-  const removeGroup = (g: Group) => setDialog({ title: `Delete "${g.name}"?`, danger: true, confirmLabel: 'Delete group', body: `The ${g.members.length} ${g.members.length === 1 ? 'person' : 'people'} in this group lose the workspace access it granted. Their own direct roles are unchanged.`, onConfirm: () => setGroups((gs) => gs.filter((x) => x.id !== g.id)) });
+  const removeGroup = (g: Group) => setDialog({ title: `Delete "${g.name}"?`, danger: true, confirmLabel: 'Delete group', body: `The ${g.members.length} ${g.members.length === 1 ? 'person' : 'people'} in this group lose the workspace access it granted. Their own direct roles are unchanged.`, onConfirm: () => onRemoveGroup(g.id) });
 
   const groupTop = (g: Group): TopRole => g.ws.some((x) => x.role === 'Admin') ? 'Admin' : 'Member';
 
@@ -683,7 +680,7 @@ function GroupsPanel({ groups, setGroups, members, setDialog }: {
           const open = expanded.has(g.id);
           const last = i === groups.length - 1;
           const personCandidates = members
-            .filter((m) => !g.members.includes(m.u) && !m.owner)
+            .filter((m) => !g.members.includes(m.userId) && !m.owner)
             .map((m) => ({ u: m.u, name: PEOPLE_DIR[m.u]?.name ?? m.u, email: PEOPLE_DIR[m.u]?.email ?? m.u }));
 
           return (
@@ -712,9 +709,9 @@ function GroupsPanel({ groups, setGroups, members, setDialog }: {
                 <div style={{ padding: '4px 0 16px 60px' }}>
                   <WsRoleEditor
                     ws={g.ws}
-                    setRole={(w, v) => setWsRole(g.id, w, v)}
-                    removeWs={(w) => removeWs(g.id, w)}
-                    addWs={(w, role) => addWs(g.id, w, role)}
+                    setRole={(w, v) => onSetWsRole(g.id, w, v)}
+                    removeWs={(w) => onRemoveWs(g.id, w)}
+                    addWs={(w, role) => onAddWs(g.id, w, role)}
                     emptyText="No workspace access yet — add one below."
                   />
                   <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--fg-faint)', margin: '18px 0 8px' }}>Members · {g.members.length}</div>
@@ -748,7 +745,7 @@ function GroupsPanel({ groups, setGroups, members, setDialog }: {
                             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>{p.name}</div>
                             <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.email}</div>
                           </div>
-                          <button onClick={() => removeMember(g.id, u)} title="Remove from group" style={{ width: 28, height: 28, flexShrink: 0, borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <button onClick={() => onRemoveMember(g.id, u)} title="Remove from group" style={{ width: 28, height: 28, flexShrink: 0, borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                             <Icon name="x" size={13} color="var(--fg-muted)" />
                           </button>
                         </div>
@@ -773,22 +770,27 @@ function GroupsPanel({ groups, setGroups, members, setDialog }: {
 
 // ─── GuestsPanel ──────────────────────────────────────────────────────────────
 
-const GUEST_VAULT_OPTS: SelectOption[] = VAULT_LIST.map((v) => ({ id: v, label: v, icon: 'folder' as IconName }));
 const GUEST_LEVEL_OPTS: SelectOption[] = [
   { id: 'Editor', label: 'Editor', icon: 'pencil', desc: 'Read and write the vaults they are added to.' },
   { id: 'Viewer', label: 'Viewer', icon: 'file',   desc: 'Read-only access to specific vaults.' },
   { id: '__remove', label: 'Remove vault', icon: 'trash', danger: true, divider: true },
 ];
 
-function GuestsPanel({ guests, setGuests, setDialog }: {
+function GuestsPanel({ guests, vaultOptions, setDialog, onInvite, onSetVaultLevel, onRemoveVault, onAddVault, onRemoveGuest }: {
   guests: Guest[];
-  setGuests: React.Dispatch<React.SetStateAction<Guest[]>>;
+  vaultOptions: SelectOption[];
   setDialog: (d: DialogState) => void;
+  onInvite: (email: string, projectId: string, level: VaultLevel) => void;
+  onSetVaultLevel: (userId: string, projectId: string, level: VaultLevel) => void;
+  onRemoveVault: (userId: string, projectId: string) => void;
+  onAddVault: (userId: string, projectId: string, level: VaultLevel) => void;
+  onRemoveGuest: (guest: Guest) => void;
 }) {
   const [email, setEmail] = useState('');
-  const [vault, setVault] = useState(VAULT_LIST[0]);
+  const [vault, setVault] = useState(vaultOptions[0]?.id ?? '');
   const [level, setLevel] = useState<VaultLevel>('Viewer');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(guests.length ? [guests[0].u] : []));
+  const effectiveVault = vault || vaultOptions[0]?.id || '';
 
   const toggleExp = (u: string) => setExpanded((s) => { const n = new Set(s); n.has(u) ? n.delete(u) : n.add(u); return n; });
   const addr = email.trim();
@@ -798,16 +800,12 @@ function GuestsPanel({ guests, setGuests, setDialog }: {
 
   const invite = () => {
     if (!validEmail || exists) return;
-    const handle = addr.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-    setGuests((gs) => [...gs, { u: addr, name: handle, presence: 'offline', vaults: [{ v: vault, level }] }]);
+    onInvite(addr, effectiveVault, level);
     setExpanded((s) => new Set([...s, addr]));
-    setEmail(''); setVault(VAULT_LIST[0]); setLevel('Viewer');
+    setEmail(''); setVault(vaultOptions[0]?.id ?? ''); setLevel('Viewer');
   };
 
-  const setVaultLevel = (u: string, v: string, lvl: VaultLevel) => setGuests((gs) => gs.map((g) => g.u === u ? { ...g, vaults: g.vaults.map((x) => x.v === v ? { ...x, level: lvl } : x) } : g));
-  const removeVault = (u: string, v: string) => setGuests((gs) => gs.map((g) => g.u === u ? { ...g, vaults: g.vaults.filter((x) => x.v !== v) } : g));
-  const addVault = (u: string, v: string, lvl: VaultLevel) => setGuests((gs) => gs.map((g) => g.u === u ? (g.vaults.some((x) => x.v === v) ? g : { ...g, vaults: [...g.vaults, { v, level: lvl }] }) : g));
-  const removeGuest = (g: Guest) => setDialog({ title: `Remove ${g.name}?`, danger: true, confirmLabel: 'Remove guest', body: 'They lose access to every vault shared with them. Your content stays.', onConfirm: () => setGuests((gs) => gs.filter((x) => x.u !== g.u)) });
+  const removeGuest = (g: Guest) => setDialog({ title: `Remove ${g.name}?`, danger: true, confirmLabel: 'Remove guest', body: 'They lose access to every vault shared with them. Your content stays.', onConfirm: () => onRemoveGuest(g) });
 
   return (
     <SCard title="Guests" desc="External collaborators with access to specific vaults only — never a whole workspace. Grant Editor or Viewer per vault.">
@@ -817,10 +815,10 @@ function GuestsPanel({ guests, setGuests, setDialog }: {
         <EmailSuggest value={email} onChange={setEmail} candidates={guestCandidates} onEnter={invite} placeholder="Enter email or name…" />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Share</span>
-          <LevelSelect value={vault} options={GUEST_VAULT_OPTS} onPick={setVault} width={180} />
+          <LevelSelect value={effectiveVault} options={vaultOptions} onPick={setVault} width={180} />
           <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>as</span>
           <LevelSelect value={level} options={GUEST_LEVEL_OPTS.filter((o) => !o.danger)} onPick={(v) => setLevel(v as VaultLevel)} width={150} />
-          <button onClick={invite} disabled={!validEmail || exists} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 13px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: (validEmail && !exists) ? 'pointer' : 'not-allowed', opacity: (validEmail && !exists) ? 1 : 0.5, fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, marginLeft: 'auto' }}>
+          <button onClick={invite} disabled={!validEmail || exists || !effectiveVault} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 13px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: (validEmail && !exists && effectiveVault) ? 'pointer' : 'not-allowed', opacity: (validEmail && !exists && effectiveVault) ? 1 : 0.5, fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, marginLeft: 'auto' }}>
             <Icon name="plus" size={14} color="#fff" /> Invite guest
           </button>
         </div>
@@ -864,11 +862,11 @@ function GuestsPanel({ guests, setGuests, setDialog }: {
                     {g.vaults.map((x) => (
                       <div key={x.v} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
                         <span style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)', flexShrink: 0 }}><Icon name="folder" size={13} /></span>
-                        <span style={{ flex: 1, fontSize: 13, color: 'var(--fg)', fontWeight: 500 }}>{x.v}</span>
+                        <span style={{ flex: 1, fontSize: 13, color: 'var(--fg)', fontWeight: 500 }}>{vaultOptions.find((o) => o.id === x.v)?.label ?? x.v}</span>
                         <MiniSelect
                           value={x.level}
                           options={GUEST_LEVEL_OPTS}
-                          onPick={(v) => { if (v === '__remove') removeVault(g.u, x.v); else setVaultLevel(g.u, x.v, v as VaultLevel); }}
+                          onPick={(v) => { if (v === '__remove') onRemoveVault(g.userId, x.v); else onSetVaultLevel(g.userId, x.v, v as VaultLevel); }}
                           width={200}
                         />
                       </div>
@@ -878,10 +876,10 @@ function GuestsPanel({ guests, setGuests, setDialog }: {
                   <AddScopeRow
                     label="Share a vault"
                     taken={taken}
-                    allOpts={GUEST_VAULT_OPTS}
+                    allOpts={vaultOptions}
                     levelOpts={GUEST_LEVEL_OPTS.filter((o) => !o.danger)}
                     defaultLevel="Viewer"
-                    onAdd={(v, lvl) => addVault(g.u, v, lvl as VaultLevel)}
+                    onAdd={(v, lvl) => onAddVault(g.userId, v, lvl as VaultLevel)}
                   />
                 </div>
               )}
@@ -898,23 +896,120 @@ function GuestsPanel({ guests, setGuests, setDialog }: {
 
 // ─── OrgPeopleSection — main export ──────────────────────────────────────────
 
+const toWsRole = (role: string): WsRole => role === 'admin' ? 'Admin' : 'Member';
+const fromWsRole = (role: WsRole): 'admin' | 'member' => role === 'Admin' ? 'admin' : 'member';
+const toVaultLevel = (role: string): VaultLevel => role === 'editor' || role === 'admin' ? 'Editor' : 'Viewer';
+const fromVaultLevel = (level: VaultLevel): 'viewer' | 'editor' => level === 'Editor' ? 'editor' : 'viewer';
+
 export function OrgPeopleSection() {
-  const [members, setMembers] = useState<OrgMember[]>(TENANT_SEED);
-  const [groups, setGroups] = useState<Group[]>(GROUP_SEED);
-  const [guests, setGuests] = useState<Guest[]>(GUEST_SEED);
   const [view, setView] = useState<'people' | 'groups' | 'guests'>('people');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'owner' | 'admin' | 'member'>('all');
   const [email, setEmail] = useState('');
-  const [inviteWs, setInviteWs] = useState('default');
+  const [inviteWs, setInviteWs] = useState('');
   const [inviteRole, setInviteRole] = useState<WsRole>('Member');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [dialog, setDialog] = useState<DialogState | null>(null);
 
+  const me = useMe().data;
+  const { data: users = [] } = useTenantUsers();
+  const { data: overview } = useWorkspacesOverview();
+  const { data: groupRows = [] } = useGroups();
+  const { data: guestRows = [] } = useGuests();
+  const inviteUser = useInviteUser();
+  const addMember = useAddMember(null);
+  const setMemberRole = useSetMemberRole(null);
+  const removeMember = useRemoveMember(null);
+  const createGroup = useCreateGroup();
+  const addGroupMember = useAddGroupMember();
+  const removeGroupMember = useRemoveGroupMember();
+  const setGroupWs = useSetGroupWorkspaceRole();
+  const removeGroupWs = useRemoveGroupWorkspaceRole();
+  const deleteGroup = useDeleteGroup();
+  const inviteGuest = useInviteGuest();
+  const addGuestAccess = useAddGuest(null);
+  const setGuestRole = useSetGuestRole(null);
+  const removeGuestAccess = useRemoveGuest(null);
+
+  const workspaceRows = overview?.workspaces ?? [];
+  const vaultRows = workspaceRows.flatMap((ws) => ws.vaults);
+  const effectiveInviteWs = inviteWs || workspaceRows[0]?.workspace_id || '';
+
+  workspaceRows.forEach((ws) => { WS_LABELS[ws.workspace_id] = ws.name; });
+  WS_LIST.splice(0, WS_LIST.length, ...workspaceRows.map((ws) => ws.workspace_id));
+  VAULT_LIST.splice(0, VAULT_LIST.length, ...vaultRows.map((v) => v.name));
+
+  const accessQueries = useQueries({
+    queries: users.map((u) => ({
+      queryKey: qk.userAccess(u.user_id),
+      queryFn: () => ops<UserAccess>('access:for_user', { user_id: u.user_id }),
+      staleTime: 30_000,
+    })),
+  });
+  const accessByUser = new Map<string, UserAccess>();
+  users.forEach((u, i) => {
+    const data = accessQueries[i]?.data;
+    if (data) accessByUser.set(u.user_id, data);
+  });
+
+  users.forEach((u) => {
+    PEOPLE_DIR[u.user_id] = {
+      name: u.display_name || u.email,
+      email: u.email,
+    };
+  });
+  guestRows.forEach((g) => {
+    PEOPLE_DIR[g.user_id] = {
+      name: g.display_name || g.email || g.user_id,
+      email: g.email || g.user_id,
+    };
+  });
+
+  const groups = useMemo<Group[]>(() => groupRows.map((g) => ({
+    id: g.group_id,
+    name: g.name,
+    ws: g.workspace_roles.map((r) => ({ w: r.workspace_id, role: toWsRole(r.role) })),
+    members: g.members.map((m) => m.user_id),
+  })), [groupRows]);
+
+  const inheritedByUser = useMemo(() => {
+    const map = new Map<string, Array<{ w: string; role: WsRole; via: string }>>();
+    users.forEach((u) => {
+      const access = accessByUser.get(u.user_id);
+      map.set(u.user_id, (access?.inherited_workspaces ?? []).map((r) => ({
+        w: r.workspace_id,
+        role: toWsRole(r.role),
+        via: r.via,
+      })));
+    });
+    return map;
+  }, [users, accessQueries.map((q) => q.dataUpdatedAt).join('|')]);
+
+  const members = useMemo<OrgMember[]>(() => users.map((u) => {
+    const access = accessByUser.get(u.user_id);
+    return {
+      u: u.user_id,
+      userId: u.user_id,
+      you: me?.user_id === u.user_id,
+      owner: u.role === 'owner',
+      status: u.invited ? 'invited' : undefined,
+      presence: presenceFromLastSeen(u.last_seen_at),
+      last: u.invited ? 'Invited' : formatLastSeen(u.last_seen_at),
+      ws: (access?.workspaces ?? []).map((w) => ({ w: w.workspace_id, role: toWsRole(w.role) })),
+    };
+  }), [users, me?.user_id, accessQueries.map((q) => q.dataUpdatedAt).join('|')]);
+
+  const guests = useMemo<Guest[]>(() => guestRows.map((g) => ({
+    u: g.email || g.user_id,
+    userId: g.user_id,
+    name: g.display_name || g.email || g.user_id,
+    presence: presenceFromLastSeen(g.last_seen_at),
+    vaults: g.vaults.map((v) => ({ v: v.project_id, level: toVaultLevel(v.role) })),
+  })), [guestRows]);
+
   const dir = (u: string) => PEOPLE_DIR[u] ?? { name: u, email: u };
 
-  const inheritedWs = (u: string) =>
-    groups.filter((g) => g.members.includes(u)).flatMap((g) => g.ws.map((x) => ({ w: x.w, role: x.role, via: g.name })));
+  const inheritedWs = (u: string) => inheritedByUser.get(u) ?? [];
 
   const isAdminAnywhere = (m: OrgMember) =>
     !m.owner && (m.ws.some((x) => x.role === 'Admin') || inheritedWs(m.u).some((x) => x.role === 'Admin'));
@@ -938,15 +1033,18 @@ export function OrgPeopleSection() {
   }).sort((a, b) => ROLE_RANK[topRole(b)] - ROLE_RANK[topRole(a)]);
 
   const toggleExp = (u: string) => setExpanded((s) => { const n = new Set(s); n.has(u) ? n.delete(u) : n.add(u); return n; });
-  const setWsRole = (u: string, w: string, role: WsRole) => setMembers((ms) => ms.map((m) => m.u === u ? { ...m, ws: m.ws.map((x) => x.w === w ? { ...x, role } : x) } : m));
-  const removeWs = (u: string, w: string) => setMembers((ms) => ms.map((m) => m.u === u ? { ...m, ws: m.ws.filter((x) => x.w !== w) } : m));
-  const addWs = (u: string, w: string, role: WsRole) => setMembers((ms) => ms.map((m) => m.u === u ? (m.ws.some((x) => x.w === w) ? m : { ...m, ws: [...m.ws, { w, role }] }) : m));
+  const setWsRole = (u: string, w: string, role: WsRole) =>
+    setMemberRole.mutate({ workspace_id: w, user_id: u, role: fromWsRole(role) });
+  const removeWs = (u: string, w: string) =>
+    removeMember.mutate({ workspace_id: w, user_id: u });
+  const addWs = (u: string, w: string, role: WsRole) =>
+    addMember.mutate({ workspace_id: w, user_id: u, role: fromWsRole(role) });
 
   const requestRemove = (m: OrgMember) => {
     if (m.you) { setDialog({ title: "You can't remove yourself", body: 'Ask another owner to remove your account, or step down first.' }); return; }
     if (m.owner) { setDialog({ title: "Can't remove the owner", body: 'Transfer ownership to someone else before removing this person.' }); return; }
     const p = dir(m.u);
-    setDialog({ title: `Remove ${p.name}?`, danger: true, confirmLabel: 'Remove', body: 'They lose access to the organization and all its workspaces. Their content stays.', onConfirm: () => setMembers((ms) => ms.filter((x) => x.u !== m.u)) });
+    setDialog({ title: `Remove ${p.name}?`, danger: true, confirmLabel: 'Remove', body: 'Remove them from each workspace using the expanded workspace role controls.' });
   };
 
   const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
@@ -956,8 +1054,13 @@ export function OrgPeopleSection() {
   const invite = () => {
     if (!validEmail || exists) return;
     const addr = email.trim();
-    setMembers((ms) => [...ms, { u: addr, status: 'invited', presence: 'offline', last: 'Invited just now', ws: [{ w: inviteWs, role: inviteRole }] }]);
-    setEmail(''); setInviteWs('default'); setInviteRole('Member');
+    inviteUser.mutate({
+      email: addr,
+      role: 'member',
+      workspace_id: effectiveInviteWs || undefined,
+      workspace_role: fromWsRole(inviteRole),
+    });
+    setEmail(''); setInviteWs(workspaceRows[0]?.workspace_id ?? ''); setInviteRole('Member');
   };
 
   const wsOpts: SelectOption[] = WS_LIST.map((w) => ({ id: w, label: WS_LABELS[w] ?? w, icon: 'layers' as IconName }));
@@ -979,6 +1082,12 @@ export function OrgPeopleSection() {
     { id: 'guests' as const,  label: 'Guests',  icon: 'mail'  as IconName, n: guests.length  },
   ];
 
+  const vaultOpts: SelectOption[] = vaultRows.map((v) => ({
+    id: v.project_id,
+    label: v.name,
+    icon: 'folder' as IconName,
+  }));
+
   return (
     <div>
       {/* tab switcher */}
@@ -996,9 +1105,47 @@ export function OrgPeopleSection() {
       </div>
 
       {view === 'groups' ? (
-        <GroupsPanel groups={groups} setGroups={setGroups} members={members} setDialog={setDialog} />
+        <GroupsPanel
+          groups={groups}
+          members={members}
+          setDialog={setDialog}
+          onCreateGroup={(name) => createGroup.mutate({ name })}
+          onSetWsRole={(id, w, role) => setGroupWs.mutate({ group_id: id, workspace_id: w, role: fromWsRole(role) })}
+          onRemoveWs={(id, w) => removeGroupWs.mutate({ group_id: id, workspace_id: w })}
+          onAddWs={(id, w, role) => setGroupWs.mutate({ group_id: id, workspace_id: w, role: fromWsRole(role) })}
+          onAddMember={(id, userId) => addGroupMember.mutate({ group_id: id, user_id: userId })}
+          onRemoveMember={(id, userId) => removeGroupMember.mutate({ group_id: id, user_id: userId })}
+          onRemoveGroup={(id) => deleteGroup.mutate({ group_id: id })}
+        />
       ) : view === 'guests' ? (
-        <GuestsPanel guests={guests} setGuests={setGuests} setDialog={setDialog} />
+        <GuestsPanel
+          guests={guests}
+          vaultOptions={vaultOpts}
+          setDialog={setDialog}
+          onInvite={(addr, projectId, lvl) => inviteGuest.mutate({
+            email: addr,
+            project_id: projectId,
+            role: fromVaultLevel(lvl),
+          })}
+          onSetVaultLevel={(userId, projectId, lvl) => setGuestRole.mutate({
+            user_id: userId,
+            project_id: projectId,
+            role: fromVaultLevel(lvl),
+          })}
+          onRemoveVault={(userId, projectId) => removeGuestAccess.mutate({
+            user_id: userId,
+            project_id: projectId,
+          })}
+          onAddVault={(userId, projectId, lvl) => addGuestAccess.mutate({
+            user_id: userId,
+            project_id: projectId,
+            role: fromVaultLevel(lvl),
+          })}
+          onRemoveGuest={(g) => g.vaults.forEach((v) => removeGuestAccess.mutate({
+            user_id: g.userId,
+            project_id: v.v,
+          }))}
+        />
       ) : (
         <SCard
           title="Organization members"
@@ -1010,7 +1157,7 @@ export function OrgPeopleSection() {
             <EmailSuggest value={email} onChange={setEmail} candidates={inviteCandidates} onEnter={invite} placeholder="Enter email or name…" />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Add to</span>
-              <LevelSelect value={inviteWs} options={wsOpts} onPick={setInviteWs} width={180} />
+              <LevelSelect value={effectiveInviteWs} options={wsOpts} onPick={setInviteWs} width={180} />
               <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>as</span>
               <LevelSelect value={inviteRole} options={wsRoleOpts} onPick={(v) => setInviteRole(v as WsRole)} width={150} />
               <button onClick={invite} disabled={!validEmail || exists} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 13px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: (validEmail && !exists) ? 'pointer' : 'not-allowed', opacity: (validEmail && !exists) ? 1 : 0.5, fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, marginLeft: 'auto' }}>

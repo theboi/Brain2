@@ -53,4 +53,8 @@ export const qk = {
   userAccess: (userId: string) => ['user-access', userId] as const,
   workspaceMembers: (workspaceId: string) => ['workspace-members', workspaceId] as const,
   vaultAccess: (projectId: string) => ['vault-access', projectId] as const,
+  groups: () => ['groups'] as const,
+  guests: () => ['guests'] as const,
+  orgGraph: () => ['graph', 'org'] as const,
+  liveVaultGraph: (pid: string) => ['graph', 'vault', pid] as const,
 };

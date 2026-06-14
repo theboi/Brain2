@@ -7,6 +7,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { RequireAuth } from '@/components/auth/RequireAuth';
 import { LoginPage } from '@/pages/Login';
 import { ForcePasswordChange } from '@/pages/Account/ForcePasswordChange';
+import { AcceptInvite } from '@/pages/Account/AcceptInvite';
 import { HomePage } from '@/pages/Home';
 import { SettingsPage } from '@/pages/Settings';
 import { InboxPage } from '@/pages/Inbox';
@@ -26,6 +27,7 @@ function App() {
             {/* Public routes */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/account/change-password" element={<ForcePasswordChange />} />
+            <Route path="/account/accept-invite" element={<AcceptInvite />} />
             {/* Protected routes */}
             <Route path="/*" element={
               <RequireAuth>

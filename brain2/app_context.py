@@ -175,6 +175,9 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
                  params=[{"name": "target_user_id", "type": "str", "required": True},
                          {"name": "step_down", "type": "bool", "required": False}])
 
+    from brain2.invite_ops import register_invite_ops
+    register_invite_ops(ops, store)
+
     from brain2.project_ops import register_project_ops
     register_project_ops(ops, store)
 
@@ -212,6 +215,12 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
 
     from brain2.access_ops import register_access_ops
     register_access_ops(ops, store)
+
+    from brain2.group_ops import register_group_ops
+    register_group_ops(ops, store)
+
+    from brain2.graph_ops import register_graph_ops
+    register_graph_ops(ops, store)
 
     from brain2.schedule_ops import register_schedule_ops
     register_schedule_ops(ops, store)

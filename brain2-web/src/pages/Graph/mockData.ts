@@ -195,10 +195,3 @@ export function orgVaultPeople(vaultId: string): VaultPeople {
     guests: ORG_GUESTS.map((g) => { const s = g.vaults.find((x) => x.v === vaultId); return s ? { u: g.u, level: s.level } : null; }).filter((x): x is { u: string; level: string } => x !== null),
   };
 }
-
-// Map project name → vault id (for wiki graph tab)
-export const PROJECT_TO_VAULT: Record<string, string> = {
-  'default':     'v_general',
-  'research-q3': 'v_research',
-  'launch-docs': 'v_gateway',
-};

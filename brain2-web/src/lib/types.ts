@@ -64,20 +64,85 @@ export interface MeResponse {
   display_name: string | null;
   email: string | null;
   must_change_password: boolean;
+  last_seen_at?: string | null;
 }
 
 export interface TenantUser {
   user_id: string;
   email: string;
   role: string;
+  status: string;
   display_name: string | null;
+  last_seen_at: string | null;
+  invited: boolean;
+}
+
+export interface UserWorkspaceAccess {
+  workspace_id: string;
+  name: string;
+  role: string;
+}
+
+export interface InheritedWorkspaceAccess extends UserWorkspaceAccess {
+  via: string;
+  via_id: string;
 }
 
 export interface UserAccess {
   user_id: string;
   role: string;
-  workspaces: Array<{ workspace_id: string; name: string; role: string }>;
+  workspaces: UserWorkspaceAccess[];
+  inherited_workspaces: InheritedWorkspaceAccess[];
   guest_vaults: Array<{ project_id: string; name: string; workspace_id: string; workspace_name: string; role: string }>;
+}
+
+export interface InviteResult {
+  user_id: string;
+  email: string;
+  role?: string;
+  token: string;
+}
+
+export interface GroupMember {
+  user_id: string;
+  email: string | null;
+  display_name: string | null;
+}
+
+export interface GroupWorkspaceRole {
+  workspace_id: string;
+  name: string;
+  role: 'admin' | 'member';
+}
+
+export interface GroupVaultGrant {
+  project_id: string;
+  name: string;
+  role: 'viewer' | 'editor' | 'admin';
+}
+
+export interface GroupDetail {
+  group_id: string;
+  name: string;
+  created_at: string;
+  members: GroupMember[];
+  workspace_roles: GroupWorkspaceRole[];
+  vault_grants: GroupVaultGrant[];
+}
+
+export interface GuestVault {
+  project_id: string;
+  name: string;
+  role: 'viewer' | 'editor' | 'admin';
+}
+
+export interface Guest {
+  user_id: string;
+  email: string | null;
+  display_name: string | null;
+  last_seen_at: string | null;
+  invited: boolean;
+  vaults: GuestVault[];
 }
 
 export interface WorkspaceMember {
@@ -127,4 +192,31 @@ export interface OverviewWorkspace {
 export interface WorkspacesOverview {
   can_create: boolean;
   workspaces: OverviewWorkspace[];
+}
+
+export interface OrgGraphResponse {
+  workspaces: Array<{
+    id: string;
+    name: string;
+    vaults: Array<{ id: string; name: string; mode: VaultMode; items: number }>;
+  }>;
+  vault_pages: Record<string, { pages: string[]; links: [string, string][] }>;
+  vault_sources: Record<string, Array<{
+    id: string;
+    name: string;
+    mime: string | null;
+    kind: string | null;
+    cites: string[];
+  }>>;
+  people: Record<string, { name: string; email: string | null }>;
+  members: Array<{ u: string; owner?: boolean; invited?: boolean; ws: Array<{ w: string; role: string }> }>;
+  groups: Array<{ id: string; name: string; ws: Array<{ w: string; role: string }>; vaults?: Array<{ v: string; level: string }>; members: string[] }>;
+  guests: Array<{ u: string; vaults: Array<{ v: string; level: string }> }>;
+}
+
+export interface VaultGraphResponse {
+  vault: { id: string; name: string; mode: VaultMode };
+  pages: string[];
+  links: [string, string][];
+  sources: OrgGraphResponse['vault_sources'][string];
 }
