@@ -29,7 +29,7 @@ const BOTTOM: NavItem[] = [
 
 function RailItem({ it }: { it: NavItem }) {
   const location = useLocation();
-  const isActive = it.href === '/' ? location.pathname === '/' : location.pathname.startsWith(it.href);
+  const isActive = it.href === '/' ? location.pathname === '/' : location.pathname.startsWith(it.href) || (it.id === 'wiki' && location.pathname === '/graph');
 
   return (
     <NavLink

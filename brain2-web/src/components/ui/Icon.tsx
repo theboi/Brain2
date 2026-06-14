@@ -3,11 +3,11 @@
  * Size defaults to 18, stroke-width to 1.75 (matching the design prototype).
  */
 import {
-  AlertTriangle, ArrowRight, AtSign, BarChart2, Bell, Briefcase,
+  AlertTriangle, ArrowLeft, ArrowRight, AtSign, BarChart2, Bell, Briefcase,
   Calendar, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
   Clock, Cloud, Code2, Command, Copy, Download, Edit3, ExternalLink,
   File, Filter, Folder, Globe, Hash, History, Home, Image, Key,
-  Layers, Link2, Loader2, LogOut, Mail, MoreHorizontal, Moon,
+  Layers, Link2, Loader2, Lock, LogOut, Mail, MoreHorizontal, Moon,
   Paperclip, Pause, Pencil, Pin, Play, Plug, Plus, Presentation,
   RefreshCw, Repeat, Search, Send, Settings, Shield, Slash, Sliders,
   Sparkles, Square, Star, Sun, Tag, Trash2, TrendingUp, User,
@@ -87,6 +87,8 @@ const ICON_MAP = {
   edit: Edit3,
   dot: Circle,
   graph: Share2,
+  arrowLeft: ArrowLeft,
+  lock: Lock,
 } as const;
 
 export type IconName = keyof typeof ICON_MAP;

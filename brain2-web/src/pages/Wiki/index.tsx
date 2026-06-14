@@ -353,7 +353,7 @@ export function WikiPage() {
       {/* body */}
       {tab === 'Graph' ? (
         <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
-          <GraphView project="" selected={topic ?? ''} onSelect={openPage} isMobile={isMobile} />
+          <GraphView isMobile={isMobile} />
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', padding: bodyPad, paddingBottom: isMobile ? 'calc(72px + env(safe-area-inset-bottom, 0px))' : undefined }}>

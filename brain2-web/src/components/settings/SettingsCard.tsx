@@ -77,10 +77,11 @@ export function SRow({ label, desc, children, last, style }: SRowProps) {
 }
 
 /* RoleBadge — member role chip */
-type Role = 'Owner' | 'Admin' | 'Editor' | 'Viewer';
+type Role = 'Owner' | 'Admin' | 'Member' | 'Editor' | 'Viewer';
 const ROLE_COLOR: Record<Role, string> = {
   Owner:  'var(--accent)',
   Admin:  'var(--accent)',
+  Member: 'var(--fg-muted)',
   Editor: 'var(--success)',
   Viewer: 'var(--fg-muted)',
 };
