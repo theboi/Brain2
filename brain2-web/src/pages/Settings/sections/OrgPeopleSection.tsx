@@ -956,7 +956,6 @@ export function OrgPeopleSection() {
   const invite = () => {
     if (!validEmail || exists) return;
     const addr = email.trim();
-    const handle = addr.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     setMembers((ms) => [...ms, { u: addr, status: 'invited', presence: 'offline', last: 'Invited just now', ws: [{ w: inviteWs, role: inviteRole }] }]);
     setEmail(''); setInviteWs('default'); setInviteRole('Member');
   };

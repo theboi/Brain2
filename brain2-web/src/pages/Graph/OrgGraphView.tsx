@@ -13,8 +13,8 @@ import { Link } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
 import {
-  ORG_WS, ORG_VAULT_INDEX, ORG_VAULT_PAGES, ORG_VAULT_SOURCES,
-  ORG_DIR, ORG_MEMBERS, ORG_GROUPS, ORG_GUESTS, ORG_ROLE_RANK,
+  ORG_WS, ORG_VAULT_INDEX, ORG_VAULT_PAGES,
+  ORG_DIR, ORG_MEMBERS, ORG_GROUPS, ORG_GUESTS,
   ORG_SRC_GLYPH,
   vaultWsOf, ogWsColor, orgVaultSources, orgPageSources,
   orgPersonAccess, orgWsMembers, orgVaultPeople,

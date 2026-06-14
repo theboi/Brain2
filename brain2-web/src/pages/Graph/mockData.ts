@@ -180,11 +180,11 @@ export function orgPersonAccess(u: string): PersonAccess {
 
 export interface WsMemberRow { u: string; role: string; via: string | null; viaId: string | null; invited?: boolean; }
 export function orgWsMembers(wsId: string): WsMemberRow[] {
-  return ORG_MEMBERS.map((m) => {
+  const rows: WsMemberRow[] = ORG_MEMBERS.flatMap((m) => {
     const row = orgPersonAccess(m.u).wsRows.find((r) => r.w === wsId);
-    return row ? { u: m.u, role: row.role, via: row.via, viaId: row.viaId, invited: m.invited } : null;
-  }).filter((x): x is WsMemberRow => x !== null)
-    .sort((a, b) => ORG_ROLE_RANK[b.role] - ORG_ROLE_RANK[a.role]);
+    return row ? [{ u: m.u, role: row.role, via: row.via, viaId: row.viaId, invited: m.invited }] : [];
+  });
+  return rows.sort((a, b) => ORG_ROLE_RANK[b.role] - ORG_ROLE_RANK[a.role]);
 }
 
 export interface VaultPeople { members: WsMemberRow[]; guests: { u: string; level: string }[]; }
