@@ -21,6 +21,8 @@ class _Handler(FileSystemEventHandler):
         p = Path(event_path)
         if any(part in (".git",) for part in p.parts):
             return
+        if p.name.startswith(".tmp-"):
+            return
         try:
             rel = str(p.relative_to(self.root))
         except ValueError:

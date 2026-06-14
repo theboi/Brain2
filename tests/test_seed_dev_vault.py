@@ -1,5 +1,4 @@
-"""The seed script creates two workspaces, two vaults with linked markdown
-pages, and a few sources per vault. Re-runnable without duplication."""
+"""The seed script creates the Meridian demo org. Re-runnable without duplication."""
 import sys
 from pathlib import Path
 import pytest
@@ -21,23 +20,35 @@ def test_seed_idempotent_creates_expected_state(tmp_path, monkeypatch):
     actx = build_app_context()
     s = actx.store
     workspaces = {w.name for w in s.list_workspaces("default")}
-    assert {"Default", "Research"}.issubset(workspaces)
+    assert {
+        "Engineering",
+        "R&D / Autonomy",
+        "Flight Operations",
+        "Regulatory & Compliance",
+        "Manufacturing",
+        "Sales & Business Development",
+        "Finance & HR",
+    }.issubset(workspaces)
 
     projects = s.list_projects("default")
     by_id = {p.id: p for p in projects}
-    assert "cells-and-microscopy" in by_id
-    assert "q3-user-research" in by_id
-    assert by_id["cells-and-microscopy"].vault_path  # disk root set
+    assert "firmware-engineering" in by_id
+    assert "autonomy-stack" in by_id
+    assert by_id["firmware-engineering"].vault_path  # disk root set
 
     # Vault pages indexed.
-    pages = s.list_vault_pages("cells-and-microscopy")
+    pages = s.list_vault_pages("firmware-engineering")
     topics = {p.topic for p in pages}
-    assert {"cell-theory", "micrographia", "robert-hooke"}.issubset(topics)
+    assert {
+        "flight-controller-overview",
+        "px4-vs-ardupilot",
+        "battery-management-system",
+    }.issubset(topics)
 
     # At least one source per vault.
     src_count = s._conn.execute(
         "SELECT COUNT(*) FROM sources WHERE tenant_id='default' AND project_id=?",
-        ("cells-and-microscopy",)).fetchone()[0]
+        ("firmware-engineering",)).fetchone()[0]
     assert src_count >= 1
 
 
