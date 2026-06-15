@@ -14,7 +14,6 @@ import { useTodo } from '@/hooks/useAgents';
 import { useModels } from '@/hooks/useModels';
 import { useWorkspacesOverview } from '@/hooks/useWorkspaces';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
-import { AG_PEOPLE } from './data';
 import type { Agent, Message, Todo, Tool } from './data';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -75,7 +74,7 @@ export function fmtTime(s?: number): string {
   return m + ':' + String(s % 60).padStart(2, '0');
 }
 function accessOf(by: string): string {
-  return (AG_PEOPLE[by] || {}).access || 'read';
+  return by === 'you' ? 'your access' : 'requester';
 }
 
 export interface TodoActions {
