@@ -118,7 +118,7 @@ function QuickActions({ isMobile = false }) {
   // the Generate overlay with that plugin's parameters + prompt draft.
   const [gen, setGen] = React.useState(null);
   const runAction = (a) => setGen(homeActionConfig(a));
-  const goChat = () => { try { window.location.href = 'Chats.html'; } catch {} };
+  const goChat = () => { try { window.location.href = 'Agents.html'; } catch {} };
   return (
     <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', gap: isMobile ? 10 : 14 }}>
       {actions.map((a) => <ActionTile key={a.id} a={a} onRun={runAction} />)}

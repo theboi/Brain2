@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Brain2 — Agents Rework · Design Proposal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: #0B0D10; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  button, input, textarea, select { font-family: inherit; }
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.26); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+  @keyframes b2spin { to { transform: rotate(360deg); } }
+  @keyframes b2blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+  .b2-spin { animation: b2spin 0.9s linear infinite; }
+  .b2-caret { display: inline-block; width: 7px; height: 14px; background: var(--accent); margin-left: 2px; vertical-align: text-bottom; animation: b2blink 1s step-end infinite; border-radius: 1px; }
+  @media (prefers-reduced-motion: reduce) { .b2-spin, .b2-caret { animation: none; } }
+  .b2-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: #8B8F98; font-family: system-ui, sans-serif; font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="root"><div class="b2-loading">Loading proposal…</div></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="tokens.js"></script>
+<script type="text/babel" src="components.jsx"></script>
+<script type="text/babel" src="agents-mock.jsx"></script>
+</body>
+</html>

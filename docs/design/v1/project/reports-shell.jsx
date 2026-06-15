@@ -44,7 +44,7 @@ function MiniTopBar() {
 function MiniRail({ active = 'reports' }) {
   const items = [
     { id: 'home', icon: 'home' }, { id: 'sources', icon: 'sources' }, { id: 'wiki', icon: 'wiki' },
-    { id: 'chats', icon: 'chats', badge: 2 }, { id: 'reports', icon: 'file' }, { id: 'plugins', icon: 'plug' },
+    { id: 'chats', icon: 'robot', badge: 2 }, { id: 'reports', icon: 'file' }, { id: 'plugins', icon: 'plug' },
   ];
   const Row = ({ it }) => {
     const on = it.id === active;

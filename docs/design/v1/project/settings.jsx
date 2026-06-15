@@ -825,6 +825,165 @@ function ProvidersSection() {
   );
 }
 
+// ── Models (cloud + local) ───────────────────────────────────────────────────
+const SEED_LOCAL = [
+  { id: 'l1', name: 'workstation-1', url: 'http://192.168.1.20:11434', model: 'llama3.3', params: '70B', ctx: '128K', status: 'ok' },
+  { id: 'l2', name: 'gpu-box', url: 'http://gpu-box.local:11434', model: 'qwen2.5', params: '32B', ctx: '32K', status: 'ok' },
+  { id: 'l3', name: 'mac-studio', url: 'http://10.0.0.7:1234/v1', model: 'llama3.1', params: '8B', ctx: '128K', status: 'off' },
+];
+const SEED_CLOUD = [
+  { id: 'anthropic', name: 'Anthropic', key: 'sk-ant-••••••••3f2a', set: true, models: [['Claude Sonnet 4.5', '~200B'], ['Claude Haiku 4.5', '~40B']] },
+  { id: 'google', name: 'Google Gemini', key: 'AIza••••••••9kL2', set: true, models: [['Gemini 2.5 Flash', '—'], ['Gemini 2.5 Pro', '—']] },
+  { id: 'openai', name: 'OpenAI', key: '', set: false, models: [] },
+];
+function mInput(extra) { return { height: 34, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--mono-font)', fontSize: 12.5, outline: 'none', width: '100%', ...extra }; }
+function TestBtn({ testing, ok, onClick }) {
+  return (
+    <button onClick={onClick} disabled={testing} style={{ ...sbtn(), opacity: testing ? 0.7 : 1, cursor: testing ? 'default' : 'pointer' }}>
+      {testing
+        ? <React.Fragment><span className="b2-spin" style={{ display: 'flex' }}><Icon name="loader" size={13} color="var(--fg-muted)" /></span> Testing…</React.Fragment>
+        : ok ? <React.Fragment><Icon name="check" size={13} color="var(--success)" /> Test</React.Fragment> : 'Test'}
+    </button>
+  );
+}
+function ModelsSection() {
+  const [locals, setLocals] = React.useState(SEED_LOCAL);
+  const [cloud, setCloud] = React.useState(SEED_CLOUD);
+  const [adding, setAdding] = React.useState(false);
+  const [addingCloud, setAddingCloud] = React.useState(false);
+  const [editId, setEditId] = React.useState(null);      // local endpoint in edit mode
+  const [editCloud, setEditCloud] = React.useState(null); // cloud provider in edit mode
+  const [testing, setTesting] = React.useState({});       // id -> true while a test runs
+  const [tested, setTested] = React.useState({});         // id -> true after a successful test
+  const [nf, setNf] = React.useState({ name: '', url: 'http://', params: '' });
+  const [ncf, setNcf] = React.useState({ name: '', key: '' });
+
+  const upd = (id, patch) => setLocals((ls) => ls.map((l) => l.id === id ? { ...l, ...patch } : l));
+  const rm = (id) => { setEditId((e) => e === id ? null : e); setLocals((ls) => ls.filter((l) => l.id !== id)); };
+  const addLocal = () => {
+    if (!nf.name.trim() || !nf.url.trim()) return;
+    setLocals((ls) => [...ls, { id: 'l' + Date.now(), name: nf.name.trim(), url: nf.url.trim(), model: '—', params: nf.params.trim() || '—', ctx: '—', status: 'ok' }]);
+    setNf({ name: '', url: 'http://', params: '' }); setAdding(false);
+  };
+  const setKey = (id, key) => setCloud((cs) => cs.map((c) => c.id === id ? { ...c, key, set: key.trim().length > 0 } : c));
+  const rmCloud = (id) => { setEditCloud((e) => e === id ? null : e); setCloud((cs) => cs.filter((c) => c.id !== id)); };
+  const addCloud = () => {
+    if (!ncf.name.trim()) return;
+    setCloud((cs) => [...cs, { id: 'c' + Date.now(), name: ncf.name.trim(), key: ncf.key.trim(), set: ncf.key.trim().length > 0, models: [] }]);
+    setNcf({ name: '', key: '' }); setAddingCloud(false);
+  };
+  // simulate a connectivity check, then run an optional callback
+  const runTest = (id, after) => {
+    if (testing[id]) return;
+    setTesting((t) => ({ ...t, [id]: true }));
+    setTimeout(() => {
+      setTesting((t) => ({ ...t, [id]: false }));
+      setTested((t) => ({ ...t, [id]: true }));
+      after && after();
+    }, 1000);
+  };
+
+  const labelTxt = { fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', padding: '0 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+
+  return (
+    <div>
+      <SCard title="Local models" desc="Point at a runtime URL (Ollama, LM Studio, vLLM…). Name each endpoint, record its size, and the agents can run it."
+        action={<button onClick={() => setAdding((a) => !a)} style={sbtn()}><Icon name="plus" size={14} /> Add local model</button>}>
+        {locals.map((m, i) => {
+          const editing = editId === m.id;
+          return (
+            <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: i === locals.length - 1 ? 'none' : '1px solid var(--border)' }}>
+              <span style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 9, background: 'var(--surface-2)', color: m.status === 'ok' ? 'var(--success)' : 'var(--fg-faint)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="cpu" size={17} /></span>
+              <div style={{ width: 132, flexShrink: 0 }}>
+                {editing
+                  ? <input autoFocus value={m.name} onChange={(e) => upd(m.id, { name: e.target.value })} title="Rename endpoint" style={mInput({ height: 26, fontFamily: 'var(--ui-font)', fontWeight: 600, fontSize: 13.5 })} />
+                  : <div style={labelTxt}>{m.name}</div>}
+                <div style={{ fontSize: 11, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)', paddingLeft: 6 }}>{m.model}</div>
+              </div>
+              {editing
+                ? <input value={m.url} onChange={(e) => upd(m.id, { url: e.target.value })} style={mInput({ flex: 1, minWidth: 90 })} />
+                : <div style={{ flex: 1, minWidth: 90, fontFamily: 'var(--mono-font)', fontSize: 12.5, color: 'var(--fg-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.url}</div>}
+              {editing
+                ? <input value={m.params} onChange={(e) => upd(m.id, { params: e.target.value })} title="Parameter count — free-form" style={mInput({ width: 72, textAlign: 'center', fontWeight: 600 })} />
+                : <div style={{ width: 72, textAlign: 'center', fontFamily: 'var(--mono-font)', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{m.params}</div>}
+              <span className="b2-hide-sm" style={{ fontSize: 11, fontFamily: 'var(--mono-font)', color: 'var(--fg-faint)', width: 42, textAlign: 'right' }}>{m.ctx}</span>
+              {m.status === 'ok'
+                ? <span className="b2-hide-sm" style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--success)', width: 88 }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--success)' }} /> Reachable</span>
+                : <span className="b2-hide-sm" style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--fg-faint)', width: 88 }}><span style={{ width: 7, height: 7, borderRadius: '50%', border: '1.5px solid var(--fg-faint)' }} /> Offline</span>}
+              {editing
+                ? <button onClick={() => setEditId(null)} style={sbtn('primary')}><Icon name="check" size={14} color="#fff" /> Done</button>
+                : <TestBtn testing={testing[m.id]} ok={tested[m.id]} onClick={() => runTest(m.id, () => upd(m.id, { status: 'ok' }))} />}
+              <RowMenu items={editing
+                ? [{ label: 'Done editing', icon: 'check', onClick: () => setEditId(null) }, { divider: true, label: 'Remove endpoint', icon: 'trash', danger: true, onClick: () => rm(m.id) }]
+                : [{ label: 'Edit', icon: 'pencil', onClick: () => setEditId(m.id) }, { divider: true, label: 'Remove endpoint', icon: 'trash', danger: true, onClick: () => rm(m.id) }]} />
+            </div>
+          );
+        })}
+        {adding && (
+          <div style={{ marginTop: 16, padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)' }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 10 }}>Add a local model</div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <label style={{ flex: '1 1 150px' }}><span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-muted)', marginBottom: 5 }}>Name</span><input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="mac-studio-2" style={mInput({ fontFamily: 'var(--ui-font)' })} /></label>
+              <label style={{ flex: '2 1 240px' }}><span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-muted)', marginBottom: 5 }}>Base URL</span><input value={nf.url} onChange={(e) => setNf({ ...nf, url: e.target.value })} placeholder="http://10.0.0.9:11434" style={mInput()} /></label>
+              <label style={{ flex: '0 1 110px' }}><span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-muted)', marginBottom: 5 }}>Parameters</span><input value={nf.params} onChange={(e) => setNf({ ...nf, params: e.target.value })} placeholder="90B · 1T · 10M" style={mInput()} /></label>
+              <button onClick={addLocal} style={{ ...sbtn('primary'), height: 34 }}><Icon name="check" size={14} color="#fff" /> Add</button>
+              <button onClick={() => { setNf({ name: '', url: 'http://', params: '' }); setAdding(false); }} style={{ ...sbtn(), height: 34 }}>Cancel</button>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 9 }}>Parameter count is free-form — use the model’s own scale (e.g. 10M, 8B, 90B, 1T).</div>
+          </div>
+        )}
+      </SCard>
+
+      <SCard title="Cloud models" desc="Bring your own API keys. Keys are encrypted at rest (AES-256-GCM) and never shown again after saving."
+        action={<button onClick={() => setAddingCloud((a) => !a)} style={sbtn()}><Icon name="plus" size={14} /> Add provider</button>}>
+        {cloud.map((p, i) => {
+          const editing = editCloud === p.id;
+          return (
+            <div key={p.id} style={{ padding: '14px 0', borderBottom: i === cloud.length - 1 ? 'none' : '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 9, background: 'var(--surface-2)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="cloud" size={17} /></span>
+                <div style={{ width: 132, flexShrink: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{p.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{p.models.length} model{p.models.length === 1 ? '' : 's'}</div>
+                </div>
+                {editing
+                  ? <input autoFocus value={p.key} onChange={(e) => setKey(p.id, e.target.value)} placeholder="Paste API key…" style={mInput({ flex: 1 })} />
+                  : <div style={{ flex: 1, fontFamily: 'var(--mono-font)', fontSize: 12.5, color: p.key ? 'var(--fg-muted)' : 'var(--fg-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.key || 'No key set'}</div>}
+                {p.set ? <span className="b2-hide-sm" style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--success)', width: 62 }}><Icon name="check" size={13} /> Saved</span> : <span className="b2-hide-sm" style={{ fontSize: 12, color: 'var(--fg-faint)', width: 62 }}>Not set</span>}
+                {editing
+                  ? <button onClick={() => setEditCloud(null)} style={sbtn('primary')}><Icon name="check" size={14} color="#fff" /> Done</button>
+                  : <TestBtn testing={testing[p.id]} ok={tested[p.id]} onClick={() => runTest(p.id, () => p.key.trim() && setCloud((cs) => cs.map((c) => c.id === p.id ? { ...c, set: true } : c)))} />}
+                <RowMenu items={editing
+                  ? [{ label: 'Done editing', icon: 'check', onClick: () => setEditCloud(null) }, { divider: true, label: 'Remove provider', icon: 'trash', danger: true, onClick: () => rmCloud(p.id) }]
+                  : [{ label: 'Edit API key', icon: 'pencil', onClick: () => setEditCloud(p.id) }, { divider: true, label: 'Remove provider', icon: 'trash', danger: true, onClick: () => rmCloud(p.id) }]} />
+              </div>
+              {p.models.length > 0 && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingLeft: 46, marginTop: 10 }}>
+                  {p.models.map(([nm, sz]) => (
+                    <span key={nm} style={{ display: 'flex', alignItems: 'center', gap: 7, height: 26, padding: '0 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', fontSize: 12, color: 'var(--fg)' }}>{nm} <span style={{ fontFamily: 'var(--mono-font)', fontSize: 10.5, color: 'var(--fg-faint)' }}>{sz}</span></span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {addingCloud && (
+          <div style={{ marginTop: 16, padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)' }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 10 }}>Add a cloud provider</div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <label style={{ flex: '1 1 150px' }}><span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-muted)', marginBottom: 5 }}>Provider</span><input value={ncf.name} onChange={(e) => setNcf({ ...ncf, name: e.target.value })} placeholder="Mistral · Groq · …" style={mInput({ fontFamily: 'var(--ui-font)' })} /></label>
+              <label style={{ flex: '2 1 240px' }}><span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-muted)', marginBottom: 5 }}>API key</span><input value={ncf.key} onChange={(e) => setNcf({ ...ncf, key: e.target.value })} placeholder="Paste API key…" style={mInput()} /></label>
+              <button onClick={addCloud} style={{ ...sbtn('primary'), height: 34 }}><Icon name="check" size={14} color="#fff" /> Add</button>
+              <button onClick={() => { setNcf({ name: '', key: '' }); setAddingCloud(false); }} style={{ ...sbtn(), height: 34 }}>Cancel</button>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 9 }}>The key is encrypted at rest and never shown again after saving.</div>
+          </div>
+        )}
+      </SCard>
+    </div>
+  );
+}
+
 // ── Appearance (accent picker lives here) ────────────────────────────────────
 function AppearanceSection({ theme, setTheme, accent, setAccent }) {
   return (
@@ -933,4 +1092,4 @@ function DangerSection() {
   );
 }
 
-Object.assign(window, { useStored, ProfileSection, MembersSection, IntegrationsSection, ProvidersSection, AppearanceSection, ToolsSection, AuditSection, DangerSection, sbtn });
+Object.assign(window, { useStored, ProfileSection, MembersSection, IntegrationsSection, ProvidersSection, ModelsSection, AppearanceSection, ToolsSection, AuditSection, DangerSection, sbtn });
