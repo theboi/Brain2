@@ -11,7 +11,10 @@ import { MiniMD } from '@/components/browse/MiniMD';
 import { sse } from '@/lib/api';
 import { qk } from '@/lib/queryClient';
 import { useTodo } from '@/hooks/useAgents';
-import { AG_PEOPLE, PICK_MODELS } from './data';
+import { useModels } from '@/hooks/useModels';
+import { useWorkspacesOverview } from '@/hooks/useWorkspaces';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { AG_PEOPLE } from './data';
 import type { Agent, Message, Todo, Tool } from './data';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -428,19 +431,62 @@ function Dropdown({ value, options, onPick, width = 220, icon }: { value: string
 }
 
 // ── add-a-todo modal ──────────────────────────────────────────────────────────
-export function AddTodoModal({ agents, freeCount, onClose, onAdd }: { agents: Agent[]; freeCount: number; onClose: () => void; onAdd: (opts: { title: string; assign: string; model: string }) => void }) {
+export function AddTodoModal({
+  agents,
+  freeCount,
+  onClose,
+  onAdd,
+}: {
+  agents: Agent[];
+  freeCount: number;
+  onClose: () => void;
+  onAdd: (opts: { title: string; assign: string; model: string; workspaceId: string }) => void;
+}) {
+  const { workspaceId } = useWorkspace();
+  const { data: wsOverview } = useWorkspacesOverview();
+  const { data: models = [] } = useModels();
+  const workspaces = wsOverview?.workspaces ?? [];
   const [text, setText] = useState('');
+  const [ws, setWs] = useState(workspaceId ?? '');
   const [assign, setAssign] = useState('any');
   const [model, setModel] = useState('auto');
+  useEffect(() => {
+    if (ws) return;
+    if (workspaceId) setWs(workspaceId);
+    else if (workspaces[0]) setWs(workspaces[0].workspace_id);
+  }, [workspaceId, workspaces, ws]);
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', k); return () => document.removeEventListener('keydown', k); }, [onClose]);
-  const assignOpts: DropdownOption[] = [{ id: 'any', label: 'Any free agent', icon: 'robot', tone: 'var(--accent)' }, ...agents.filter((a) => a.status !== 'offline').map((a) => ({ id: a.id, label: a.name, icon: 'user' as IconName, hint: a.status === 'busy' ? 'busy' : 'free' }))];
+  const workspaceOpts: DropdownOption[] = workspaces.length
+    ? workspaces.map((workspace) => ({
+        id: workspace.workspace_id,
+        label: workspace.name,
+        icon: 'layers' as IconName,
+        hint: workspace.role,
+      }))
+    : workspaceId
+      ? [{ id: workspaceId, label: 'Current workspace', icon: 'layers' as IconName }]
+      : [{ id: '', label: 'No workspace', icon: 'alert' as IconName }];
+  const assignOpts: DropdownOption[] = [
+    { id: 'any', label: 'Any free agent', icon: 'robot', tone: 'var(--accent)' },
+    ...agents
+      .filter((a) => a.status === 'idle')
+      .map((a) => ({ id: a.id, label: a.name, icon: 'user' as IconName, hint: 'free' })),
+  ];
+  const cloudModels = models.filter((m) => m.provider !== 'ollama');
+  const localModels = models.filter((m) => m.provider === 'ollama');
   const modelOpts: DropdownOption[] = [
     { id: 'auto', label: 'Auto', icon: 'cpu', hint: 'cheapest capable' },
-    { id: 'h-cloud', label: 'Cloud', header: true }, ...PICK_MODELS.cloud.map((m) => ({ id: m.id, label: m.label, icon: 'cloud' as IconName, tone: 'var(--accent)' })),
-    { id: 'h-local', label: 'Local', header: true }, ...PICK_MODELS.local.map((m) => ({ id: m.id, label: m.label, icon: 'cpu' as IconName, hint: m.host })),
+    ...(cloudModels.length ? [{ id: 'h-cloud', label: 'Cloud', header: true } as DropdownOption] : []),
+    ...cloudModels.map((m) => ({ id: m.model_id, label: m.name, icon: 'cloud' as IconName, tone: 'var(--accent)' })),
+    ...(localModels.length ? [{ id: 'h-local', label: 'Local', header: true } as DropdownOption] : []),
+    ...localModels.map((m) => ({ id: m.model_id, label: m.name, icon: 'cpu' as IconName, hint: m.param_count ?? m.model })),
   ];
-  const isCloud = model === 'auto' ? false : PICK_MODELS.cloud.some((m) => m.id === model);
-  const submit = () => { if (!text.trim()) return; onAdd({ title: text.trim(), assign, model }); };
+  const selectedModel = models.find((m) => m.model_id === model);
+  const isCloud = selectedModel ? selectedModel.provider !== 'ollama' : false;
+  const submit = () => {
+    if (!text.trim() || !ws) return;
+    onAdd({ title: text.trim(), assign, model, workspaceId: ws });
+  };
   return createPortal(
     <div style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '11vh 20px 20px' }}>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' }} />
@@ -459,6 +505,10 @@ export function AddTodoModal({ agents, freeCount, onClose, onAdd }: { agents: Ag
             style={{ width: '100%', resize: 'none', border: '1px solid var(--border-strong)', borderRadius: 12, background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 14, lineHeight: 1.5, padding: 14, outline: 'none', marginBottom: 16 }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ width: 78, fontSize: 12.5, color: 'var(--fg-muted)' }}>Workspace</span>
+              <Dropdown value={ws} options={workspaceOpts} onPick={setWs} width={220} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{ width: 78, fontSize: 12.5, color: 'var(--fg-muted)' }}>Assign to</span>
               <Dropdown value={assign} options={assignOpts} onPick={setAssign} width={220} />
             </div>
@@ -468,7 +518,7 @@ export function AddTodoModal({ agents, freeCount, onClose, onAdd }: { agents: Ag
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{ width: 78, fontSize: 12.5, color: 'var(--fg-muted)' }}>Access</span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--fg)' }}><AccessTag user="alice" level="admin" /> runs with your access — alice</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--fg)' }}><Icon name="lock" size={13} color="var(--accent)" /> runs with your access</span>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 13px', borderRadius: 10, background: 'var(--accent-soft)', border: '1px solid var(--accent-line)', marginTop: 16 }}>
@@ -478,7 +528,7 @@ export function AddTodoModal({ agents, freeCount, onClose, onAdd }: { agents: Ag
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '0 20px 18px' }}>
           <button onClick={onClose} style={agBtnGhost()}>Cancel</button>
-          <button onClick={submit} disabled={!text.trim()} style={{ ...agBtnPrimary(), opacity: text.trim() ? 1 : 0.5, cursor: text.trim() ? 'pointer' : 'not-allowed' }}><Icon name="plus" size={14} color="#fff" /> Add to queue</button>
+          <button onClick={submit} disabled={!text.trim() || !ws} style={{ ...agBtnPrimary(), opacity: text.trim() && ws ? 1 : 0.5, cursor: text.trim() && ws ? 'pointer' : 'not-allowed' }}><Icon name="plus" size={14} color="#fff" /> Add to queue</button>
         </div>
       </div>
     </div>,
