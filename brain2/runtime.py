@@ -46,10 +46,19 @@ def run_worker(actx: AppContext, *, max_ticks: int | None = None,
     """Recover orphans once, then loop worker_tick. `max_ticks` bounds it for tests
     (None = run forever). Returns the number of ticks that did work."""
     actx.store.recover_orphan_tasks()
+    now = _now_iso()
+    for tenant_id in actx.store.list_tenant_ids():
+        for worker in actx.store.list_workers(tenant_id):
+            actx.store.worker_heartbeat(
+                tenant_id, worker["agent_id"], now, status="idle"
+            )
     worked_ticks = 0
     ticks = 0
+    from brain2.tasks.todo_runner import todo_tick
     while max_ticks is None or ticks < max_ticks:
-        if worker_tick(actx.store, actx.tasks, actx.events):
+        worked = worker_tick(actx.store, actx.tasks, actx.events)
+        worked = todo_tick(actx) or worked
+        if worked:
             worked_ticks += 1
         else:
             if max_ticks is not None:
