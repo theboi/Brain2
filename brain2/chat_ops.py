@@ -68,12 +68,13 @@ def insert_tool_message(store, *, conversation_id: str, tool_call_id: str,
 def make_conversations_create(store):
     def handler(ctx, params):
         agent_id = params["agent_id"]
-        # Verify agent exists in this tenant
+        # Verify model exists in this tenant. conversations.agent_id stores this
+        # model id for historical compatibility.
         row = store._conn.execute(
-            "SELECT agent_id FROM agents WHERE tenant_id=? AND agent_id=?",
+            "SELECT model_id FROM models WHERE tenant_id=? AND model_id=?",
             (ctx.tenant_id, agent_id)).fetchone()
         if row is None:
-            raise NotFound(f"agent {agent_id!r} not found")
+            raise NotFound(f"model {agent_id!r} not found")
         cid = str(uuid.uuid4())
         title = params.get("title") or "New conversation"
         now = _now()

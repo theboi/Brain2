@@ -340,7 +340,7 @@ def create_app(actx: AppContext) -> FastAPI:
             except (FileNotFoundError, UnicodeDecodeError):
                 page_content = vault_page.tldr or ""
         agent_row = actx.store._conn.execute(
-            "SELECT * FROM agents WHERE tenant_id=? AND agent_id=?",
+            "SELECT * FROM models WHERE tenant_id=? AND model_id=?",
             (ctx.tenant_id, body["agent_id"])).fetchone()
         if agent_row is None:
             raise HTTPException(status_code=404, detail="agent not found")
@@ -467,7 +467,7 @@ def create_app(actx: AppContext) -> FastAPI:
             except (FileNotFoundError, UnicodeDecodeError):
                 _page_content = _vault_page.tldr or ""
         agent_row = actx.store._conn.execute(
-            "SELECT * FROM agents WHERE tenant_id=? AND agent_id=?",
+            "SELECT * FROM models WHERE tenant_id=? AND model_id=?",
             (ctx.tenant_id, row["agent_id"])).fetchone()
         if agent_row is None:
             raise HTTPException(status_code=404, detail="agent not found")
@@ -537,7 +537,7 @@ def create_app(actx: AppContext) -> FastAPI:
         if convo is None:
             raise HTTPException(status_code=404, detail="conversation not found")
         agent_row = actx.store._conn.execute(
-            "SELECT * FROM agents WHERE tenant_id=? AND agent_id=?",
+            "SELECT * FROM models WHERE tenant_id=? AND model_id=?",
             (ctx.tenant_id, convo["agent_id"])).fetchone()
         if agent_row is None:
             raise HTTPException(status_code=404, detail="agent not found")
@@ -596,7 +596,7 @@ def create_app(actx: AppContext) -> FastAPI:
         if msg is None:
             raise HTTPException(status_code=404, detail="message not found")
         agent_row = actx.store._conn.execute(
-            "SELECT * FROM agents WHERE tenant_id=? AND agent_id=?",
+            "SELECT * FROM models WHERE tenant_id=? AND model_id=?",
             (ctx.tenant_id, convo["agent_id"])).fetchone()
         if agent_row is None:
             raise HTTPException(status_code=404, detail="agent not found")

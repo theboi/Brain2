@@ -31,8 +31,8 @@ def make_stats_overview(store):
             "AND event_type='operation_executed' AND enqueued_at >= ?",
             (ctx.tenant_id, since)).fetchone()["n"]
         agents_online = c.execute(
-            "SELECT COUNT(*) AS n FROM agents WHERE tenant_id=? AND status='ready'",
-            (ctx.tenant_id,)).fetchone()["n"] if _table_exists(c, "agents") else 0
+            "SELECT COUNT(*) AS n FROM models WHERE tenant_id=? AND status='ready'",
+            (ctx.tenant_id,)).fetchone()["n"] if _table_exists(c, "models") else 0
         return {"sources_total": sources_total,
                 "wiki_pages_total": wiki_total,
                 "queries_today": queries_today,

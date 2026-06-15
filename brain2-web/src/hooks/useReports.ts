@@ -43,8 +43,8 @@ export interface AgentRow {
   status: AgentStatus;
 }
 
-interface RawAgentRow {
-  agent_id: string;
+interface RawModelRow {
+  model_id: string;
   name: string;
   model: string;
   provider: string;
@@ -105,11 +105,14 @@ export function useCreateSchedule(projectId: string | null) {
 
 export function useAgents() {
   return useQuery({
-    queryKey: ['agents'],
-    queryFn: () => ops<{ agents: RawAgentRow[] }>('agents:list', {})
-      .then((r) => r.agents.map((agent) => ({
-        ...agent,
-        status: normalizeAgentStatus(agent.status),
+    queryKey: ['models'],
+    queryFn: () => ops<{ models: RawModelRow[] }>('models:list', {})
+      .then((r) => r.models.map((model) => ({
+        agent_id: model.model_id,
+        name: model.name,
+        model: model.model,
+        provider: model.provider,
+        status: normalizeAgentStatus(model.status),
       }))),
   });
 }

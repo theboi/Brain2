@@ -1,4 +1,4 @@
-"""Model ops (formerly agent_ops).
+"""Model ops for saved LLM configurations.
 
 A model is a saved configuration: provider + model + system prompt + tool
 allowlist + endpoint. Credentials live in the secrets table, referenced by

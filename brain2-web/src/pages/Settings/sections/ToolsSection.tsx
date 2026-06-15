@@ -10,7 +10,7 @@ const INITIAL_TOOLS: Tool[] = [
   { op: 'wiki:put',       desc: 'Edit wiki pages (optimistic-lock)',                on: true  },
   { op: 'sources:read',   desc: 'Read raw + extracted sources',                    on: true  },
   { op: 'sources:ingest', desc: 'Upload and re-ingest sources',                    on: false },
-  { op: 'agents:create',  desc: 'Create and configure agents',                     on: false },
+  { op: 'models:create',  desc: 'Create and configure models',                     on: false },
 ];
 
 export function ToolsSection() {

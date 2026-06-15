@@ -23,7 +23,7 @@ def _seed(store):
     aid = str(uuid.uuid4())
     now = "2026-06-08T00:00:00Z"
     store._conn.execute(
-        "INSERT INTO agents(agent_id, tenant_id, name, provider, model, "
+        "INSERT INTO models(model_id, tenant_id, name, provider, model, "
         "status, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
         (aid, "t1", "Researcher", "anthropic", "claude-opus-4-8", "ready",
          "u1", now, now),

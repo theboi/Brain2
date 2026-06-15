@@ -61,11 +61,11 @@ def make_reports_generate(store):
 
         agent_id = params["agent_id"]
         agent = store._conn.execute(
-            "SELECT agent_id FROM agents WHERE tenant_id=? AND agent_id=?",
+            "SELECT model_id FROM models WHERE tenant_id=? AND model_id=?",
             (ctx.tenant_id, agent_id),
         ).fetchone()
         if agent is None:
-            raise NotFound(f"agent {agent_id!r} not found")
+            raise NotFound(f"model {agent_id!r} not found")
 
         report_id = str(uuid.uuid4())
         now = _now()

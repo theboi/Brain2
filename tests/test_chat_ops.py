@@ -30,12 +30,12 @@ def _make_agent(c, tok, **overrides):
     body = {"name": "Test", "provider": "stub", "model": "stub-1",
             "system_prompt": "be brief", "tool_allowlist": []}
     body.update(overrides)
-    return c.post("/api/v1/ops/agents:create", json=body, headers=_hdr(tok)).json()
+    return c.post("/api/v1/ops/models:create", json=body, headers=_hdr(tok)).json()
 
 
 def test_conversation_create_list_messages(owner_client):
     c, tok = owner_client
-    aid = _make_agent(c, tok)["agent_id"]
+    aid = _make_agent(c, tok)["model_id"]
     cid = c.post("/api/v1/ops/conversations:create",
                  json={"agent_id": aid, "title": "Hi"},
                  headers=_hdr(tok)).json()["conversation_id"]
@@ -49,7 +49,7 @@ def test_conversation_create_list_messages(owner_client):
 
 def test_chat_stream_persists_messages(owner_client):
     c, tok = owner_client
-    aid = _make_agent(c, tok)["agent_id"]
+    aid = _make_agent(c, tok)["model_id"]
     cid = c.post("/api/v1/ops/conversations:create",
                  json={"agent_id": aid}, headers=_hdr(tok)).json()["conversation_id"]
 
@@ -74,7 +74,7 @@ def test_chat_stream_persists_messages(owner_client):
 
 def test_conversation_rename_and_pin(owner_client):
     c, tok = owner_client
-    aid = _make_agent(c, tok)["agent_id"]
+    aid = _make_agent(c, tok)["model_id"]
     cid = c.post("/api/v1/ops/conversations:create",
                  json={"agent_id": aid}, headers=_hdr(tok)).json()["conversation_id"]
     r = c.post("/api/v1/ops/conversations:rename",
@@ -87,7 +87,7 @@ def test_conversation_rename_and_pin(owner_client):
 
 def test_conversation_export_markdown(owner_client):
     c, tok = owner_client
-    aid = _make_agent(c, tok)["agent_id"]
+    aid = _make_agent(c, tok)["model_id"]
     cid = c.post("/api/v1/ops/conversations:create",
                  json={"agent_id": aid}, headers=_hdr(tok)).json()["conversation_id"]
     # send a message so the export has content

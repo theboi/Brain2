@@ -85,11 +85,11 @@ def test_provider_ops_roundtrip(tmp_path, monkeypatch):
 def test_split_chat_message_create_stream_and_replay(tmp_path, monkeypatch):
     client, _ = _make_client(tmp_path, monkeypatch)
     tok = _login(client)
-    agent = client.post("/api/v1/ops/agents:create",
+    agent = client.post("/api/v1/ops/models:create",
                         json={"name": "Test", "provider": "stub", "model": "stub-1"},
                         headers=_hdr(tok)).json()
     convo = client.post("/api/v1/ops/conversations:create",
-                        json={"agent_id": agent["agent_id"]},
+                        json={"agent_id": agent["model_id"]},
                         headers=_hdr(tok)).json()
 
     create = client.post(f"/api/v1/conversations/{convo['conversation_id']}/messages",
@@ -135,12 +135,12 @@ def test_split_wiki_audit_and_wiki_sources(tmp_path, monkeypatch):
         'SUGGESTION: {"section":"Intro","proposed_content":"Better text",'
         '"rationale":"Why","sources_cited":["src-topic"]}\nDONE',
     )
-    agent = client.post("/api/v1/ops/agents:create",
+    agent = client.post("/api/v1/ops/models:create",
                         json={"name": "Auditor", "provider": "stub", "model": "stub-1"},
                         headers=_hdr(tok)).json()
 
     kickoff = client.post("/api/v1/wiki/topic-a/audit?project_id=p1",
-                          json={"agent_id": agent["agent_id"], "instructions": "Improve"},
+                          json={"agent_id": agent["model_id"], "instructions": "Improve"},
                           headers=_hdr(tok, **{"Idempotency-Key": "audit-1"}))
     assert kickoff.status_code == 200
     stream_url = kickoff.json()["stream_url"]

@@ -236,7 +236,7 @@ def _agent_name(store, tenant_id: str, agent_id) -> str | None:
     if not agent_id:
         return None
     row = store._conn.execute(
-        "SELECT name FROM agents WHERE tenant_id=? AND agent_id=?",
+        "SELECT name FROM models WHERE tenant_id=? AND model_id=?",
         (tenant_id, agent_id),
     ).fetchone()
     return row["name"] if row else None
