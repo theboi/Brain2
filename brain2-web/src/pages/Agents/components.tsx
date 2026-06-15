@@ -78,7 +78,7 @@ export interface TodoActions {
   remove: (id: string) => void;
   rerun: (id: string) => void;
   continue: (id: string, text: string) => void;
-  add: (opts: { title: string; assign: string; model: string }) => void;
+  add: (opts: { title: string; assign: string; model: string; workspaceId: string }) => void;
 }
 
 interface MenuItem {
