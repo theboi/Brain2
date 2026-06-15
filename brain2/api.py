@@ -637,6 +637,30 @@ def create_app(actx: AppContext) -> FastAPI:
         _stop_flags[mid] = True
         return {"stopped": True}
 
+    @app.get("/api/v1/todos/{todo_id}/stream")
+    def todo_stream(todo_id: str, ctx: RequestContext = Depends(_auth)):
+        from brain2.auth.authorize import authorize as _authz
+        _authz(actx.store, ctx, "use_agents")
+        todo = actx.store.get_todo(ctx.tenant_id, todo_id)
+        if todo is None or not actx.store.can_see_todo(
+            ctx.tenant_id, ctx.user_id, ctx.tenant_role, todo
+        ):
+            raise HTTPException(status_code=403, detail="not permitted")
+
+        def _events():
+            conversation_id = todo.get("conversation_id")
+            if conversation_id:
+                rows = actx.store._conn.execute(
+                    "SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at",
+                    (conversation_id,),
+                ).fetchall()
+                for row in rows:
+                    yield "event: message\n" + _sse({k: row[k] for k in row.keys()})
+            current = actx.store.get_todo(ctx.tenant_id, todo_id)
+            yield "event: status\n" + _sse({"status": current["status"] if current else "gone"})
+
+        return StreamingResponse(_events(), media_type="text/event-stream")
+
     # --- agents local runtime probes (Phase E) ---
     @app.get("/api/v1/agents/local/runtime")
     def agents_local_runtime(ctx: RequestContext = Depends(_auth)):
