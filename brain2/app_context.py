@@ -65,6 +65,12 @@ def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext
                       tasks=tasks, events=events, connector_factory=connector_factory,
                       config=cfg, blob_store=blob_store)
 
+    try:
+        for _tid in store.list_tenant_ids():
+            store.ensure_workers(_tid, ["Jarvis", "Steve", "Marvin", "Ada", "Hal", "Friday"])
+    except Exception:
+        pass
+
     # Start VaultWatcher for all projects with vault paths
     import logging as _logging
     _logger = _logging.getLogger(__name__)
@@ -177,6 +183,11 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
 
     from brain2.invite_ops import register_invite_ops
     register_invite_ops(ops, store)
+
+    from brain2.worker_ops import register_worker_ops
+    register_worker_ops(ops, store)
+    from brain2.todo_ops import register_todo_ops
+    register_todo_ops(ops, store)
 
     from brain2.project_ops import register_project_ops
     register_project_ops(ops, store)
