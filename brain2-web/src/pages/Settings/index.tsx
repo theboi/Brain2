@@ -3,7 +3,7 @@
  *   Left: grouped secondary nav (Organization · Settings)
  *   Right: scrollable section content (max-width 760px)
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
 import type { Theme, Accent } from '@/lib/tokens';
@@ -11,6 +11,7 @@ import { ProfileSection } from './sections/ProfileSection';
 import { OrgPeopleSection } from './sections/OrgPeopleSection';
 import { IntegrationsSection } from './sections/IntegrationsSection';
 import { ProvidersSection } from './sections/ProvidersSection';
+import { ModelsSection } from './sections/ModelsSection';
 import { AppearanceSection } from './sections/AppearanceSection';
 import { ToolsSection } from './sections/ToolsSection';
 import { AuditSection } from './sections/AuditSection';
@@ -19,7 +20,7 @@ import { WorkspacesSection } from './sections/workspaces/WorkspacesSection';
 
 type SectionId =
   | 'workspaces' | 'people'
-  | 'profile' | 'integrations' | 'providers' | 'appearance' | 'tools' | 'audit' | 'danger';
+  | 'profile' | 'integrations' | 'providers' | 'models' | 'appearance' | 'tools' | 'audit' | 'danger';
 
 interface NavItem {
   id: SectionId;
@@ -47,6 +48,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'profile',      icon: 'user',     label: 'Profile',      subtitle: 'Manage your personal details and sign-in.' },
       { id: 'integrations', icon: 'plug',     label: 'Integrations', subtitle: 'Connect Telegram, Slack and other channels.' },
       { id: 'providers',    icon: 'key',      label: 'Providers',    subtitle: 'Bring your own model API keys.' },
+      { id: 'models',       icon: 'cpu',      label: 'Models',       subtitle: 'Local endpoints and cloud models for agents.' },
       { id: 'appearance',   icon: 'sparkles', label: 'Appearance',   subtitle: 'Theme, accent and interface preferences.' },
       { id: 'tools',        icon: 'command',  label: 'Tools',        subtitle: 'Control which operations agents can call.' },
       { id: 'audit',        icon: 'history',  label: 'Audit log',    subtitle: 'A record of every change in this workspace.' },
@@ -67,6 +69,21 @@ interface SettingsPageProps {
 export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPageProps) {
   const [sec, setSec] = useState<SectionId>('profile');
 
+  useEffect(() => {
+    const readHash = () => {
+      const id = window.location.hash.replace(/^#/, '') as SectionId;
+      if (ALL_NAV.some((item) => item.id === id)) setSec(id);
+    };
+    readHash();
+    window.addEventListener('hashchange', readHash);
+    return () => window.removeEventListener('hashchange', readHash);
+  }, []);
+
+  const selectSection = (id: SectionId) => {
+    setSec(id);
+    window.history.replaceState(null, '', `${window.location.pathname}#${id}`);
+  };
+
   const cur = ALL_NAV.find((n) => n.id === sec) ?? ALL_NAV[0];
 
   const body: Record<SectionId, React.ReactNode> = {
@@ -75,6 +92,7 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
     profile:      <ProfileSection />,
     integrations: <IntegrationsSection />,
     providers:    <ProvidersSection />,
+    models:       <ModelsSection />,
     appearance:   <AppearanceSection theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />,
     tools:        <ToolsSection />,
     audit:        <AuditSection />,
@@ -107,7 +125,7 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
               return (
                 <button
                   key={n.id}
-                  onClick={() => setSec(n.id)}
+                  onClick={() => selectSection(n.id)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 11,
                     width: '100%', height: 38, padding: '0 12px',
