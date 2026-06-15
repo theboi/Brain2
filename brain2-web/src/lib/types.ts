@@ -207,6 +207,41 @@ export interface ModelConfig {
   status: 'ready' | 'paused' | 'disabled';
 }
 
+export interface Worker {
+  agent_id: string;
+  name: string;
+  status: 'idle' | 'busy' | 'offline';
+  current_todo_id: string | null;
+  todo_summary: { todo_id: string; title: string } | null;
+}
+
+export interface LiveTodo {
+  todo_id: string;
+  tenant_id: string;
+  workspace_id: string;
+  requester_user_id: string;
+  title: string;
+  priority: number;
+  status: 'queued' | 'running' | 'done';
+  assigned_agent_id: string | null;
+  preferred_agent_id: string | null;
+  model_pref: string | null;
+  conversation_id: string | null;
+  memory_flushed: number;
+  tokens_total: number | null;
+  cost_total: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface TodoMessage {
+  role: 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_name?: string | null;
+  created_at?: string;
+}
+
 export interface OrgGraphResponse {
   workspaces: Array<{
     id: string;

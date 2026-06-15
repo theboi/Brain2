@@ -44,6 +44,9 @@ export const qk = {
   statsWikiByProject: () => ['stats', 'wiki_by_project'] as const,
   activity: (limit: number) => ['activity', limit] as const,
   report: (id: string) => ['reports', 'one', id] as const,
+  workers: () => ['workers'] as const,
+  todos: (status: string | null = null) => ['todos', status] as const,
+  todo: (id: string) => ['todo', id] as const,
   folders: (pid: string) => ['folders', pid] as const,
   wikiTopicSources: (pid: string, topic: string) =>
     ['wiki', pid, topic, 'sources'] as const,
