@@ -1124,6 +1124,273 @@ class LocalStore:
             (tenant_id,)).fetchone()
         return row["n"] if row else 0
 
+    # --- workers (agents) ---
+    def ensure_workers(self, tenant_id: str, names: list[str]) -> None:
+        """Idempotently create worker rows (by name) for a tenant."""
+        now = _now_iso()
+        with self.transaction() as cx:
+            existing = {
+                r["name"]
+                for r in cx.execute(
+                    "SELECT name FROM agents WHERE tenant_id=?", (tenant_id,)
+                ).fetchall()
+            }
+            for name in names:
+                if name in existing:
+                    continue
+                cx.execute(
+                    "INSERT INTO agents(agent_id, tenant_id, name, status, "
+                    "current_todo_id, last_heartbeat, created_at, updated_at) "
+                    "VALUES (?,?,?,'offline',NULL,NULL,?,?)",
+                    (uuid.uuid4().hex, tenant_id, name, now, now),
+                )
+
+    def list_workers(self, tenant_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM agents WHERE tenant_id=? ORDER BY name", (tenant_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def worker_heartbeat(self, tenant_id: str, agent_id: str, now_iso: str,
+                         status: str | None = None,
+                         current_todo_id: str | None = "__keep__") -> None:
+        sets = ["last_heartbeat=?", "updated_at=?"]
+        args: list = [now_iso, now_iso]
+        if status is not None:
+            sets.append("status=?")
+            args.append(status)
+        if current_todo_id != "__keep__":
+            sets.append("current_todo_id=?")
+            args.append(current_todo_id)
+        args += [tenant_id, agent_id]
+        with self.transaction() as cx:
+            cx.execute(
+                f"UPDATE agents SET {', '.join(sets)} "
+                "WHERE tenant_id=? AND agent_id=?",
+                tuple(args),
+            )
+
+    def sweep_stale_workers(self, now_iso: str, stale_seconds: int = 30) -> int:
+        """Mark stale workers offline and requeue any todo they were running."""
+        now_dt = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+        swept = 0
+        with self.transaction() as cx:
+            rows = cx.execute(
+                "SELECT agent_id, tenant_id, current_todo_id, last_heartbeat "
+                "FROM agents WHERE status != 'offline'"
+            ).fetchall()
+            for r in rows:
+                hb = r["last_heartbeat"]
+                stale = hb is None
+                if hb is not None:
+                    try:
+                        prev = datetime.fromisoformat(hb.replace("Z", "+00:00"))
+                        stale = (now_dt - prev).total_seconds() >= stale_seconds
+                    except ValueError:
+                        stale = True
+                if not stale:
+                    continue
+                cx.execute(
+                    "UPDATE agents SET status='offline', current_todo_id=NULL, "
+                    "updated_at=? WHERE tenant_id=? AND agent_id=?",
+                    (now_iso, r["tenant_id"], r["agent_id"]),
+                )
+                if r["current_todo_id"]:
+                    cx.execute(
+                        "UPDATE todos SET status='queued', assigned_agent_id=NULL, "
+                        "started_at=NULL WHERE tenant_id=? AND todo_id=? "
+                        "AND status='running'",
+                        (r["tenant_id"], r["current_todo_id"]),
+                    )
+                swept += 1
+        return swept
+
+    # --- todos ---
+    def create_todo(self, tenant_id: str, workspace_id: str, requester_user_id: str,
+                    *, title: str, todo_id: str | None = None,
+                    model_pref: str | None = None,
+                    preferred_agent_id: str | None = None) -> str:
+        todo_id = todo_id or uuid.uuid4().hex
+        now = _now_iso()
+        with self.transaction() as cx:
+            cx.execute(
+                "INSERT INTO todos(todo_id, tenant_id, workspace_id, requester_user_id, "
+                "title, priority, status, model_pref, preferred_agent_id, "
+                "memory_flushed, created_at) "
+                "VALUES (?,?,?,?,?,0,'queued',?,?,0,?)",
+                (
+                    todo_id,
+                    tenant_id,
+                    workspace_id,
+                    requester_user_id,
+                    title,
+                    model_pref,
+                    preferred_agent_id,
+                    now,
+                ),
+            )
+        return todo_id
+
+    def get_todo(self, tenant_id: str, todo_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM todos WHERE tenant_id=? AND todo_id=?",
+            (tenant_id, todo_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def set_todo_priority(self, tenant_id: str, todo_id: str, priority: int) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE todos SET priority=? WHERE tenant_id=? AND todo_id=?",
+                (priority, tenant_id, todo_id),
+            )
+
+    def delete_todo(self, tenant_id: str, todo_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "DELETE FROM todos WHERE tenant_id=? AND todo_id=?",
+                (tenant_id, todo_id),
+            )
+
+    def requeue_todo(self, tenant_id: str, todo_id: str) -> None:
+        """Stop a running todo or continue a done one: queued, agent freed."""
+        with self.transaction() as cx:
+            row = cx.execute(
+                "SELECT assigned_agent_id FROM todos WHERE tenant_id=? AND todo_id=?",
+                (tenant_id, todo_id),
+            ).fetchone()
+            if row and row["assigned_agent_id"]:
+                cx.execute(
+                    "UPDATE agents SET status='idle', current_todo_id=NULL, updated_at=? "
+                    "WHERE tenant_id=? AND agent_id=?",
+                    (_now_iso(), tenant_id, row["assigned_agent_id"]),
+                )
+            cx.execute(
+                "UPDATE todos SET status='queued', assigned_agent_id=NULL, "
+                "memory_flushed=0, started_at=NULL, completed_at=NULL "
+                "WHERE tenant_id=? AND todo_id=?",
+                (tenant_id, todo_id),
+            )
+
+    def claim_todo_for_agent(self, tenant_id: str, agent_id: str) -> dict | None:
+        """Atomically claim the top eligible queued todo for an idle agent."""
+        now = _now_iso()
+        with self.transaction() as cx:
+            row = cx.execute(
+                "SELECT todo_id FROM todos WHERE tenant_id=? AND status='queued' "
+                "AND (preferred_agent_id IS NULL OR preferred_agent_id=?) "
+                "ORDER BY priority DESC, created_at ASC LIMIT 1",
+                (tenant_id, agent_id),
+            ).fetchone()
+            if not row:
+                return None
+            todo_id = row["todo_id"]
+            updated = cx.execute(
+                "UPDATE todos SET status='running', assigned_agent_id=?, started_at=? "
+                "WHERE tenant_id=? AND todo_id=? AND status='queued'",
+                (agent_id, now, tenant_id, todo_id),
+            ).rowcount
+            if not updated:
+                return None
+            cx.execute(
+                "UPDATE agents SET status='busy', current_todo_id=?, updated_at=? "
+                "WHERE tenant_id=? AND agent_id=?",
+                (todo_id, now, tenant_id, agent_id),
+            )
+            claimed = cx.execute(
+                "SELECT * FROM todos WHERE tenant_id=? AND todo_id=?",
+                (tenant_id, todo_id),
+            ).fetchone()
+        return dict(claimed)
+
+    def complete_todo(self, tenant_id: str, todo_id: str, *,
+                      conversation_id: str | None,
+                      tokens_total: int | None,
+                      cost_total: str | None) -> None:
+        now = _now_iso()
+        with self.transaction() as cx:
+            row = cx.execute(
+                "SELECT assigned_agent_id FROM todos WHERE tenant_id=? AND todo_id=?",
+                (tenant_id, todo_id),
+            ).fetchone()
+            cx.execute(
+                "UPDATE todos SET status='done', completed_at=?, memory_flushed=1, "
+                "conversation_id=COALESCE(?, conversation_id), tokens_total=?, "
+                "cost_total=? WHERE tenant_id=? AND todo_id=?",
+                (now, conversation_id, tokens_total, cost_total, tenant_id, todo_id),
+            )
+            if row and row["assigned_agent_id"]:
+                cx.execute(
+                    "UPDATE agents SET status='idle', current_todo_id=NULL, updated_at=? "
+                    "WHERE tenant_id=? AND agent_id=?",
+                    (now, tenant_id, row["assigned_agent_id"]),
+                )
+
+    def set_todo_conversation(self, tenant_id: str, todo_id: str,
+                              conversation_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE todos SET conversation_id=? WHERE tenant_id=? AND todo_id=?",
+                (conversation_id, tenant_id, todo_id),
+            )
+
+    def append_todo_user_message(self, tenant_id: str, todo_id: str, text: str) -> None:
+        """Continue: append a user message to the linked conversation + requeue."""
+        td = self.get_todo(tenant_id, todo_id)
+        if td and td.get("conversation_id"):
+            from brain2.chat_ops import insert_user_message
+            insert_user_message(self, conversation_id=td["conversation_id"], content=text)
+        self.requeue_todo(tenant_id, todo_id)
+
+    # --- todo visibility ---
+    def list_admin_workspace_ids(self, tenant_id: str, user_id: str) -> set[str]:
+        rows = self._conn.execute(
+            "SELECT workspace_id FROM workspace_members "
+            "WHERE tenant_id=? AND user_id=? AND role='admin'",
+            (tenant_id, user_id),
+        ).fetchall()
+        return {r["workspace_id"] for r in rows}
+
+    def list_todos_visible(self, tenant_id: str, user_id: str, tenant_role: str,
+                           status: str | None = None,
+                           workspace_id: str | None = None) -> list[dict]:
+        clauses = ["tenant_id=?"]
+        args: list = [tenant_id]
+        if tenant_role != "owner":
+            admin_ws = self.list_admin_workspace_ids(tenant_id, user_id)
+            if admin_ws:
+                placeholders = ",".join("?" * len(admin_ws))
+                clauses.append(
+                    f"(requester_user_id=? OR workspace_id IN ({placeholders}))"
+                )
+                args.append(user_id)
+                args.extend(sorted(admin_ws))
+            else:
+                clauses.append("requester_user_id=?")
+                args.append(user_id)
+        if status:
+            clauses.append("status=?")
+            args.append(status)
+        if workspace_id:
+            clauses.append("workspace_id=?")
+            args.append(workspace_id)
+        rows = self._conn.execute(
+            f"SELECT * FROM todos WHERE {' AND '.join(clauses)} "
+            "ORDER BY priority DESC, created_at ASC",
+            tuple(args),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def can_see_todo(self, tenant_id: str, user_id: str, tenant_role: str,
+                     todo: dict) -> bool:
+        if todo["tenant_id"] != tenant_id:
+            return False
+        if tenant_role == "owner":
+            return True
+        if todo["requester_user_id"] == user_id:
+            return True
+        return todo["workspace_id"] in self.list_admin_workspace_ids(tenant_id, user_id)
+
     # --- data sources ---
     def create_datasource(self, tenant_id: str, project_id: str, name: str,
                           connector_type: str, connection_ref: str) -> str:
