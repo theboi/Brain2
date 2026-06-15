@@ -4,9 +4,13 @@
  */
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
 import { MiniMD } from '@/components/browse/MiniMD';
+import { sse } from '@/lib/api';
+import { qk } from '@/lib/queryClient';
+import { useTodo } from '@/hooks/useAgents';
 import { AG_PEOPLE, PICK_MODELS } from './data';
 import type { Agent, Message, Todo, Tool } from './data';
 
@@ -278,21 +282,57 @@ function DMeta({ label, children }: { label: string; children: ReactNode }) {
 }
 
 // ── conversation drawer (live or done) ────────────────────────────────────────
-export function ConversationDrawer({ todo, agent, onClose, onContinue }: { todo: Todo; agent?: Agent | null; onClose: () => void; onContinue: (id: string, text: string) => void }) {
+export function ConversationDrawer({
+  todoId,
+  agentOf,
+  onClose,
+  onContinue,
+}: {
+  todoId: string;
+  agentOf: (id: string | null) => Agent | null;
+  onClose: () => void;
+  onContinue: (id: string, text: string) => void;
+}) {
+  const { data: todo } = useTodo(todoId);
+  const qc = useQueryClient();
   const [shown, setShown] = useState(false);
-  const [text, setText] = useState('');
+  const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const r = requestAnimationFrame(() => setShown(true));
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', k);
     return () => { cancelAnimationFrame(r); document.removeEventListener('keydown', k); };
   }, [onClose]);
-  useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [todo.messages]);
+
+  useEffect(() => {
+    if (!todo || todo.status !== 'running') return;
+    const close = sse(
+      `/api/v1/todos/${todoId}/stream`,
+      () => qc.invalidateQueries({ queryKey: qk.todo(todoId) }),
+    );
+    return close;
+  }, [todoId, todo?.status, qc]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [todo?.messages]);
+
+  if (!todo) return null;
+
+  const agent = agentOf(todo.agentId);
   const running = todo.status === 'running';
   const done = todo.status === 'done';
   const queued = todo.status === 'queued';
-  const send = () => { if (text.trim()) { onContinue(todo.id, text.trim()); setText(''); } };
+  const send = () => {
+    const text = draft.trim();
+    if (!text) return;
+    onContinue(todoId, text);
+    setDraft('');
+  };
+
   return createPortal(
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '5vh 20px' }}>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(8,9,12,0.5)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', opacity: shown ? 1 : 0, transition: 'opacity .2s' }} />
@@ -331,13 +371,13 @@ export function ConversationDrawer({ todo, agent, onClose, onContinue }: { todo:
         {/* composer */}
         <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg)', padding: '12px 16px 14px' }}>
           <div style={{ border: '1px solid var(--border-strong)', borderRadius: 12, background: 'var(--surface)', overflow: 'hidden' }}>
-            <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }} rows={2}
+            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }} rows={2}
               placeholder={done ? 'Continue this task…' : 'Reply or add a follow-up instruction…'}
               style={{ width: '100%', resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13.5, lineHeight: 1.5, padding: '12px 13px' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderTop: '1px solid var(--border)' }}>
               <Icon name="atSign" size={15} color="var(--fg-muted)" />
               <span style={{ fontSize: 11, color: 'var(--fg-faint)' }}>re-queues with the full history</span>
-              <button onClick={send} disabled={!text.trim()} style={{ ...agBtnPrimary(), height: 32, marginLeft: 'auto', opacity: text.trim() ? 1 : 0.5, cursor: text.trim() ? 'pointer' : 'not-allowed' }}><Icon name="plus" size={14} color="#fff" /> Add to queue</button>
+              <button onClick={send} disabled={!draft.trim()} style={{ ...agBtnPrimary(), height: 32, marginLeft: 'auto', opacity: draft.trim() ? 1 : 0.5, cursor: draft.trim() ? 'pointer' : 'not-allowed' }}><Icon name="plus" size={14} color="#fff" /> Add to queue</button>
             </div>
           </div>
         </div>
