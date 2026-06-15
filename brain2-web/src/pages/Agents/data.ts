@@ -52,6 +52,7 @@ export interface Message {
 
 export interface Todo {
   id: string;
+  workspace_id?: string;
   title: string;
   by: string;
   priority: boolean;
