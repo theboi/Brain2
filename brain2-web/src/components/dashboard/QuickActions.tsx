@@ -104,7 +104,7 @@ interface QuickActionsProps {
 
 export function QuickActions({ actions, isMobile = false }: QuickActionsProps) {
   const runAction = (_a: QuickAction) => { /* TODO: launch plugin job */ };
-  const goChat = () => { window.location.href = '/chats'; };
+  const goChat = () => { window.location.href = '/agents'; };
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', gap: isMobile ? 10 : 14 }}>

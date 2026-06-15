@@ -15,6 +15,7 @@ import { SourcesPage } from '@/pages/Sources';
 import { WikiPage } from '@/pages/Wiki';
 import { GraphPage } from '@/pages/Graph';
 import { ReportsPage } from '@/pages/Reports';
+import { AgentsPage } from '@/pages/Agents';
 
 function App() {
   const { theme, accent, setTheme, setAccent, toggleTheme } = useTheme();
@@ -51,7 +52,8 @@ function App() {
                     <Route path="/wiki" element={<WikiPage />} />
                     <Route path="/wiki/:topic" element={<WikiPage />} />
                     <Route path="/graph" element={<GraphPage />} />
-                    <Route path="/chats/*" element={<StubPage title="Chats" />} />
+                    <Route path="/agents" element={<AgentsPage />} />
+                    <Route path="/chats/*" element={<Navigate to="/agents" replace />} />
                     <Route path="/reports" element={<ReportsPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>
@@ -62,21 +64,6 @@ function App() {
         </BrowserRouter>
       </WorkspaceProvider>
     </QueryClientProvider>
-  );
-}
-
-function StubPage({ title }: { title: string }) {
-  return (
-    <div
-      style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100%', flexDirection: 'column', gap: 12,
-        color: 'var(--fg-muted)',
-      }}
-    >
-      <span style={{ fontSize: 32, fontWeight: 700, color: 'var(--fg)', fontFamily: 'var(--display-font)' }}>{title}</span>
-      <span style={{ fontSize: 14, fontFamily: 'var(--mono-font)' }}>coming soon</span>
-    </div>
   );
 }
 

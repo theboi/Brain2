@@ -11,7 +11,7 @@ import {
   Paperclip, Pause, Pencil, Pin, Play, Plug, Plus, Presentation,
   RefreshCw, Repeat, Search, Send, Settings, Shield, Slash, Sliders,
   Sparkles, Square, Star, Sun, Tag, Trash2, TrendingUp, User,
-  Users, Wand2, X, Zap, MessageSquare, Circle, Share2,
+  Users, Wand2, X, Zap, MessageSquare, Circle, Share2, Bot,
 } from 'lucide-react';
 import type { LucideProps } from 'lucide-react';
 
@@ -20,6 +20,7 @@ const ICON_MAP = {
   sources: Layers,
   wiki: Star,
   chats: MessageSquare,
+  robot: Bot,
   settings: Settings,
   search: Search,
   plus: Plus,

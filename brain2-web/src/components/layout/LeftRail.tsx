@@ -19,7 +19,7 @@ const ITEMS: NavItem[] = [
   { id: 'home',    icon: 'home',    label: 'Home',    href: '/' },
   { id: 'sources', icon: 'sources', label: 'Sources', href: '/sources' },
   { id: 'wiki',    icon: 'wiki',    label: 'Wiki',    href: '/wiki' },
-  { id: 'chats',   icon: 'chats',   label: 'Chats',   href: '/chats', badge: 2 },
+  { id: 'agents',  icon: 'robot',   label: 'Agents',  href: '/agents', badge: 3 },
   { id: 'reports', icon: 'file',    label: 'Reports', href: '/reports' },
 ];
 

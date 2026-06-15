@@ -23,12 +23,12 @@ const PALETTE_GROUPS = [
     { label: 'Home',     icon: 'home',     href: '/' },
     { label: 'Sources',  icon: 'sources',  href: '/sources' },
     { label: 'Wiki',     icon: 'wiki',     href: '/wiki' },
-    { label: 'Chats',    icon: 'chats',    href: '/chats' },
+    { label: 'Agents',   icon: 'robot',    href: '/agents' },
     { label: 'Settings', icon: 'settings', href: '/settings' },
   ] },
   { group: 'Actions', items: [
     { label: 'Ingest a source', icon: 'download', href: '/sources' },
-    { label: 'New chat',        icon: 'plus',     href: '/chats' },
+    { label: 'Add a todo',      icon: 'plus',     href: '/agents' },
     { label: 'Open settings',   icon: 'settings', href: '/settings' },
   ] },
 ] as const;
