@@ -185,8 +185,8 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
     register_stats_ops(ops, store)
 
     if secrets is not None:
-        from brain2.agent_ops import register_agent_ops
-        register_agent_ops(ops, store, secrets)
+        from brain2.model_ops import register_model_ops
+        register_model_ops(ops, store, secrets)
         from brain2.provider_ops import register_provider_ops
         register_provider_ops(ops, secrets)
         from brain2.chat_ops import register_chat_ops
