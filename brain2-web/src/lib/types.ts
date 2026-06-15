@@ -194,6 +194,19 @@ export interface WorkspacesOverview {
   workspaces: OverviewWorkspace[];
 }
 
+export interface ModelConfig {
+  model_id: string;
+  name: string;
+  provider: 'anthropic' | 'gemini' | 'ollama' | 'openai' | 'stub';
+  model: string;
+  param_count: string | null;
+  system_prompt: string;
+  tool_allowlist: string[];
+  fallback_model: string | null;
+  ollama_base_url: string | null;
+  status: 'ready' | 'paused' | 'disabled';
+}
+
 export interface OrgGraphResponse {
   workspaces: Array<{
     id: string;
