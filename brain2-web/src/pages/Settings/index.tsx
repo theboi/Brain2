@@ -10,7 +10,6 @@ import type { Theme, Accent } from '@/lib/tokens';
 import { ProfileSection } from './sections/ProfileSection';
 import { OrgPeopleSection } from './sections/OrgPeopleSection';
 import { IntegrationsSection } from './sections/IntegrationsSection';
-import { ProvidersSection } from './sections/ProvidersSection';
 import { ModelsSection } from './sections/ModelsSection';
 import { AppearanceSection } from './sections/AppearanceSection';
 import { ToolsSection } from './sections/ToolsSection';
@@ -20,7 +19,7 @@ import { WorkspacesSection } from './sections/workspaces/WorkspacesSection';
 
 type SectionId =
   | 'workspaces' | 'people'
-  | 'profile' | 'integrations' | 'providers' | 'models' | 'appearance' | 'tools' | 'audit' | 'danger';
+  | 'profile' | 'integrations' | 'models' | 'appearance' | 'tools' | 'audit' | 'danger';
 
 interface NavItem {
   id: SectionId;
@@ -47,8 +46,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'profile',      icon: 'user',     label: 'Profile',      subtitle: 'Manage your personal details and sign-in.' },
       { id: 'integrations', icon: 'plug',     label: 'Integrations', subtitle: 'Connect Telegram, Slack and other channels.' },
-      { id: 'providers',    icon: 'key',      label: 'Providers',    subtitle: 'Bring your own model API keys.' },
-      { id: 'models',       icon: 'cpu',      label: 'Models',       subtitle: 'Local endpoints and cloud models for agents.' },
+      { id: 'models',       icon: 'cpu',      label: 'Models',       subtitle: 'Manage the cloud and local models your agents can run.' },
       { id: 'appearance',   icon: 'sparkles', label: 'Appearance',   subtitle: 'Theme, accent and interface preferences.' },
       { id: 'tools',        icon: 'command',  label: 'Tools',        subtitle: 'Control which operations agents can call.' },
       { id: 'audit',        icon: 'history',  label: 'Audit log',    subtitle: 'A record of every change in this workspace.' },
@@ -91,7 +89,6 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
     people:       <OrgPeopleSection />,
     profile:      <ProfileSection />,
     integrations: <IntegrationsSection />,
-    providers:    <ProvidersSection />,
     models:       <ModelsSection />,
     appearance:   <AppearanceSection theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />,
     tools:        <ToolsSection />,
