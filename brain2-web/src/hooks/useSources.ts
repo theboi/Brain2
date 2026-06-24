@@ -107,6 +107,21 @@ export function usePutExtracted(projectId: string | null) {
   });
 }
 
+export function useRestoreExtraction(projectId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { source_id: string; version: number }) =>
+      ops('sources:restore_extraction', { project_id: projectId, ...vars },
+          { idempotencyKey: genIdempotencyKey() }),
+    onSuccess: (_, vars) => {
+      if (!projectId) return;
+      qc.invalidateQueries({ queryKey: ['sources', projectId] });
+      qc.invalidateQueries({ queryKey: qk.sourceExtracted(projectId, vars.source_id) });
+      qc.invalidateQueries({ queryKey: qk.sourceHistory(projectId, vars.source_id) });
+    },
+  });
+}
+
 export function useReingest(projectId: string | null) {
   const qc = useQueryClient();
   return useMutation({

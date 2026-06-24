@@ -62,7 +62,7 @@ function WikiSidebar({ wf, setWf, selected, onSelect, pages, width = 264 }: {
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
         <Folder label="Pages" count={rows.length} open onToggle={() => {}}>
-          {rows.map((p) => <NestRow key={p.topic} icon="wiki" label={p.topic} active={p.topic === selected} badge={null} meta={p.tldr ? p.tldr.slice(0, 20) : ''} onClick={() => onSelect(p.topic)} />)}
+          {rows.map((p) => <NestRow key={p.topic} icon="wiki" label={p.topic} active={p.topic === selected} badge={null} onClick={() => onSelect(p.topic)} />)}
           {!rows.length && <div style={{ padding: '4px 10px 8px 27px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No matching pages</div>}
         </Folder>
       </div>
@@ -199,16 +199,17 @@ function EditTab({ initialContent, onSave, saving, mobile }: { initialContent: s
   );
 }
 
-function HistoryTab({ commits, projectId, onRevert, reverting, mobile }: {
+function HistoryTab({ commits, projectId, topic, onRevert, reverting, mobile }: {
   commits: VaultCommit[];
   projectId: string | null;
+  topic: string | null;
   onRevert: (sha: string) => void;
   reverting?: boolean;
   mobile?: boolean;
 }) {
   const [selSha, setSelSha] = useState<string | null>(commits[0]?.sha ?? null);
   const selectedSha = commits.some((c) => c.sha === selSha) ? selSha : commits[0]?.sha ?? null;
-  const { data: diffData, isFetching } = useVaultHistoryDiff(projectId, selectedSha);
+  const { data: diffData, isFetching } = useVaultHistoryDiff(projectId, selectedSha, topic);
   const revisions: HistoryRevision[] = commits.map((c) => ({
     id: c.sha,
     shortId: c.sha.slice(0, 7),
@@ -225,6 +226,7 @@ function HistoryTab({ commits, projectId, onRevert, reverting, mobile }: {
       diffLoading={isFetching}
       onRevert={onRevert}
       reverting={reverting}
+      revertLabel="Restore this version"
       mobile={mobile}
     />
   );
@@ -363,8 +365,8 @@ export function WikiPage() {
             : <div style={{ height: editH }}><EditTab initialContent={content} onSave={(c) => topic && writePage.mutate({ topic, content: c })} saving={writePage.isPending} /></div>
           )}
           {tab === 'History' && (isMobile
-            ? <HistoryTab commits={commits} projectId={projectId} onRevert={(sha) => revertCommit.mutate({ sha })} reverting={revertCommit.isPending} mobile />
-            : <div style={{ height: editH }}><HistoryTab commits={commits} projectId={projectId} onRevert={(sha) => revertCommit.mutate({ sha })} reverting={revertCommit.isPending} /></div>
+            ? <HistoryTab commits={commits} projectId={projectId} topic={topic} onRevert={(sha) => topic && revertCommit.mutate({ sha, topic })} reverting={revertCommit.isPending} mobile />
+            : <div style={{ height: editH }}><HistoryTab commits={commits} projectId={projectId} topic={topic} onRevert={(sha) => topic && revertCommit.mutate({ sha, topic })} reverting={revertCommit.isPending} /></div>
           )}
           {tab === 'Sources' && <SourcesTab sources={sources} projectId={projectId} />}
         </div>

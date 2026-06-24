@@ -196,6 +196,27 @@ def make_sources_put_extracted(store):
     return handler
 
 
+def make_sources_restore_extraction(store):
+    def handler(ctx, params):
+        sid = params["source_id"]
+        version = int(params["version"])
+        if _source_row(store, ctx, params, "source_id") is None:
+            raise NotFound(f"source {sid!r} not found")
+        row = store._conn.execute(
+            "SELECT extracted_md FROM source_extractions "
+            "WHERE tenant_id=? AND source_id=? AND version=?",
+            (ctx.tenant_id, sid, version)).fetchone()
+        if row is None:
+            raise NotFound(f"source extraction v{version} not found")
+        set_source_extracted(store, tenant_id=ctx.tenant_id, source_id=sid,
+                             extracted_md=row["extracted_md"] or "", kind="restore")
+        new_row = store._conn.execute(
+            "SELECT extracted_md, extracted_version FROM sources WHERE tenant_id=? "
+            "AND source_id=?", (ctx.tenant_id, sid)).fetchone()
+        return _row_to_dict(new_row)
+    return handler
+
+
 def make_sources_reingest(store, blob_store):
     def handler(ctx, params):
         from brain2.knowledge.extract import extract_to_markdown, extract_url_to_markdown
@@ -341,6 +362,12 @@ def register_source_ops(ops, store, blob_store):
                          {"name": "source_id", "type": "str", "required": True},
                          {"name": "content", "type": "str", "required": True},
                          {"name": "expect_version", "type": "int", "required": False}])
+    ops.register("sources:restore_extraction", action="ingest",
+                 handler=make_sources_restore_extraction(store),
+                 summary="Restore a prior extraction version as the current text",
+                 params=[{"name": "project_id", "type": "str", "required": True},
+                         {"name": "source_id", "type": "str", "required": True},
+                         {"name": "version", "type": "int", "required": True}])
     ops.register("sources:reingest", action="ingest",
                  handler=make_sources_reingest(store, blob_store),
                  summary="Re-run extraction for a source",

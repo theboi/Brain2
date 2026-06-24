@@ -6,8 +6,9 @@
  * back-stack. Faithful port of docs/design/v1 sources.jsx + app-sources.jsx.
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
+import { Modal } from '@/components/ui/Modal';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import {
   SOURCE_TREE, TYPE_ICON, STATUS_CHIP,
@@ -26,6 +27,7 @@ import {
   useSources, useExtracted,
   usePutExtracted, useReingest, useDeleteSource,
   useSourceEvents, useDownloadSource, useExtractionHistory, useExtractionDiff,
+  useRestoreExtraction,
 } from '@/hooks/useSources';
 import type { SourceRow } from '@/lib/types';
 
@@ -225,25 +227,60 @@ function RawBody({ s, onDownload }: { s: Source; onDownload?: () => void }) {
   );
 }
 
-function ExtractedBody({ s, extractedText, extractedVersion, onSave }: {
+function ExtractedBody({ s, extractedText, extractedVersion, onSave, startEditing = false }: {
   s: Source;
   extractedText: string;
   extractedVersion: number;
-  onSave?: (text: string, version: number) => void;
+  onSave?: (text: string, version: number) => Promise<unknown>;
+  startEditing?: boolean;
 }) {
   const [text, setText] = useState(extractedText);
-  useEffect(() => { setText(extractedText); }, [s.id, extractedText]);
+  const [editing, setEditing] = useState(startEditing);
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  useEffect(() => { setText(extractedText); setEditing(startEditing); }, [s.id, extractedText, startEditing]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await onSave?.(text, extractedVersion);
+      setResult({ ok: true, message: 'Extracted text saved successfully.' });
+      setEditing(false);
+    } catch (err) {
+      setResult({ ok: false, message: err instanceof Error ? err.message : 'Failed to save extracted text.' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <span style={{ fontSize: 12, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)' }}>{s.words} words · {s.tokens} tokens · markitdown</span>
         <span style={{ display: 'flex', gap: 8 }}>
-          <button style={btnGhost()} onClick={() => setText(extractedText)}>Reset to extracted</button>
-          <button style={btnPrimary()} onClick={() => onSave?.(text, extractedVersion)}>Save</button>
+          {editing ? (
+            <>
+              <button style={btnGhost()} onClick={() => { setText(extractedText); setEditing(false); }} disabled={saving}>Cancel</button>
+              <button style={{ ...btnPrimary(), opacity: saving ? 0.6 : 1 }} onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+            </>
+          ) : (
+            <button style={btnGhost()} onClick={() => setEditing(true)}><Icon name="pencil" size={14} /> Edit</button>
+          )}
         </span>
       </div>
-      <textarea value={text || ''} onChange={(e) => setText(e.target.value)} spellCheck={false}
-        style={{ width: '100%', minHeight: 420, resize: 'vertical', margin: 0, padding: 16, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-2)', fontFamily: 'var(--mono-font)', fontSize: 12.5, lineHeight: 1.6, color: 'var(--fg)', outline: 'none' }} />
+      <textarea value={text || ''} onChange={(e) => setText(e.target.value)} spellCheck={false} readOnly={!editing}
+        style={{ width: '100%', minHeight: 420, resize: 'vertical', margin: 0, padding: 16, borderRadius: 10, border: `1px solid ${editing ? 'var(--accent-line)' : 'var(--border)'}`, background: 'var(--surface-2)', fontFamily: 'var(--mono-font)', fontSize: 12.5, lineHeight: 1.6, color: editing ? 'var(--fg)' : 'var(--fg-muted)', outline: 'none', cursor: editing ? 'text' : 'default' }} />
+      {result && (
+        <Modal
+          onClose={() => setResult(null)}
+          icon={result.ok ? 'check' : 'alert'}
+          title={result.ok ? 'Saved' : 'Save failed'}
+          width={420}
+          footer={<button style={{ ...btnPrimary(), marginLeft: 'auto' }} onClick={() => setResult(null)}>Done</button>}
+        >
+          <div style={{ fontSize: 13.5, color: 'var(--fg)', lineHeight: 1.5 }}>{result.message}</div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -252,6 +289,7 @@ const EXTRACTION_KIND_LABEL: Record<string, string> = {
   upload: 'extracted on upload',
   reingest: 're-ingested · markitdown',
   edit: 'edited extraction',
+  restore: 'restored a prior version',
 };
 
 function HistoryBody({ s, projectId, mobile }: { s: Source; projectId: string | null; mobile?: boolean }) {
@@ -259,6 +297,7 @@ function HistoryBody({ s, projectId, mobile }: { s: Source; projectId: string | 
   const [selVer, setSelVer] = useState<number | null>(null);
   const selected = versions.some((v) => v.version === selVer) ? selVer : versions[0]?.version ?? null;
   const { data: diffData, isFetching } = useExtractionDiff(projectId, s.id, selected);
+  const restore = useRestoreExtraction(projectId);
   const revisions: HistoryRevision[] = versions.map((v) => ({
     id: String(v.version),
     shortId: `v${v.version}`,
@@ -266,6 +305,8 @@ function HistoryBody({ s, projectId, mobile }: { s: Source; projectId: string | 
     title: EXTRACTION_KIND_LABEL[v.kind] ?? v.kind,
     subtitle: v.bytes ? `${v.bytes.toLocaleString()} bytes` : undefined,
   }));
+  // The newest version is already current — only offer restore for older ones.
+  const latest = versions[0]?.version ?? null;
   return (
     <HistoryView
       revisions={revisions}
@@ -273,6 +314,12 @@ function HistoryBody({ s, projectId, mobile }: { s: Source; projectId: string | 
       onSelect={(id) => setSelVer(Number(id))}
       hunks={diffData?.hunks}
       diffLoading={isFetching}
+      subtitlePrefix=""
+      onRevert={selected != null && selected !== latest
+        ? (id) => restore.mutate({ source_id: s.id, version: Number(id) })
+        : undefined}
+      reverting={restore.isPending}
+      revertLabel="Restore this version"
       mobile={mobile}
     />
   );
@@ -308,7 +355,8 @@ function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
   s: Source; projectId: string | null; mobile?: boolean; onBack?: () => void; onDeleted?: () => void;
 }) {
   const [tab, setTab] = useState<SourceTab>('Preview');
-  useEffect(() => { setTab(s.status === 'failed' ? 'Extracted text' : 'Preview'); }, [s.id, s.status]);
+  const [editExtracted, setEditExtracted] = useState(false);
+  useEffect(() => { setTab(s.status === 'failed' ? 'Extracted text' : 'Preview'); setEditExtracted(false); }, [s.id, s.status]);
 
   const { data: extractedData } = useExtracted(projectId, s.id);
   const putExtracted = usePutExtracted(projectId);
@@ -320,7 +368,7 @@ function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
   const extractedVersion = extractedData?.version ?? 0;
 
   function handleSave(text: string, version: number) {
-    putExtracted.mutate({ source_id: s.id, extracted_md: text, expect_version: version });
+    return putExtracted.mutateAsync({ source_id: s.id, extracted_md: text, expect_version: version });
   }
 
   function handleReingest() {
@@ -349,7 +397,7 @@ function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
           <span style={{ fontFamily: 'var(--display-font)', fontSize: mobile ? 15 : 17, fontWeight: 600, color: 'var(--fg)', letterSpacing: 'var(--display-track)', flex: mobile ? 1 : 'none', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</span>
           <span style={{ marginLeft: mobile ? 0 : 'auto', display: 'flex', gap: 8, flexShrink: 0 }}>
             {!mobile && <button style={btnGhost()} onClick={handleReingest} disabled={reingest.isPending}><Icon name="refresh" size={14} /> Re-ingest</button>}
-            <button style={btnPrimary()} onClick={() => setTab('Extracted text')}><Icon name="pencil" size={14} color="#fff" /> {mobile ? '' : 'Edit MD'}</button>
+            <button style={btnPrimary()} onClick={() => { setTab('Extracted text'); setEditExtracted(true); }}><Icon name="pencil" size={14} color="#fff" /> {mobile ? '' : 'Edit MD'}</button>
           </span>
         </div>
         <div className="b2-tabscroll" style={{ display: 'flex', gap: 18, marginTop: 6, overflowX: mobile ? 'auto' : 'visible' }}>
@@ -377,6 +425,7 @@ function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
               extractedText={extractedText}
               extractedVersion={extractedVersion}
               onSave={handleSave}
+              startEditing={editExtracted}
             />
           )}
           {tab === 'History' && <HistoryBody s={s} projectId={projectId} mobile={mobile} />}
@@ -390,6 +439,7 @@ function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
 // ── Page ───────────────────────────────────────────────────────────────────────
 export function SourcesPage() {
   const isMobile = useMedia(MOBILE_QUERY);
+  const navigate = useNavigate();
   const { id: routeSourceId } = useParams<{ id?: string }>();
   const [f, setF] = useState<SourceFilter>({ project: 'all', tag: 'all', status: 'all' });
   const [selectedId, setSelectedId] = useState<string>('');
@@ -439,6 +489,11 @@ export function SourcesPage() {
   const selected = items.find((s) => s.id === selectedId) ?? (routeSourceId ? null : items[0] ?? null);
   const mobileChips = <FilterChips defs={sourceChipDefs(f, setF, projectNames)} />;
 
+  function selectSource(id: string) {
+    setSelectedId(id);
+    navigate(`/sources/${encodeURIComponent(id)}`);
+  }
+
   if (!projectId) {
     return <div style={{ padding: 24, color: 'var(--fg-muted)' }}>Pick a vault.</div>;
   }
@@ -452,14 +507,14 @@ export function SourcesPage() {
       {isMobile ? (
         <div style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
           {mobileView === 'list'
-            ? <ListPane items={items} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setMobileView('detail'); }} chips={mobileChips} onIngest={() => setModal(true)} />
+            ? <ListPane items={items} selectedId={selectedId} onSelect={(id) => { selectSource(id); setMobileView('detail'); }} chips={mobileChips} onIngest={() => setModal(true)} />
             : selected
               ? <PreviewPane s={selected} projectId={projectId} mobile onBack={() => setMobileView('list')} onDeleted={() => { setSelectedId(''); setMobileView('list'); }} />
               : <div style={{ padding: 24, color: 'var(--fg-muted)' }}>No source selected.</div>}
         </div>
       ) : (
         <>
-          <SourcesSidebar f={f} setF={setF} selectedId={selectedId} onSelect={setSelectedId} onIngest={() => setModal(true)} items={items} projectNames={projectNames} />
+          <SourcesSidebar f={f} setF={setF} selectedId={selectedId} onSelect={selectSource} onIngest={() => setModal(true)} items={items} projectNames={projectNames} />
           {selected
             ? <PreviewPane s={selected} projectId={projectId} onDeleted={() => setSelectedId('')} />
             : <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>Select a source to preview.</div>}

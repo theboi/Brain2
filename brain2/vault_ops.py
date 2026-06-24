@@ -6,7 +6,9 @@ from pathlib import Path
 from brain2.errors import Conflict, NotFound
 from brain2.vault.fs import write_text_atomic
 from brain2.vault.indexer import reindex_vault, reindex_path
-from brain2.vault.git import git_log, git_show, git_revert, commit_batch, CommitBatch
+from brain2.vault.git import (
+    git_log, git_show, git_revert, git_file_at, commit_batch, CommitBatch,
+)
 
 
 def _vault_root(store, ctx, params) -> Path:
@@ -15,6 +17,18 @@ def _vault_root(store, ctx, params) -> Path:
     if proj is None or not proj.vault_path:
         raise NotFound(f"project {project_id!r} has no vault")
     return Path(proj.vault_path)
+
+
+def _page_rel(store, ctx, params) -> str | None:
+    """Resolve the vault-relative file path for a topic/path param, or None."""
+    project_id = params.get("project_id") or ctx.project_id
+    if params.get("path"):
+        return params["path"]
+    topic = params.get("topic")
+    if topic:
+        page = store.get_vault_page_by_topic(project_id, topic)
+        return page.path if page else None
+    return None
 
 
 def make_read_index(store):
@@ -118,7 +132,8 @@ def make_history(store):
     def handler(ctx, params):
         root = _vault_root(store, ctx, params)
         limit = int(params.get("limit", 50))
-        return {"commits": git_log(root, limit=limit)}
+        rel = _page_rel(store, ctx, params)
+        return {"commits": git_log(root, limit=limit, path=rel)}
     return handler
 
 
@@ -127,7 +142,8 @@ def make_history_show(store):
         from brain2.vault.git import parse_show_hunks
         root = _vault_root(store, ctx, params)
         sha = params["sha"]
-        diff = git_show(root, sha)
+        rel = _page_rel(store, ctx, params)
+        diff = git_show(root, sha, path=rel)
         return {"sha": sha, "diff": diff, "hunks": parse_show_hunks(diff)}
     return handler
 
@@ -137,10 +153,32 @@ def make_revert(store):
         project_id = params.get("project_id") or ctx.project_id
         root = _vault_root(store, ctx, params)
         sha = params["sha"]
-        revert_sha = git_revert(store, root, sha,
-                                project_id=project_id, tenant_id=ctx.tenant_id,
-                                agent_id=f"user:{ctx.user_id}")
-        reindex_vault(store, project_id, root)
+        rel = _page_rel(store, ctx, params)
+
+        # Without a topic/path, fall back to reverting the whole commit.
+        if rel is None:
+            revert_sha = git_revert(store, root, sha,
+                                    project_id=project_id, tenant_id=ctx.tenant_id,
+                                    agent_id=f"user:{ctx.user_id}")
+            reindex_vault(store, project_id, root)
+            return {"revert_sha": revert_sha}
+
+        # Restore the page to its content as of the selected commit, then commit.
+        content = git_file_at(root, sha, rel)
+        abs_path = root / rel
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        write_text_atomic(abs_path, content)
+        reindex_path(store, project_id, root, rel)
+
+        batch = CommitBatch(root)
+        batch.touched(abs_path)
+        revert_sha = commit_batch(
+            store, batch,
+            project_id=project_id, tenant_id=ctx.tenant_id,
+            kind="human",
+            message=f"restore: {params.get('topic') or rel} @ {sha[:7]}",
+            agent_id=f"user:{ctx.user_id}", source_file=None,
+        )
         return {"revert_sha": revert_sha}
     return handler
 
@@ -256,16 +294,22 @@ def register_vault_ops(ops, store):
                  summary="Wikilinks with no matching target page", params=[pid])
     ops.register("vault:history", action="read_vault",
                  handler=make_history(store),
-                 summary="Git log of the vault, newest-first",
-                 params=[pid, {"name": "limit", "type": "int", "required": False}])
+                 summary="Git log of the vault (optionally scoped to one page), newest-first",
+                 params=[pid, {"name": "limit", "type": "int", "required": False},
+                         {"name": "topic", "type": "str", "required": False},
+                         {"name": "path", "type": "str", "required": False}])
     ops.register("vault:history_show", action="read_vault",
                  handler=make_history_show(store),
-                 summary="Unified diff for a single commit",
-                 params=[pid, {"name": "sha", "type": "str", "required": True}])
+                 summary="Unified diff for a single commit (optionally scoped to one page)",
+                 params=[pid, {"name": "sha", "type": "str", "required": True},
+                         {"name": "topic", "type": "str", "required": False},
+                         {"name": "path", "type": "str", "required": False}])
     ops.register("vault:revert", action="manage_vault",
                  handler=make_revert(store),
-                 summary="Revert a vault commit",
-                 params=[pid, {"name": "sha", "type": "str", "required": True}])
+                 summary="Restore a page to a prior version (or revert a commit when no topic given)",
+                 params=[pid, {"name": "sha", "type": "str", "required": True},
+                         {"name": "topic", "type": "str", "required": False},
+                         {"name": "path", "type": "str", "required": False}])
     ops.register("vault:reindex", action="manage_vault",
                  handler=make_reindex(store),
                  summary="Force a full reindex of the vault", params=[pid])

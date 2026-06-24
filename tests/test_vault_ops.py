@@ -174,3 +174,67 @@ def test_vault_search_respects_limit(vault_client):
                headers=_h(tok))
     assert r.status_code == 200
     assert len(r.json()["results"]) <= 1
+
+
+def test_vault_history_scoped_to_topic(vault_client):
+    c, tok, s, root = vault_client
+    c.post("/api/v1/ops/vault:write_page",
+           json={"project_id": "p1", "topic": "attention",
+                 "content": "attn v2", "commit_message": "edit attention"},
+           headers=_h(tok))
+    c.post("/api/v1/ops/vault:write_page",
+           json={"project_id": "p1", "topic": "softmax",
+                 "content": "sm v2", "commit_message": "edit softmax"},
+           headers=_h(tok))
+    r = c.post("/api/v1/ops/vault:history",
+               json={"project_id": "p1", "topic": "attention"}, headers=_h(tok))
+    assert r.status_code == 200, r.text
+    msgs = [x["message"] for x in r.json()["commits"]]
+    assert any("edit attention" in m for m in msgs)
+    assert all("edit softmax" not in m for m in msgs)
+
+
+def test_vault_revert_restores_page_to_selected_version(vault_client):
+    c, tok, s, root = vault_client
+    c.post("/api/v1/ops/vault:write_page",
+           json={"project_id": "p1", "topic": "attention",
+                 "content": "ONE", "commit_message": "v1"}, headers=_h(tok))
+    c.post("/api/v1/ops/vault:write_page",
+           json={"project_id": "p1", "topic": "attention",
+                 "content": "TWO", "commit_message": "v2"}, headers=_h(tok))
+    hist = c.post("/api/v1/ops/vault:history",
+                  json={"project_id": "p1", "topic": "attention"},
+                  headers=_h(tok)).json()["commits"]
+    sha_v1 = next(x["sha"] for x in hist if x["message"] == "v1")
+
+    r = c.post("/api/v1/ops/vault:revert",
+               json={"project_id": "p1", "sha": sha_v1, "topic": "attention"},
+               headers=_h(tok))
+    assert r.status_code == 200, r.text
+
+    page = c.post("/api/v1/ops/vault:read_page",
+                  json={"project_id": "p1", "topic": "attention"},
+                  headers=_h(tok)).json()
+    assert page["content"] == "ONE"
+
+    hist2 = c.post("/api/v1/ops/vault:history",
+                   json={"project_id": "p1", "topic": "attention"},
+                   headers=_h(tok)).json()["commits"]
+    assert len(hist2) == len(hist) + 1
+
+
+def test_vault_history_show_scoped_to_topic(vault_client):
+    c, tok, s, root = vault_client
+    c.post("/api/v1/ops/vault:write_page",
+           json={"project_id": "p1", "topic": "attention",
+                 "content": "attn body change", "commit_message": "edit attention"},
+           headers=_h(tok))
+    hist = c.post("/api/v1/ops/vault:history",
+                  json={"project_id": "p1", "topic": "attention"},
+                  headers=_h(tok)).json()["commits"]
+    sha = hist[0]["sha"]
+    r = c.post("/api/v1/ops/vault:history_show",
+               json={"project_id": "p1", "sha": sha, "topic": "attention"},
+               headers=_h(tok))
+    assert r.status_code == 200, r.text
+    assert "attention" in r.json()["diff"]

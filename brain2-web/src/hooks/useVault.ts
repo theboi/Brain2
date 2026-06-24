@@ -46,13 +46,14 @@ export function useVaultHistory(projectId: string | null, topic: string | null) 
   });
 }
 
-export function useVaultHistoryDiff(projectId: string | null, sha: string | null) {
+export function useVaultHistoryDiff(projectId: string | null, sha: string | null,
+                                    topic: string | null = null) {
   return useQuery({
-    queryKey: projectId && sha ? qk.vaultHistoryDiff(projectId, sha)
+    queryKey: projectId && sha ? [...qk.vaultHistoryDiff(projectId, sha), topic ?? '_']
                                 : ['vault', '_', 'history-diff', '_'],
     queryFn: () => ops<{ sha: string; diff: string; hunks: DiffHunk[] }>(
       'vault:history_show',
-      { project_id: projectId, sha },
+      { project_id: projectId, sha, topic },
     ),
     enabled: !!projectId && !!sha,
   });
@@ -94,9 +95,9 @@ export function useWritePage(projectId: string | null) {
 export function useRevertCommit(projectId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { sha: string }) =>
+    mutationFn: (vars: { sha: string; topic?: string }) =>
       ops<{ revert_sha: string }>('vault:revert',
-        { project_id: projectId, sha: vars.sha },
+        { project_id: projectId, sha: vars.sha, topic: vars.topic },
         { idempotencyKey: genIdempotencyKey() }),
     onSuccess: () => {
       if (projectId) qc.invalidateQueries({ queryKey: ['vault', projectId] });

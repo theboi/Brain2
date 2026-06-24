@@ -44,6 +44,32 @@ def test_extraction_history_lists_versions_newest_first(store):
     assert "extracted_md" not in out["versions"][0]
 
 
+def test_restore_extraction_writes_old_content_as_new_version(store):
+    reg = _seed_ops(store)
+    sid = create_source_row(
+        store, tenant_id="t1", project_id="p1", kind="text", filename="n.txt"
+    )
+    set_source_extracted(
+        store, tenant_id="t1", source_id=sid, extracted_md="one", kind="upload"
+    )
+    set_source_extracted(
+        store, tenant_id="t1", source_id=sid, extracted_md="two", kind="edit"
+    )
+    out = dispatch(
+        store, reg, _ctx(), "sources:restore_extraction",
+        {"project_id": "p1", "source_id": sid, "version": 1},
+    )
+    # current extracted text is back to "one"
+    assert out["extracted_md"] == "one"
+    # a new (third) version was appended, kind="restore"
+    hist = dispatch(
+        store, reg, _ctx(), "sources:extraction_history",
+        {"project_id": "p1", "source_id": sid},
+    )["versions"]
+    assert [v["version"] for v in hist] == [3, 2, 1]
+    assert hist[0]["kind"] == "restore"
+
+
 def test_extraction_history_rejects_source_from_another_project(store):
     reg = _seed_ops(store)
     sid = create_source_row(store, tenant_id="t1", project_id="p2", kind="text")

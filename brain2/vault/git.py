@@ -108,11 +108,17 @@ def commit_batch(store, batch: CommitBatch, *, project_id: str, tenant_id: str,
     return sha
 
 
-def git_log(root: Path, *, limit: int = 50, until_sha: str | None = None) -> list[dict]:
-    """Return [{sha, message, author, ts}] newest-first, up to limit."""
+def git_log(root: Path, *, limit: int = 50, until_sha: str | None = None,
+            path: str | None = None) -> list[dict]:
+    """Return [{sha, message, author, ts}] newest-first, up to limit.
+
+    When ``path`` is given, only commits that touched that file are returned.
+    """
     args = ["log", f"-{limit}", "--format=%H%x1f%s%x1f%an%x1f%aI"]
     if until_sha:
         args.append(f"{until_sha}~1")
+    if path:
+        args += ["--", path]
     out = _run(args, cwd=root).stdout
     rows = []
     for line in out.strip().splitlines():
@@ -123,9 +129,23 @@ def git_log(root: Path, *, limit: int = 50, until_sha: str | None = None) -> lis
     return rows
 
 
-def git_show(root: Path, sha: str) -> str:
-    """Return the patch-only unified diff of a commit."""
-    return _run(["show", "--patch", "--format=", sha], cwd=root).stdout
+def git_show(root: Path, sha: str, path: str | None = None) -> str:
+    """Return the patch-only unified diff of a commit, optionally scoped to one file."""
+    args = ["show", "--patch", "--format=", sha]
+    if path:
+        args += ["--", path]
+    return _run(args, cwd=root).stdout
+
+
+def git_file_at(root: Path, sha: str, path: str) -> str:
+    """Return the contents of ``path`` as it existed at commit ``sha``.
+
+    Returns "" if the file did not exist at that commit.
+    """
+    res = _run(["show", f"{sha}:{path}"], cwd=root, check=False)
+    if res.returncode != 0:
+        return ""
+    return res.stdout
 
 
 def parse_show_hunks(patch: str) -> list[dict]:

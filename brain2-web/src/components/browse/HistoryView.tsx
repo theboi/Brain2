@@ -24,6 +24,8 @@ export function HistoryView({
   diffLoading,
   onRevert,
   reverting,
+  revertLabel = 'Revert to this',
+  subtitlePrefix = 'By ',
   mobile,
   footer,
 }: {
@@ -34,6 +36,8 @@ export function HistoryView({
   diffLoading?: boolean;
   onRevert?: (id: string) => void;
   reverting?: boolean;
+  revertLabel?: string;
+  subtitlePrefix?: string;
   mobile?: boolean;
   footer?: ReactNode;
 }) {
@@ -82,13 +86,13 @@ export function HistoryView({
       {cur && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, padding: '12px 0', borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
           <div style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>
-            {cur.subtitle && <>By <b style={{ color: 'var(--fg)' }}>{cur.subtitle}</b> · </>}{cur.date}
+            {cur.subtitle && <>{subtitlePrefix}<b style={{ color: 'var(--fg)' }}>{cur.subtitle}</b> · </>}{cur.date}
             {cur.title && <><br /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 4 }}>{cur.title}</span></>}
           </div>
           {onRevert && (
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
               <button onClick={() => onRevert(cur.id)} disabled={reverting} style={{ ...btnGhost(), opacity: reverting ? 0.6 : 1 }}>
-                <Icon name="history" size={13} /> Revert to this
+                <Icon name="history" size={13} /> {revertLabel}
               </button>
             </span>
           )}

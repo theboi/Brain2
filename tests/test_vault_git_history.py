@@ -1,6 +1,9 @@
 from brain2.store.local import LocalStore
 from brain2.vault.fs import write_text_atomic
-from brain2.vault.git import CommitBatch, commit_batch, git_init_vault, git_log, git_show, git_revert
+from brain2.vault.git import (
+    CommitBatch, commit_batch, git_init_vault, git_log, git_show, git_revert,
+    git_file_at,
+)
 from brain2.vault.init import init_vault_tree
 
 
@@ -37,6 +40,37 @@ def test_git_show_returns_unified_diff(tmp_path):
     out = git_show(root, sha)
     assert "+hello" in out
     assert "wiki/concepts/a.md" in out
+
+
+def test_git_log_filters_by_path(tmp_path):
+    s, root = _store_and_vault(tmp_path)
+    a = _make_commit(s, root, "wiki/concepts/a.md", "a", "ingest a")
+    _make_commit(s, root, "wiki/concepts/b.md", "b", "ingest b")
+    log = git_log(root, path="wiki/concepts/a.md")
+    assert [c["sha"] for c in log] == [a]
+
+
+def test_git_show_scoped_to_path(tmp_path):
+    s, root = _store_and_vault(tmp_path)
+    write_text_atomic(root / "wiki" / "concepts" / "a.md", "aaa\n")
+    write_text_atomic(root / "wiki" / "concepts" / "b.md", "bbb\n")
+    bt = CommitBatch(root)
+    bt.touched(root / "wiki" / "concepts" / "a.md")
+    bt.touched(root / "wiki" / "concepts" / "b.md")
+    sha = commit_batch(s, bt, project_id="p1", tenant_id="t1",
+                       kind="ingest", message="two files", agent_id="a",
+                       source_file=None)
+    out = git_show(root, sha, path="wiki/concepts/a.md")
+    assert "aaa" in out
+    assert "bbb" not in out
+
+
+def test_git_file_at_returns_content_at_commit(tmp_path):
+    s, root = _store_and_vault(tmp_path)
+    v1 = _make_commit(s, root, "wiki/concepts/a.md", "version one\n", "v1")
+    v2 = _make_commit(s, root, "wiki/concepts/a.md", "version two\n", "v2")
+    assert git_file_at(root, v1, "wiki/concepts/a.md") == "version one\n"
+    assert git_file_at(root, v2, "wiki/concepts/a.md") == "version two\n"
 
 
 def test_git_revert_undoes_a_commit(tmp_path):
