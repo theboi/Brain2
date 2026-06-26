@@ -95,6 +95,24 @@ def set_source_failed(store, *, tenant_id: str, source_id: str,
             (error, now, tenant_id, source_id))
 
 
+def set_source_status(store, *, tenant_id: str, source_id: str, status: str,
+                      error: str | None = None) -> None:
+    if status not in {"queued", "processing", "done", "failed", "extracting"}:
+        raise ValueError(f"unsupported source status: {status!r}")
+    now = _now()
+    with store.transaction() as cx:
+        if status == "failed":
+            cx.execute(
+                "UPDATE sources SET status='failed', extraction_error=?, updated_at=? "
+                "WHERE tenant_id=? AND source_id=?",
+                (error, now, tenant_id, source_id))
+        else:
+            cx.execute(
+                "UPDATE sources SET status=?, updated_at=? "
+                "WHERE tenant_id=? AND source_id=?",
+                (status, now, tenant_id, source_id))
+
+
 # --- ops -------------------------------------------------------------
 
 def make_sources_list(store):

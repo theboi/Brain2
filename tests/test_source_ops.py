@@ -52,3 +52,20 @@ def test_create_source_row_persists_mode(store):
             "SELECT mode FROM sources WHERE source_id=?", (source_id,)
         ).fetchone()
     assert row[0] == "static"
+
+
+def test_set_source_status_transitions(store):
+    store.create_tenant("t1", "Acme")
+    store.create_project("t1", "p1", "Research")
+    source_id = create_source_row(
+        store, tenant_id="t1", project_id="p1", kind="text"
+    )
+
+    from brain2.source_ops import set_source_status
+
+    set_source_status(store, tenant_id="t1", source_id=source_id, status="queued")
+
+    with store.transaction() as cx:
+        assert cx.execute(
+            "SELECT status FROM sources WHERE source_id=?", (source_id,)
+        ).fetchone()[0] == "queued"
