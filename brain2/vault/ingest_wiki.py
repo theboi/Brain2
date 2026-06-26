@@ -32,6 +32,8 @@ def run_wiki(store, gateway, req) -> str | None:
     else:
         raw_md = extract_to_markdown(raw_path, mime=None)
 
+    # Wiki ingestion is shared vault material; call the gateway directly without
+    # user persona injection.
     cleaned = _llm_clean(gateway, req.tenant_id, raw_md)
     emitted = _llm_classify(gateway, req.tenant_id, cleaned)
 

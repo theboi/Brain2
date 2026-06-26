@@ -60,6 +60,18 @@ def _raw_path_for_runner(tmpdir: Path, row, mode: str, raw_path: str | None, ext
     return materialized
 
 
+def _actor_for_mode(store, tenant_id: str, mode: str, payload: dict) -> str:
+    if mode != "wiki":
+        return "system"
+    if payload.get("agent_id"):
+        return payload["agent_id"]
+    workers = store.list_workers(tenant_id)
+    if workers:
+        payload["agent_id"] = workers[0]["agent_id"]
+        return payload["agent_id"]
+    return "wiki-agent"
+
+
 def make_source_process_handler(store, gateway, blob_store):
     runners = build_runners(store, gateway)
 
@@ -68,7 +80,7 @@ def make_source_process_handler(store, gateway, blob_store):
         tenant_id = task["tenant_id"]
         source_id = payload["source_id"]
         mode = payload["mode"]
-        actor = "system" if mode != "wiki" else payload.get("agent_id", "wiki-agent")
+        actor = _actor_for_mode(store, tenant_id, mode, payload)
         row = _source_row(store, tenant_id, source_id)
 
         try:
