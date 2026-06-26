@@ -4,6 +4,7 @@
  * Faithful TS port of docs/design/v1/project/md.jsx.
  */
 import { Fragment, type ReactNode } from 'react';
+import { Icon } from '@/components/ui/Icon';
 
 type CiteFn = ((token: string) => void) | undefined;
 type WikiLinkFn = ((topic: string) => void) | undefined;
@@ -123,7 +124,23 @@ export function MiniMD({ text, onCite, onWikiLink, knownTopics }: {
         const checked = task[1].toLowerCase() === 'x';
         list.push(
           <li key={i} style={{ listStyle: 'none', marginLeft: -20, display: 'flex', alignItems: 'flex-start', gap: 8, lineHeight: 1.55, padding: '3px 0' }}>
-            <input type="checkbox" checked={checked} readOnly style={{ marginTop: 3, accentColor: 'var(--accent)', cursor: 'default', flexShrink: 0 }} />
+            <span
+              aria-hidden
+              style={{
+                width: 15,
+                height: 15,
+                marginTop: 4,
+                flexShrink: 0,
+                borderRadius: 4,
+                border: `1.5px solid ${checked ? 'var(--accent)' : 'var(--border-strong)'}`,
+                background: checked ? 'var(--accent)' : 'transparent',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {checked && <Icon name="check" size={10} color="#fff" />}
+            </span>
             <span style={{ color: checked ? 'var(--fg-faint)' : 'var(--fg-muted)', textDecoration: checked ? 'line-through' : 'none' }}>{mdInline(task[2], i, opts)}</span>
           </li>,
         );

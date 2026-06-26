@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@/components/ui/Modal';
 import { useProjects } from '@/hooks/useWorkspaces';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
 export interface DroppedFile { name: string; type: string; size: string; project: string; topic: string; collision?: boolean; mode: 'wiki' | 'dynamic' | 'static'; }
@@ -81,14 +82,6 @@ function IngMenu({ trigger, width = 240, align = 'left', full = false, children 
         document.body,
       )}
     </Fragment>
-  );
-}
-
-function IngCheck({ checked, onChange }: { checked: boolean; onChange: () => void }) {
-  return (
-    <button onClick={(e) => { e.stopPropagation(); onChange(); }} style={{ width: 17, height: 17, flexShrink: 0, borderRadius: 5, border: `1.5px solid ${checked ? 'var(--accent)' : 'var(--border-strong)'}`, background: checked ? 'var(--accent)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}>
-      {checked && <Icon name="check" size={11} color="#fff" />}
-    </button>
   );
 }
 
@@ -317,7 +310,7 @@ function IngestQueueBar({ total, selCount, allSel, onToggleAll, onBulk, onClearS
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)', minHeight: 46, flexWrap: 'wrap' }}>
-      <IngCheck checked={allSel} onChange={onToggleAll} />
+      <Checkbox checked={allSel} onChange={onToggleAll} />
       {selCount > 0 ? (
         <Fragment>
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap' }}>{selCount} selected</span>
@@ -342,7 +335,7 @@ function IngestRow({ r, selected, onToggle, onChange, onRemove, vaultOptions, va
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', borderBottom: '1px solid var(--border)', background: selected ? 'var(--accent-soft)' : 'transparent' }}>
-      <IngCheck checked={selected} onChange={onToggle} />
+      <Checkbox checked={selected} onChange={onToggle} />
       <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 7, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)' }}><Icon name={INGEST_TYPE_ICON[r.type] || 'file'} size={14} /></span>
       <div style={{ flex: 1, minWidth: 80 }}>
         <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.kind === 'url' ? r.url : r.name}</div>
