@@ -5,7 +5,7 @@ import { apiFetch, genIdempotencyKey } from '@/lib/api';
 export function useIngestUrl(projectId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { url: string; topic?: string; folder_id?: string }) =>
+    mutationFn: (vars: { url: string; topic?: string; folder_id?: string; mode?: string }) =>
       apiFetch<{ source_id: string }>('/api/v1/sources/from_url', {
         method: 'POST',
         body: JSON.stringify({ project_id: projectId, ...vars }),
@@ -20,7 +20,7 @@ export function useIngestUrl(projectId: string | null) {
 export function useIngestText(projectId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { text: string; filename?: string; topic?: string; folder_id?: string }) =>
+    mutationFn: (vars: { text: string; filename?: string; topic?: string; folder_id?: string; mode?: string }) =>
       apiFetch<{ source_id: string }>('/api/v1/sources/from_text', {
         method: 'POST',
         body: JSON.stringify({ project_id: projectId, ...vars }),
@@ -40,7 +40,7 @@ export interface UploadHandle {
 export function uploadFileWithProgress(
   projectId: string,
   file: File,
-  opts: { topic?: string; folder_id?: string; onProgress?: (frac: number) => void } = {},
+  opts: { topic?: string; folder_id?: string; mode?: string; onProgress?: (frac: number) => void } = {},
 ): UploadHandle {
   const xhr = new XMLHttpRequest();
   const promise = new Promise<{ source_id: string }>((resolve, reject) => {
@@ -49,6 +49,7 @@ export function uploadFileWithProgress(
     form.append('project_id', projectId);
     if (opts.topic) form.append('topic', opts.topic);
     if (opts.folder_id) form.append('folder_id', opts.folder_id);
+    if (opts.mode) form.append('mode', opts.mode);
 
     xhr.open('POST', '/api/v1/sources/upload');
     xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('b2-token') ?? ''}`);

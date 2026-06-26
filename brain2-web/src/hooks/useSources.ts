@@ -22,6 +22,15 @@ export function useSources(projectId: string | null, filters: SourceFilters = {}
   });
 }
 
+export function useProjectTags(projectId: string | null) {
+  return useQuery({
+    queryKey: projectId ? ['source-tags', projectId] : ['source-tags', '_'],
+    queryFn: () => ops<{ tags: string[] }>('sources:tags:list',
+      { project_id: projectId }).then(r => r.tags),
+    enabled: !!projectId,
+  });
+}
+
 /**
  * Sources for every vault in the active workspace, fetched in parallel and
  * returned aligned with `projectIds`. Shares cache keys with useSources so each
