@@ -44,3 +44,27 @@ DROP TABLE sources_old;
 
 CREATE INDEX idx_sources_tenant_proj ON sources(tenant_id, project_id, status);
 CREATE INDEX idx_sources_blob_hash   ON sources(tenant_id, blob_hash);
+
+ALTER TABLE source_extractions RENAME TO source_extractions_old;
+
+CREATE TABLE source_extractions (
+    source_id     TEXT NOT NULL,
+    tenant_id     TEXT NOT NULL,
+    version       INTEGER NOT NULL,
+    extracted_md  TEXT,
+    kind          TEXT NOT NULL CHECK (kind IN ('upload','reingest','edit','restore')),
+    created_at    TEXT NOT NULL,
+    PRIMARY KEY (source_id, version),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id) ON DELETE CASCADE
+);
+
+INSERT INTO source_extractions(
+    source_id, tenant_id, version, extracted_md, kind, created_at
+)
+SELECT source_id, tenant_id, version, extracted_md, kind, created_at
+FROM source_extractions_old;
+
+DROP TABLE source_extractions_old;
+
+CREATE INDEX idx_source_extractions_src
+    ON source_extractions(tenant_id, source_id, version DESC);

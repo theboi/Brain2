@@ -234,6 +234,35 @@ def create_app(actx: AppContext) -> FastAPI:
     def _project_authorize(ctx: RequestContext, project_id: str, action: str) -> None:
         authorize(actx.store, ctx, action, project_id)
 
+    def _enqueue_source_process(
+        ctx: RequestContext,
+        *,
+        source_id: str,
+        project_id: str,
+        mode: str,
+        raw_path: str | None = None,
+        extracted_md: str | None = None,
+    ) -> bool:
+        if actx.tasks.get("source.process") is None:
+            return False
+        from brain2.tasks.queue import enqueue
+        now = datetime.now(timezone.utc).isoformat()
+        payload = {"source_id": source_id, "project_id": project_id,
+                   "tenant_id": ctx.tenant_id, "mode": mode,
+                   "uploaded_by": ctx.user_id}
+        if raw_path is not None:
+            payload["raw_path"] = raw_path
+        if extracted_md is not None:
+            payload["extracted_md"] = extracted_md
+        with actx.store.transaction() as cx:
+            cx.execute(
+                "UPDATE sources SET status='queued', updated_at=? "
+                "WHERE tenant_id=? AND source_id=?",
+                (now, ctx.tenant_id, source_id),
+            )
+            enqueue(actx.store, cx, ctx.tenant_id, "source.process", payload)
+        return True
+
     @app.post("/api/v1/sources/upload")
     async def upload_source(
         project_id: str = Form(...),
@@ -256,15 +285,8 @@ def create_app(actx: AppContext) -> FastAPI:
             size_bytes=len(content), blob_hash=blob_hash, blob_path=blob_path,
             topic=topic, mode=mode, uploaded_by=ctx.user_id)
         if is_slow_extraction(file.content_type, len(content)) and actx.tasks.get("source.process"):
-            from brain2.source_ops import set_source_status
-            from brain2.tasks.queue import enqueue
-            set_source_status(actx.store, tenant_id=ctx.tenant_id, source_id=source_id,
-                              status="queued")
-            with actx.store.transaction() as cx:
-                enqueue(actx.store, cx, ctx.tenant_id, "source.process",
-                        {"source_id": source_id, "project_id": project_id,
-                         "tenant_id": ctx.tenant_id, "mode": mode,
-                         "raw_path": blob_path, "uploaded_by": ctx.user_id})
+            _enqueue_source_process(ctx, source_id=source_id, project_id=project_id,
+                                    mode=mode, raw_path=blob_path)
             return {"source_id": source_id, "blob_hash": blob_hash,
                     "size_bytes": len(content), "status": "queued", "queued": True}
         try:
@@ -272,13 +294,18 @@ def create_app(actx: AppContext) -> FastAPI:
             set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
                                   source_id=source_id, extracted_md=md,
                                   kind="upload")
-            status = "extracted"
+            queued = _enqueue_source_process(
+                ctx, source_id=source_id, project_id=project_id, mode=mode,
+                raw_path=blob_path,
+            )
+            status = "queued" if queued else "extracted"
         except Exception as exc:
             set_source_failed(actx.store, tenant_id=ctx.tenant_id,
                                source_id=source_id, error=str(exc))
             status = "failed"
         return {"source_id": source_id, "blob_hash": blob_hash,
-                "size_bytes": len(content), "status": status}
+                "size_bytes": len(content), "status": status,
+                "queued": status == "queued"}
 
     @app.post("/api/v1/sources/from_url")
     def source_from_url(body: dict, ctx: RequestContext = Depends(_auth)):
@@ -299,17 +326,23 @@ def create_app(actx: AppContext) -> FastAPI:
             actx.store, tenant_id=ctx.tenant_id, project_id=project_id, kind="url",
             url=url, topic=body.get("topic"), mode=body.get("mode", "wiki"),
             uploaded_by=ctx.user_id)
+        mode = body.get("mode", "wiki")
         try:
             md = extract_url_to_markdown(url)
             set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
                                   source_id=source_id, extracted_md=md,
                                   kind="upload")
-            status = "extracted"
+            queued = _enqueue_source_process(
+                ctx, source_id=source_id, project_id=project_id, mode=mode,
+                extracted_md=md,
+            )
+            status = "queued" if queued else "extracted"
         except Exception as exc:
             set_source_failed(actx.store, tenant_id=ctx.tenant_id,
                                source_id=source_id, error=str(exc))
             status = "failed"
-        return {"source_id": source_id, "url": url, "status": status}
+        return {"source_id": source_id, "url": url, "status": status,
+                "queued": status == "queued"}
 
     @app.post("/api/v1/sources/from_text")
     def source_from_text(body: dict, ctx: RequestContext = Depends(_auth)):
@@ -330,7 +363,13 @@ def create_app(actx: AppContext) -> FastAPI:
         set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
                               source_id=source_id, extracted_md=content,
                               kind="upload")
-        return {"source_id": source_id, "status": "extracted"}
+        queued = _enqueue_source_process(
+            ctx, source_id=source_id, project_id=project_id,
+            mode=body.get("mode", "wiki"), raw_path=blob_path,
+            extracted_md=content,
+        )
+        return {"source_id": source_id, "status": "queued" if queued else "extracted",
+                "queued": queued}
 
     # --- wiki audit kickoff + stream (Phase G) ---
     @app.post("/api/v1/wiki/{topic}/audit/stream")

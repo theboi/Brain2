@@ -17,7 +17,16 @@ def _source_row(store, tenant_id: str, source_id: str):
     ).fetchone()
 
 
-def _extract_if_needed(store, tenant_id: str, source_id: str, row, raw_path: str | None) -> str:
+def _extract_if_needed(
+    store,
+    tenant_id: str,
+    source_id: str,
+    row,
+    raw_path: str | None,
+    extracted_md: str | None = None,
+) -> str:
+    if extracted_md:
+        return extracted_md
     if row is not None and row["extracted_md"]:
         return row["extracted_md"]
 
@@ -85,7 +94,9 @@ def make_source_process_handler(store, gateway, blob_store):
 
         try:
             raw_path = payload.get("raw_path")
-            extracted_md = _extract_if_needed(store, tenant_id, source_id, row, raw_path)
+            extracted_md = _extract_if_needed(
+                store, tenant_id, source_id, row, raw_path, payload.get("extracted_md")
+            )
             row = _source_row(store, tenant_id, source_id)
 
             set_source_status(store, tenant_id=tenant_id, source_id=source_id,
