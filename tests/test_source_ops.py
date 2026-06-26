@@ -39,3 +39,16 @@ def test_sources_tags_list_returns_distinct_sorted(store):
     )
     out = dispatch(store, reg, _ctx(), "sources:tags:list", {"project_id": "p1"})
     assert out["tags"] == ["Zeta", "alpha"]
+
+
+def test_create_source_row_persists_mode(store):
+    store.create_tenant("t1", "Acme")
+    store.create_project("t1", "p1", "Research")
+    source_id = create_source_row(
+        store, tenant_id="t1", project_id="p1", kind="text", mode="static"
+    )
+    with store.transaction() as cx:
+        row = cx.execute(
+            "SELECT mode FROM sources WHERE source_id=?", (source_id,)
+        ).fetchone()
+    assert row[0] == "static"

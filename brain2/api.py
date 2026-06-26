@@ -238,6 +238,7 @@ def create_app(actx: AppContext) -> FastAPI:
     async def upload_source(
         project_id: str = Form(...),
         topic: str | None = Form(default=None),
+        mode: str = Form(default="wiki"),
         file: UploadFile = File(...),
         ctx: RequestContext = Depends(_auth),
     ):
@@ -253,7 +254,7 @@ def create_app(actx: AppContext) -> FastAPI:
             actx.store, tenant_id=ctx.tenant_id, project_id=project_id, kind="file",
             filename=file.filename, mime=file.content_type,
             size_bytes=len(content), blob_hash=blob_hash, blob_path=blob_path,
-            topic=topic, uploaded_by=ctx.user_id)
+            topic=topic, mode=mode, uploaded_by=ctx.user_id)
         try:
             md = extract_to_markdown(Path(blob_path), mime=file.content_type)
             set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
@@ -284,7 +285,8 @@ def create_app(actx: AppContext) -> FastAPI:
         from brain2.knowledge.extract import extract_url_to_markdown
         source_id = create_source_row(
             actx.store, tenant_id=ctx.tenant_id, project_id=project_id, kind="url",
-            url=url, topic=body.get("topic"), uploaded_by=ctx.user_id)
+            url=url, topic=body.get("topic"), mode=body.get("mode", "wiki"),
+            uploaded_by=ctx.user_id)
         try:
             md = extract_url_to_markdown(url)
             set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
@@ -312,7 +314,7 @@ def create_app(actx: AppContext) -> FastAPI:
             actx.store, tenant_id=ctx.tenant_id, project_id=project_id, kind="text",
             mime=body.get("mime", "text/markdown"), size_bytes=len(data),
             blob_hash=blob_hash, blob_path=blob_path, topic=topic,
-            uploaded_by=ctx.user_id)
+            mode=body.get("mode", "wiki"), uploaded_by=ctx.user_id)
         set_source_extracted(actx.store, tenant_id=ctx.tenant_id,
                               source_id=source_id, extracted_md=content,
                               kind="upload")

@@ -49,18 +49,18 @@ def create_source_row(store, *, tenant_id: str, project_id: str, kind: str,
                       size_bytes: int = 0, blob_hash: str | None = None,
                       blob_path: str | None = None, url: str | None = None,
                       topic: str | None = None, uploaded_by: str | None = None,
-                      folder_id: str | None = None) -> str:
+                      folder_id: str | None = None, mode: str = "wiki") -> str:
     source_id = str(uuid.uuid4())
     now = _now()
     with store.transaction() as cx:
         cx.execute(
             "INSERT INTO sources(source_id, tenant_id, project_id, kind, filename, "
             "mime, size_bytes, blob_hash, blob_path, url, topic, folder_id, status, "
-            "uploaded_by, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "mode, uploaded_by, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (source_id, tenant_id, project_id, kind, filename, mime, size_bytes,
              blob_hash, blob_path, url, topic, folder_id, "pending",
-             uploaded_by, now, now))
+             mode, uploaded_by, now, now))
     return source_id
 
 
