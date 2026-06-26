@@ -343,14 +343,47 @@ function IngestRow({ r, selected, onToggle, onChange, onRemove, vaultOptions, va
   r: Row; selected: boolean; onToggle: () => void; onChange: (p: Partial<Row>) => void; onRemove: () => void;
   vaultOptions: string[]; vaultsLoading?: boolean; tagOptions: string[];
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState(r.name);
+  const cancelRename = useRef(false);
+  useEffect(() => { if (!editing) setDraftName(r.name); }, [editing, r.name]);
+  const commitName = () => {
+    if (cancelRename.current) {
+      cancelRename.current = false;
+      return;
+    }
+    onChange({ name: draftName.trim() || r.name });
+    setEditing(false);
+  };
+  const cancelName = () => {
+    cancelRename.current = true;
+    setDraftName(r.name);
+    setEditing(false);
+  };
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', borderBottom: '1px solid var(--border)', background: selected ? 'var(--accent-soft)' : 'transparent' }}>
       <Checkbox checked={selected} onChange={onToggle} />
       <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 7, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)' }}><Icon name={INGEST_TYPE_ICON[r.type] || 'file'} size={14} /></span>
       <div style={{ flex: 1, minWidth: 80 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.kind === 'url' ? r.url : r.name}</div>
+        {editing ? (
+          <input
+            autoFocus
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitName();
+              if (e.key === 'Escape') cancelName();
+            }}
+            style={{ width: '100%', height: 24, border: '1px solid var(--accent)', outline: 'none', borderRadius: 6, background: 'var(--surface)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, padding: '0 7px' }}
+          />
+        ) : (
+          <button onClick={() => { cancelRename.current = false; setDraftName(r.name); setEditing(true); }} style={{ display: 'block', width: '100%', border: 'none', background: 'transparent', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'left', padding: 0, cursor: 'text' }}>
+            {r.name}
+          </button>
+        )}
         <div style={{ fontSize: 10.5, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {r.kind === 'url' ? 'web page' : `${r.type} · ${r.size}`}{r.collision && <span style={{ color: 'var(--warning)' }}> · possible duplicate</span>}
+          {r.kind === 'url' ? `web page${r.url ? ` · ${r.url}` : ''}` : `${r.type} · ${r.size}`}{r.collision && <span style={{ color: 'var(--warning)' }}> · possible duplicate</span>}
         </div>
       </div>
       <div style={{ flexShrink: 0, width: 124, minWidth: 0 }}><ProjectPicker value={r.project} onPick={(v) => onChange({ project: v })} full options={vaultOptions} loading={vaultsLoading} /></div>
