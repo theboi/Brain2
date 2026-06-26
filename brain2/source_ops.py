@@ -276,6 +276,20 @@ def make_sources_tag(store):
     return handler
 
 
+def make_sources_tags_list(store):
+    def handler(ctx, params):
+        with store.transaction() as cx:
+            rows = cx.execute(
+                "SELECT DISTINCT t.tag FROM source_tags t "
+                "JOIN sources s ON s.source_id = t.source_id "
+                "WHERE t.tenant_id=? AND s.project_id=? AND s.status != 'deleted' "
+                "ORDER BY t.tag",
+                (ctx.tenant_id, params["project_id"]),
+            ).fetchall()
+        return {"tags": [r[0] for r in rows]}
+    return handler
+
+
 def make_sources_untag(store):
     def handler(ctx, params):
         if _source_row(store, ctx, params, "source_id") is None:
@@ -384,6 +398,10 @@ def register_source_ops(ops, store, blob_store):
                  params=[{"name": "project_id", "type": "str", "required": True},
                          {"name": "source_id", "type": "str", "required": True},
                          {"name": "tag", "type": "str", "required": True}])
+    ops.register("sources:tags:list", action="read_wiki",
+                 handler=make_sources_tags_list(store),
+                 summary="List distinct tags used in a project",
+                 params=[{"name": "project_id", "type": "str", "required": True}])
     ops.register("sources:untag", action="ingest",
                  handler=make_sources_untag(store),
                  summary="Remove a tag from a source",
