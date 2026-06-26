@@ -248,13 +248,25 @@ def create_app(actx: AppContext) -> FastAPI:
         content = await file.read()
         blob_hash, blob_path = actx.blob_store.put(ctx.tenant_id, content)
         from brain2.source_ops import create_source_row, set_source_extracted, set_source_failed
-        from brain2.knowledge.extract import extract_to_markdown
+        from brain2.knowledge.extract import extract_to_markdown, is_slow_extraction
         from pathlib import Path
         source_id = create_source_row(
             actx.store, tenant_id=ctx.tenant_id, project_id=project_id, kind="file",
             filename=file.filename, mime=file.content_type,
             size_bytes=len(content), blob_hash=blob_hash, blob_path=blob_path,
             topic=topic, mode=mode, uploaded_by=ctx.user_id)
+        if is_slow_extraction(file.content_type, len(content)) and actx.tasks.get("source.process"):
+            from brain2.source_ops import set_source_status
+            from brain2.tasks.queue import enqueue
+            set_source_status(actx.store, tenant_id=ctx.tenant_id, source_id=source_id,
+                              status="queued")
+            with actx.store.transaction() as cx:
+                enqueue(actx.store, cx, ctx.tenant_id, "source.process",
+                        {"source_id": source_id, "project_id": project_id,
+                         "tenant_id": ctx.tenant_id, "mode": mode,
+                         "raw_path": blob_path, "uploaded_by": ctx.user_id})
+            return {"source_id": source_id, "blob_hash": blob_hash,
+                    "size_bytes": len(content), "status": "queued", "queued": True}
         try:
             md = extract_to_markdown(Path(blob_path), mime=file.content_type)
             set_source_extracted(actx.store, tenant_id=ctx.tenant_id,

@@ -34,3 +34,13 @@ def test_audio_without_dep_raises_clear_error(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="whisper"):
         extract.extract_to_markdown(p, mime="audio/mpeg")
+
+
+def test_is_slow_extraction_thresholds():
+    from brain2.knowledge.extract import is_slow_extraction
+
+    assert is_slow_extraction("audio/mpeg", 1000) is True
+    assert is_slow_extraction("image/png", 1000) is True
+    assert is_slow_extraction("application/pdf", 6_000_000) is True
+    assert is_slow_extraction("application/pdf", 100_000) is False
+    assert is_slow_extraction("text/markdown", 9_000_000) is False

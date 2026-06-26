@@ -29,6 +29,16 @@ _CODE_LANGS = {
     ".css": "css",
     ".html": "html",
 }
+_PDF_ASYNC_BYTES = 5 * 1024 * 1024
+
+
+def is_slow_extraction(mime: str | None, size_bytes: int) -> bool:
+    m = mime or ""
+    if m.startswith("audio/") or m.startswith("image/"):
+        return True
+    if m == "application/pdf" and size_bytes > _PDF_ASYNC_BYTES:
+        return True
+    return False
 
 
 def _extract_code(path: Path) -> str:
