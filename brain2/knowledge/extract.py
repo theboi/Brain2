@@ -56,6 +56,26 @@ def _extract_image(path: Path) -> str:
     return getattr(result, "text_content", None) or getattr(result, "markdown", "") or ""
 
 
+def _load_whisper(size: str = "base"):
+    try:
+        from faster_whisper import WhisperModel
+        return WhisperModel(size)
+    except Exception:
+        return None
+
+
+def _extract_audio(path: Path, model_size: str = "base") -> str:
+    model = _load_whisper(model_size)
+    if model is None:
+        raise RuntimeError(
+            "faster-whisper not installed; audio transcription unavailable. "
+            "Install with `pip install faster-whisper`."
+        )
+    segments, _info = model.transcribe(str(path))
+    transcript = "\n".join(seg.text.strip() for seg in segments).strip()
+    return transcript + "\n" if transcript else ""
+
+
 def extract_to_markdown(path: Path, mime: str | None = None,
                          raw_text: str | None = None) -> str:
     """Return markdown extracted from a file or raw text.
@@ -72,6 +92,8 @@ def extract_to_markdown(path: Path, mime: str | None = None,
         return _extract_code(path)
     if (mime or "").startswith("image/"):
         return _extract_image(path)
+    if (mime or "").startswith("audio/"):
+        return _extract_audio(path)
     md = _load_markitdown()
     if md is None:
         raise RuntimeError(

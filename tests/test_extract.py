@@ -23,3 +23,14 @@ def test_image_without_dep_raises_clear_error(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="markitdown"):
         extract.extract_to_markdown(p, mime="image/png")
+
+
+def test_audio_without_dep_raises_clear_error(tmp_path, monkeypatch):
+    from brain2.knowledge import extract
+
+    monkeypatch.setattr(extract, "_load_whisper", lambda size="base": None)
+    p = tmp_path / "a.mp3"
+    p.write_bytes(b"ID3")
+
+    with pytest.raises(RuntimeError, match="whisper"):
+        extract.extract_to_markdown(p, mime="audio/mpeg")
