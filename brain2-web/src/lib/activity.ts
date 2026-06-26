@@ -9,6 +9,15 @@ export interface ActivityEvent {
   payload: Record<string, unknown>;
 }
 
+export interface AuditEvent {
+  id: string;
+  actor_id: string | null;
+  action: string | null;
+  resource_id: string | null;
+  ts: string;
+  payload: Record<string, unknown>;
+}
+
 function hhmm(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';

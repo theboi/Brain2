@@ -122,6 +122,45 @@ def make_activity_list(store):
     return handler
 
 
+def make_audit_list(store):
+    def handler(ctx, params):
+        limit = int(params.get("limit", 25))
+        sql = (
+            "SELECT event_id, entity_id, payload, enqueued_at "
+            "FROM event_outbox WHERE tenant_id=? AND event_type='audit'"
+        )
+        args = [ctx.tenant_id]
+        if params.get("entity_id"):
+            sql += " AND entity_id=?"
+            args.append(params["entity_id"])
+        sql += " ORDER BY enqueued_at DESC LIMIT ?"
+        args.append(limit)
+        rows = store._conn.execute(sql, tuple(args)).fetchall()
+        out = []
+        for r in rows:
+            try:
+                payload = json.loads(r["payload"]) if r["payload"] else {}
+            except Exception:
+                payload = {}
+            actor_id = payload.get("actor_id")
+            action = payload.get("action")
+            resource_id = payload.get("resource_id") or r["entity_id"]
+            if params.get("actor_id") and actor_id != params["actor_id"]:
+                continue
+            if params.get("action") and action != params["action"]:
+                continue
+            out.append({
+                "id": r["event_id"],
+                "actor_id": actor_id,
+                "action": action,
+                "resource_id": resource_id,
+                "ts": r["enqueued_at"],
+                "payload": payload,
+            })
+        return {"events": out}
+    return handler
+
+
 def make_workspace_info(store):
     def handler(ctx, params):
         tenant = store.get_tenant(ctx.tenant_id)
@@ -161,6 +200,13 @@ def register_stats_ops(ops, store):
                  handler=make_activity_list(store),
                  summary="Recent events from the outbox (most recent first)",
                  params=[{"name": "limit", "type": "int", "required": False}])
+    ops.register("audit:list", action="view_activity",
+                 handler=make_audit_list(store),
+                 summary="Recent audit events from the outbox (most recent first)",
+                 params=[{"name": "limit", "type": "int", "required": False},
+                         {"name": "actor_id", "type": "str", "required": False},
+                         {"name": "action", "type": "str", "required": False},
+                         {"name": "entity_id", "type": "str", "required": False}])
     ops.register("workspace:info", action="view_stats",
                  handler=make_workspace_info(store),
                  summary="Current workspace metadata")

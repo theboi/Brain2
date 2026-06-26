@@ -14,7 +14,9 @@ def client_member():
     s.create_user("t1", "u1", "u1@t1.com", "member")
     actx = build_app_context(store=s, gateway=object())
     actx.passwords.set_password("t1", "u1", "pw")
-    c = TestClient(create_app(actx))
+    app = create_app(actx)
+    app.state.actx = actx
+    c = TestClient(app)
     tok = c.post("/api/v1/auth/tokens",
                  json={"tenant_id": "t1", "email": "u1@t1.com",
                        "password": "pw"}).json()["token"]
@@ -37,6 +39,28 @@ def test_activity_list_empty(client_member):
                headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200
     assert r.json() == {"events": []}
+
+
+def test_audit_list_returns_normalized_audit_events(client_member):
+    c, tok = client_member
+    from brain2.audit import record_best_effort_audit
+
+    record_best_effort_audit(
+        c.app.state.actx.store,
+        "t1",
+        "worker-1",
+        "source.done",
+        "source-1",
+        {"mode": "wiki"},
+    )
+
+    r = c.post("/api/v1/ops/audit:list", json={"limit": 10},
+               headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert r.json()["events"][0]["actor_id"] == "worker-1"
+    assert r.json()["events"][0]["action"] == "source.done"
+    assert r.json()["events"][0]["resource_id"] == "source-1"
+    assert r.json()["events"][0]["payload"]["mode"] == "wiki"
 
 
 def test_stats_sources_timeseries_shape(client_member):

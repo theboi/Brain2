@@ -43,6 +43,7 @@ export const qk = {
   statsLlmTokens: (d: number) => ['stats', 'llm_tokens', d] as const,
   statsWikiByProject: () => ['stats', 'wiki_by_project'] as const,
   activity: (limit: number) => ['activity', limit] as const,
+  auditEvents: (limit: number) => ['audit-events', limit] as const,
   report: (id: string) => ['reports', 'one', id] as const,
   workers: () => ['workers'] as const,
   todos: (status: string | null = null) => ['todos', status] as const,
