@@ -279,7 +279,7 @@ function VaultAccess({ vaults, accessFor, onLevel, onAdd, onRemove }: {
   return (
     <div style={{ marginTop: 12 }}>
       <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 10, lineHeight: 1.45 }}>
-        <Icon name="key" size={13} color="var(--fg-faint)" /> <span>1 vault = 1 project · 1 topic = 1 wiki page · vaults are isolated, with no cross-vault links, so each vault's data stays contained.</span>
+        <Icon name="key" size={13} color="var(--fg-faint)" /> <span>Vaults are isolated — access is set per vault.</span>
       </div>
       {vaults.length > 1 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
@@ -323,7 +323,7 @@ function IngestQueueBar({ total, selCount, allSel, onToggleAll, onBulk, onClearS
           <button onClick={onRemoveSel} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 28, padding: '0 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--destructive)', fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--ui-font)', marginLeft: 'auto' }}><Icon name="trash" size={13} /> Remove</button>
         </Fragment>
       ) : (
-        <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{total} item{total === 1 ? '' : 's'} queued · select rows to bulk-set vault, topic or mode</span>
+        <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{total} item{total === 1 ? '' : 's'} queued</span>
       )}
     </div>
   );
@@ -389,7 +389,6 @@ export function IngestModal({ open, onClose, files = [] }: {
   const [sel, setSel] = useState<Set<string>>(() => new Set());
   const [draft, setDraft] = useState('');
   const [access, setAccess] = useState<Record<string, Member[]>>({});
-  const [showAccess, setShowAccess] = useState(true);
 
   useEffect(() => {
     if (open) {
@@ -518,7 +517,6 @@ export function IngestModal({ open, onClose, files = [] }: {
           <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="download" size={19} /></span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Drag files here, or <button onClick={onBrowseClick} style={{ border: 'none', background: 'transparent', color: 'var(--accent)', fontWeight: 600, fontSize: 13.5, fontFamily: 'var(--ui-font)', cursor: 'pointer', padding: 0 }}>browse</button></div>
-            <div style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>PDF · Markdown · text · images · code — or paste a link below</div>
           </div>
         </div>
         {progressEntries.length > 0 && (
@@ -537,7 +535,7 @@ export function IngestModal({ open, onClose, files = [] }: {
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 9, height: 36, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)' }}>
             <Icon name="globe" size={15} color="var(--fg-muted)" />
-            <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addUrl(); }} placeholder="https://…  paste a page or sitemap URL" style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--fg)', fontSize: 13, fontFamily: 'var(--ui-font)' }} />
+            <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addUrl(); }} placeholder="https://…" style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--fg)', fontSize: 13, fontFamily: 'var(--ui-font)' }} />
           </div>
           <button onClick={addUrl} style={ingBtnGhost()}><Icon name="plus" size={14} /> Add link</button>
         </div>
@@ -555,13 +553,12 @@ export function IngestModal({ open, onClose, files = [] }: {
       {/* access management */}
       {vaults.length > 0 && (
         <div style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)', padding: 14 }}>
-          <button onClick={() => setShowAccess((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, textAlign: 'left' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: 0 }}>
             <Icon name="shield" size={16} color="var(--accent)" />
             <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Vault access</span>
             <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{vaults.length} vault{vaults.length > 1 ? 's' : ''}</span>
-            <span style={{ marginLeft: 'auto', transform: showAccess ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .12s', display: 'flex' }}><Icon name="chevDown" size={15} color="var(--fg-muted)" /></span>
-          </button>
-          {showAccess && <VaultAccess vaults={vaults} accessFor={accessFor} onLevel={setLevel} onAdd={addMember} onRemove={rmMember} />}
+          </div>
+          <VaultAccess vaults={vaults} accessFor={accessFor} onLevel={setLevel} onAdd={addMember} onRemove={rmMember} />
         </div>
       )}
     </Modal>
