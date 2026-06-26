@@ -37,6 +37,25 @@ def _extract_code(path: Path) -> str:
     return f"```{lang}\n{body.rstrip(chr(10))}\n```\n"
 
 
+def _load_markitdown():
+    try:
+        from markitdown import MarkItDown
+        return MarkItDown()
+    except Exception:
+        return None
+
+
+def _extract_image(path: Path) -> str:
+    md = _load_markitdown()
+    if md is None:
+        raise RuntimeError(
+            "markitdown not installed; image OCR unavailable. "
+            "Install with `pip install markitdown`."
+        )
+    result = md.convert(str(path))
+    return getattr(result, "text_content", None) or getattr(result, "markdown", "") or ""
+
+
 def extract_to_markdown(path: Path, mime: str | None = None,
                          raw_text: str | None = None) -> str:
     """Return markdown extracted from a file or raw text.
@@ -51,23 +70,21 @@ def extract_to_markdown(path: Path, mime: str | None = None,
         return path.read_text(encoding="utf-8", errors="replace")
     if path.suffix.lower() in _CODE_LANGS:
         return _extract_code(path)
-    try:
-        from markitdown import MarkItDown  # optional dep
-    except Exception as exc:
+    if (mime or "").startswith("image/"):
+        return _extract_image(path)
+    md = _load_markitdown()
+    if md is None:
         raise RuntimeError(
             "markitdown is not installed; only text/plain and text/markdown can be "
-            "extracted. Install with `pip install markitdown`.") from exc
-    md = MarkItDown()
+            "extracted. Install with `pip install markitdown`.")
     result = md.convert(str(path))
     return getattr(result, "text_content", None) or getattr(result, "markdown", "") or ""
 
 
 def extract_url_to_markdown(url: str) -> str:
     """Fetch + extract a URL via markitdown if available; otherwise raise."""
-    try:
-        from markitdown import MarkItDown
-    except Exception as exc:
-        raise RuntimeError("markitdown is required for URL ingestion") from exc
-    md = MarkItDown()
+    md = _load_markitdown()
+    if md is None:
+        raise RuntimeError("markitdown is required for URL ingestion")
     result = md.convert(url)
     return getattr(result, "text_content", None) or getattr(result, "markdown", "") or ""
