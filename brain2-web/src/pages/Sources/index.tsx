@@ -81,15 +81,15 @@ function sourceChipDefs(f: SourceFilter, setF: (f: SourceFilter) => void, projec
 }
 
 // ── Desktop sidebar ────────────────────────────────────────────────────────────
-function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, projectNames, nameById, width = 268 }: {
-  f: SourceFilter; setF: (f: SourceFilter) => void; selectedId: string; onSelect: (id: string) => void; onIngest: () => void; items: Source[]; projectNames: string[]; nameById: Record<string, string>; width?: number;
+function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, vaultIds, projectNames, nameById, width = 268 }: {
+  f: SourceFilter; setF: (f: SourceFilter) => void; selectedId: string; onSelect: (id: string) => void; onIngest: () => void; items: Source[]; vaultIds: string[]; projectNames: string[]; nameById: Record<string, string>; width?: number;
 }) {
   const [q, setQ] = useState('');
   const [openF, setOpenF] = useState<Record<string, boolean>>({ default: true });
   const defs = sourceChipDefs(f, setF, projectNames).filter((d) => d.key !== 'project'); // project = the folder tree
   const filtered = items.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
-  // Group by project_id
-  const projectLabels = Array.from(new Set(items.map((s) => s.project)));
+  // One folder per vault in the workspace — including vaults with no sources yet.
+  const projectLabels = vaultIds;
   return (
     <div style={{ width, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -113,7 +113,7 @@ function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, projec
             </Folder>
           );
         })}
-        {!projectLabels.length && <div style={{ padding: '4px 10px 8px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No sources yet</div>}
+        {!projectLabels.length && <div style={{ padding: '4px 10px 8px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No vaults in this workspace</div>}
       </div>
     </div>
   );
@@ -470,10 +470,13 @@ export function SourcesPage() {
     tag: f.tag !== 'all' ? f.tag : undefined,
   });
   const sourcesLoading = projectIds.length > 0 && sourceResults.some((r) => r.isLoading);
+  // Keyed on a single stable-length string (a variable-length deps array makes
+  // React skip recomputation when the array grows from empty — see useMemo docs).
+  const sourcesKey = sourceResults.map((r) => r.dataUpdatedAt).join(',');
   const allItems: Source[] = useMemo(
     () => sourceResults.flatMap((r) => (r.data ?? []).map(toDisplaySource)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [...sourceResults.map((r) => r.data)],
+    [sourcesKey],
   );
   // Honour the project filter chip (value is a vault name).
   const items = useMemo(
@@ -543,7 +546,7 @@ export function SourcesPage() {
         </div>
       ) : (
         <>
-          <SourcesSidebar f={f} setF={setF} selectedId={selectedId} onSelect={selectSource} onIngest={() => setModal(true)} items={items} projectNames={projectNames} nameById={nameById} />
+          <SourcesSidebar f={f} setF={setF} selectedId={selectedId} onSelect={selectSource} onIngest={() => setModal(true)} items={items} vaultIds={projectIds} projectNames={projectNames} nameById={nameById} />
           {selected
             ? <PreviewPane s={selected} projectId={selectedProjectId} onDeleted={() => setSelectedId('')} />
             : <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>Select a source to preview.</div>}

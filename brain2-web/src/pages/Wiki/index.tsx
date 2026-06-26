@@ -324,10 +324,13 @@ export function WikiPage() {
   // Pages for every vault in the workspace — one folder per vault in the sidebar.
   const projectIds = useMemo(() => projects.map((p) => p.project_id), [projects]);
   const pageResults = useWorkspaceVaultPages(projectIds);
+  // Keyed on a single stable-length string (a variable-length deps array makes
+  // React skip recomputation when the array grows from empty — see useMemo docs).
+  const pagesKey = pageResults.map((r) => r.dataUpdatedAt).join(',');
   const vaults: VaultGroup[] = useMemo(
     () => projects.map((p, i) => ({ project: p, pages: (pageResults[i]?.data ?? []) as LivePage[] })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projects, ...pageResults.map((r) => r.data)],
+    [projects, pagesKey],
   );
 
   const { data: pageData, isLoading: pageLoading } = useVaultPage(projectId, topic);
