@@ -79,7 +79,8 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
              conversation_id: str, agent_row, user_text: str,
              user_message_id: str | None = None,
              persist_user_message: bool = True,
-             stop_check=lambda: False):
+             stop_check=lambda: False,
+             use_persona: bool = True):
     """Yield (event_type, payload) tuples for one user turn.
 
     The generator persists assistant + tool messages as it produces them so a
@@ -104,8 +105,10 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
     except Exception:
         allowlist = []
     tools = _allowed_tools(store, ctx, operations, allowlist)
-    from brain2.persona_ops import persona_preamble
-    persona = persona_preamble(store, ctx.tenant_id, ctx.user_id)
+    persona = None
+    if use_persona:
+        from brain2.persona_ops import persona_preamble
+        persona = persona_preamble(store, ctx.tenant_id, ctx.user_id)
 
     history = [{"role": "user", "content": user_text}]
     total_in = total_out = 0
