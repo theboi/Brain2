@@ -469,20 +469,30 @@ export function IngestModal({ open, onClose, files = [] }: {
   };
 
   const ids = rows.map((r) => r.id);
-  const allSel = ids.length > 0 && ids.every((id) => sel.has(id));
-  const toggle = (id: string) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const toggleAll = () => setSel(allSel ? new Set() : new Set(ids));
+  const implicitAll = sel.size === 0;
+  const isChecked = (id: string) => implicitAll || sel.has(id);
+  const allSel = implicitAll || (ids.length > 0 && ids.every((id) => sel.has(id)));
+  const effectiveIds = implicitAll ? ids : ids.filter((id) => sel.has(id));
+  const effectiveIdSet = new Set(effectiveIds);
+  const toggle = (id: string) => setSel((s) => {
+    if (s.size === 0) return new Set([id]);
+    const n = new Set(s);
+    n.has(id) ? n.delete(id) : n.add(id);
+    return n;
+  });
+  const toggleAll = () => setSel(new Set());
   const patch = (id: string, p: Partial<Row>) => setRows((rs) => rs.map((r) => r.id === id ? { ...r, ...p } : r));
-  const bulk = (p: Partial<Row>) => setRows((rs) => rs.map((r) => sel.has(r.id) ? { ...r, ...p } : r));
+  const bulk = (p: Partial<Row>) => setRows((rs) => rs.map((r) => effectiveIdSet.has(r.id) ? { ...r, ...p } : r));
   const removeRow = (id: string) => { setRows((rs) => rs.filter((r) => r.id !== id)); setSel((s) => { const n = new Set(s); n.delete(id); return n; }); };
-  const removeSel = () => { setRows((rs) => rs.filter((r) => !sel.has(r.id))); setSel(new Set()); };
+  const removeSel = () => { setRows((rs) => rs.filter((r) => !effectiveIdSet.has(r.id))); setSel(new Set()); };
 
-  const vaults = [...new Set(rows.map((r) => r.project))];
+  const selectedRows = rows.filter((r) => effectiveIdSet.has(r.id));
+  const vaults = [...new Set(selectedRows.map((r) => r.project))];
   const accessFor = (v: string) => access[v] || seedAccess();
   const setLevel = (v: string, id: string, level: string) => setAccess((a) => { const cur = a[v] || seedAccess(); return { ...a, [v]: cur.map((m) => m.id === id ? { ...m, level } : m) }; });
   const addMember = (v: string, p: Person) => setAccess((a) => { const cur = a[v] || seedAccess(); if (cur.some((m) => m.id === p.id)) return a; return { ...a, [v]: [...cur, { ...p, level: 'read' }] }; });
   const rmMember = (v: string, id: string) => setAccess((a) => { const cur = a[v] || seedAccess(); return { ...a, [v]: cur.filter((m) => m.id !== id) }; });
-  const selCount = sel.size;
+  const selCount = effectiveIds.length;
   const progressEntries = Object.entries(progress);
 
   return (
@@ -545,7 +555,7 @@ export function IngestModal({ open, onClose, files = [] }: {
       <div style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)' }}>
         <IngestQueueBar total={rows.length} selCount={selCount} allSel={allSel} onToggleAll={toggleAll} onBulk={bulk} onClearSel={() => setSel(new Set())} onRemoveSel={removeSel} vaultOptions={vaultOptions} vaultsLoading={vaultsLoading} />
         <div>
-          {rows.map((r) => <IngestRow key={r.id} r={r} selected={sel.has(r.id)} onToggle={() => toggle(r.id)} onChange={(p) => patch(r.id, p)} onRemove={() => removeRow(r.id)} vaultOptions={vaultOptions} vaultsLoading={vaultsLoading} />)}
+          {rows.map((r) => <IngestRow key={r.id} r={r} selected={isChecked(r.id)} onToggle={() => toggle(r.id)} onChange={(p) => patch(r.id, p)} onRemove={() => removeRow(r.id)} vaultOptions={vaultOptions} vaultsLoading={vaultsLoading} />)}
           {!rows.length && <div style={{ textAlign: 'center', color: 'var(--fg-faint)', padding: '26px 0', fontSize: 12.5 }}>Nothing queued — drop files or paste a link above.</div>}
         </div>
       </div>
