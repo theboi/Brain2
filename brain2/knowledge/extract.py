@@ -8,6 +8,35 @@ from __future__ import annotations
 from pathlib import Path
 
 
+_CODE_LANGS = {
+    ".py": "python",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".jsx": "jsx",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".rb": "ruby",
+    ".sh": "bash",
+    ".sql": "sql",
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "toml",
+    ".css": "css",
+    ".html": "html",
+}
+
+
+def _extract_code(path: Path) -> str:
+    lang = _CODE_LANGS.get(path.suffix.lower(), "")
+    body = path.read_text(encoding="utf-8", errors="replace")
+    return f"```{lang}\n{body.rstrip(chr(10))}\n```\n"
+
+
 def extract_to_markdown(path: Path, mime: str | None = None,
                          raw_text: str | None = None) -> str:
     """Return markdown extracted from a file or raw text.
@@ -20,6 +49,8 @@ def extract_to_markdown(path: Path, mime: str | None = None,
         return raw_text
     if mime in ("text/markdown", "text/plain"):
         return path.read_text(encoding="utf-8", errors="replace")
+    if path.suffix.lower() in _CODE_LANGS:
+        return _extract_code(path)
     try:
         from markitdown import MarkItDown  # optional dep
     except Exception as exc:
