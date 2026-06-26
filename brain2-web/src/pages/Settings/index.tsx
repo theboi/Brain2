@@ -102,6 +102,9 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
       <nav
         className="b2-hide-sm"
         style={{
+          // .b2-hide-sm sets display:flex (default row); force column so the
+          // Organization / Settings nav groups stack vertically, not side by side.
+          flexDirection: 'column',
           width: 230, flexShrink: 0,
           borderRight: '1px solid var(--border)',
           background: 'var(--surface)',

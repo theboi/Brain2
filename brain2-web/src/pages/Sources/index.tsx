@@ -6,7 +6,7 @@
  * back-stack. Faithful port of docs/design/v1 sources.jsx + app-sources.jsx.
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
 import { Modal } from '@/components/ui/Modal';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
@@ -396,6 +396,7 @@ function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
           <Icon name={TYPE_ICON[s.type] || 'file'} size={18} color="var(--fg-muted)" />
           <span style={{ fontFamily: 'var(--display-font)', fontSize: mobile ? 15 : 17, fontWeight: 600, color: 'var(--fg)', letterSpacing: 'var(--display-track)', flex: mobile ? 1 : 'none', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</span>
           <span style={{ marginLeft: mobile ? 0 : 'auto', display: 'flex', gap: 8, flexShrink: 0 }}>
+            {!mobile && projectId && <Link to={`/graph?vault=${encodeURIComponent(projectId)}`} title="Open this vault's graph" style={{ ...btnGhost(), textDecoration: 'none' }}><Icon name="graph" size={14} /> Graph</Link>}
             {!mobile && <button style={btnGhost()} onClick={handleReingest} disabled={reingest.isPending}><Icon name="refresh" size={14} /> Re-ingest</button>}
             <button style={btnPrimary()} onClick={() => { setTab('Extracted text'); setEditExtracted(true); }}><Icon name="pencil" size={14} color="#fff" /> {mobile ? '' : 'Edit MD'}</button>
           </span>
@@ -453,7 +454,9 @@ export function SourcesPage() {
   const projectNames = projects.map((p) => p.name);
 
   useEffect(() => {
-    if (!projectId && projects.length > 0) setProjectId(projects[0].project_id);
+    if (projects.length === 0) return;
+    const valid = projects.some((p) => p.project_id === projectId);
+    if (!valid) setProjectId(projects[0].project_id);
   }, [projectId, projects, setProjectId]);
 
   const { data: sourceRows = [], isLoading } = useSources(projectId, {

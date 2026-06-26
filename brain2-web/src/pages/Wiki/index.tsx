@@ -287,9 +287,9 @@ export function WikiPage() {
   const { data: projects = [] } = useProjects(workspaceId);
 
   useEffect(() => {
-    if (!projectId && projects.length > 0) {
-      setProjectId(projects[0].project_id);
-    }
+    if (projects.length === 0) return;
+    const valid = projects.some((p) => p.project_id === projectId);
+    if (!valid) setProjectId(projects[0].project_id);
   }, [projectId, projects, setProjectId]);
 
   const { data: vaultPages = [] } = useVaultPages(projectId);
@@ -339,6 +339,7 @@ export function WikiPage() {
           <h1 style={{ margin: 0, fontFamily: 'var(--display-font)', fontSize: isMobile ? 22 : 26, fontWeight: 700, letterSpacing: 'var(--display-track)', color: 'var(--fg)' }}>{topic ?? '—'}</h1>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             {!isMobile && <button style={wbtnGhost()}><Icon name="chats" size={14} /> Open in chat</button>}
+            {!isMobile && projectId && <Link to={`/graph?vault=${encodeURIComponent(projectId)}`} title="Open this vault's graph" style={{ ...wbtnGhost(), textDecoration: 'none' }}><Icon name="graph" size={14} /> Graph</Link>}
             <button onClick={() => setAudit(true)} style={{ ...wbtnGhost(), color: 'var(--accent)', borderColor: 'var(--accent-line)' }}><Icon name="sparkles" size={14} color="var(--accent)" /> Audit</button>
             <button onClick={() => setTab('Edit')} style={wbtnPrimary()}><Icon name="pencil" size={14} color="#fff" /> Edit</button>
           </span>

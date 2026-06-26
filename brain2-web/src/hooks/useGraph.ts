@@ -3,10 +3,11 @@ import { ops } from '@/lib/api';
 import { qk } from '@/lib/queryClient';
 import type { OrgGraphResponse, VaultGraphResponse } from '@/lib/types';
 
-export function useOrgGraph() {
+export function useOrgGraph(enabled = true) {
   return useQuery({
     queryKey: qk.orgGraph(),
     queryFn: () => ops<OrgGraphResponse>('graph:org'),
+    enabled,
   });
 }
 

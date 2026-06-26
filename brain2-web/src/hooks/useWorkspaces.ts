@@ -34,7 +34,15 @@ function useOverviewMutation<P extends object>(name: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (params: P) => ops(name, params),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.workspacesOverview() }),
+    onSuccess: () => {
+      // The overview board is the primary view, but vault moves / renames /
+      // archives also change the per-workspace project lists that the Wiki and
+      // Sources pages read (qk.projects) and the workspace list (qk.workspaces).
+      // Invalidate all three so those surfaces reflect the change immediately.
+      qc.invalidateQueries({ queryKey: qk.workspacesOverview() });
+      qc.invalidateQueries({ queryKey: qk.workspaces() });
+      qc.invalidateQueries({ queryKey: ['projects'] });
+    },
   });
 }
 
