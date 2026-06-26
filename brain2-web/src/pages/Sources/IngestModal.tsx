@@ -9,6 +9,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@/components/ui/Modal';
 import { useProjects } from '@/hooks/useWorkspaces';
 import { useProjectTags } from '@/hooks/useSources';
+import { useVaultAccess, useAddGuest, useSetGuestRole, useRemoveGuest } from '@/hooks/access';
+import { useWorkspaceMembers } from '@/hooks/members';
+import { useTenantUsers } from '@/hooks/people';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
@@ -24,26 +27,31 @@ const INGEST_MODES: { id: string; label: string; icon: IconName; desc: string }[
   { id: 'static', label: 'Static', icon: 'file', desc: 'Store the source as-is, no rewriting' },
   { id: 'dynamic', label: 'Dynamic', icon: 'layers', desc: 'Link a live database — refreshes on change' },
 ];
-const ACCESS_LEVELS: { id: string; label: string; icon: IconName }[] = [
+type AccessLevelId = 'none' | 'read' | 'write' | 'admin';
+type GuestRole = 'viewer' | 'editor' | 'admin';
+
+const ACCESS_LEVELS: { id: AccessLevelId; label: string; icon: IconName }[] = [
   { id: 'none', label: 'No access', icon: 'x' },
   { id: 'read', label: 'Read only', icon: 'file' },
   { id: 'write', label: 'Read & write', icon: 'pencil' },
   { id: 'admin', label: 'Admin', icon: 'shield' },
 ];
-const PEOPLE_POOL: Person[] = [
-  { id: 'u_alice', name: 'alice', kind: 'user' }, { id: 'u_bob', name: 'bob', kind: 'user' },
-  { id: 'u_carol', name: 'carol', kind: 'user' }, { id: 'u_dan', name: 'dan', kind: 'user' },
-  { id: 'g_everyone', name: 'Everyone', kind: 'group' }, { id: 'g_research', name: 'Research', kind: 'group' },
-  { id: 'g_eng', name: 'Engineering', kind: 'group' }, { id: 'g_design', name: 'Design', kind: 'group' },
-];
-const seedAccess = (): Member[] => ([
-  { id: 'g_everyone', name: 'Everyone', kind: 'group', level: 'none' },
-  { id: 'g_research', name: 'Research', kind: 'group', level: 'write' },
-  { id: 'u_alice', name: 'alice', kind: 'user', level: 'admin' },
-]);
 
-interface Person { id: string; name: string; kind: 'user' | 'group'; }
-interface Member extends Person { level: string; }
+const LEVEL_TO_ROLE: Record<Exclude<AccessLevelId, 'none'>, GuestRole> = {
+  read: 'viewer',
+  write: 'editor',
+  admin: 'admin',
+};
+const ROLE_TO_LEVEL: Record<string, AccessLevelId> = {
+  owner: 'admin',
+  admin: 'admin',
+  editor: 'write',
+  viewer: 'read',
+  member: 'read',
+};
+
+interface Person { id: string; name: string; email?: string | null; kind: 'user'; }
+interface Member extends Person { level: AccessLevelId; source: 'owner' | 'workspace_admin' | 'workspace_member' | 'guest'; }
 interface Row { id: string; kind: 'file' | 'url'; name: string; type: string; size: string; url?: string; project: string; tags: string[]; mode: string; collision: boolean; }
 
 const ingBtnGhost = (): CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 13px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', fontFamily: 'var(--ui-font)', fontSize: 13, fontWeight: 500, cursor: 'pointer' });
@@ -201,11 +209,11 @@ function ModePicker({ value, onPick, full }: { value: string | null; onPick: (v:
   );
 }
 
-function AddPeopleBody({ members, onAdd }: { members: Member[]; onAdd: (p: Person) => void }) {
+function AddPeopleBody({ members, candidates, onAdd }: { members: Member[]; candidates: Person[]; onAdd: (p: Person) => void }) {
   const [q, setQ] = useState('');
   const have = new Set(members.map((m) => m.id));
   const ql = q.trim().toLowerCase();
-  const list = PEOPLE_POOL.filter((p) => !have.has(p.id) && p.name.toLowerCase().includes(ql));
+  const list = candidates.filter((p) => !have.has(p.id) && `${p.name} ${p.email ?? ''}`.toLowerCase().includes(ql));
   return (
     <div>
       <div style={{ padding: 8, borderBottom: '1px solid var(--border)' }}>
@@ -217,30 +225,30 @@ function AddPeopleBody({ members, onAdd }: { members: Member[]; onAdd: (p: Perso
       <div style={{ maxHeight: 220, overflowY: 'auto', padding: 6 }}>
         {list.map((p) => (
           <button key={p.id} onClick={() => onAdd(p)} style={ingRowBtn()}>
-            <Icon name={p.kind === 'group' ? 'users' : 'user'} size={13} color="var(--fg-muted)" />
+            <Icon name="user" size={13} color="var(--fg-muted)" />
             <span style={{ flex: 1 }}>{p.name}</span>
-            <span style={{ fontSize: 10.5, color: 'var(--fg-faint)' }}>{p.kind}</span>
+            <span style={{ fontSize: 10.5, color: 'var(--fg-faint)' }}>user</span>
           </button>
         ))}
-        {!list.length && <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--fg-faint)' }}>{ql ? `Invite “${q.trim()}” by email` : 'Everyone already added.'}</div>}
+        {!list.length && <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--fg-faint)' }}>{ql ? 'No matching people.' : 'Everyone available is already added.'}</div>}
       </div>
     </div>
   );
 }
 
-function AddPeople({ members, onAdd }: { members: Member[]; onAdd: (p: Person) => void }) {
+function AddPeople({ members, candidates, onAdd }: { members: Member[]; candidates: Person[]; onAdd: (p: Person) => void }) {
   return (
     <IngMenu width={238} align="right" trigger={(open) => (
       <button style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 7, border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`, background: 'transparent', color: 'var(--accent)', fontFamily: 'var(--ui-font)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
         <Icon name="plus" size={13} color="var(--accent)" /> Add people
       </button>
     )}>
-      {(close) => <AddPeopleBody members={members} onAdd={(p) => { onAdd(p); close(); }} />}
+      {(close) => <AddPeopleBody members={members} candidates={candidates} onAdd={(p) => { onAdd(p); close(); }} />}
     </IngMenu>
   );
 }
 
-function LevelPicker({ value, onPick }: { value: string; onPick: (v: string) => void }) {
+function LevelPicker({ value, onPick }: { value: AccessLevelId; onPick: (v: AccessLevelId) => void }) {
   const lv = ACCESS_LEVELS.find((l) => l.id === value) || ACCESS_LEVELS[0];
   const isNone = value === 'none';
   return (
@@ -264,28 +272,72 @@ function LevelPicker({ value, onPick }: { value: string; onPick: (v: string) => 
   );
 }
 
-function AccessRow({ m, onLevel, onRemove }: { m: Member; onLevel: (l: string) => void; onRemove: () => void }) {
+const accessSourceLabel = (m: Member) => {
+  if (m.source === 'owner') return 'Tenant owner';
+  if (m.source === 'workspace_admin') return 'Workspace admin';
+  if (m.source === 'workspace_member') return 'Workspace member';
+  return m.email || 'Guest';
+};
+
+function AccessRow({ m, onLevel, onRemove }: { m: Member; onLevel: (l: AccessLevelId) => void; onRemove: () => void }) {
+  const locked = m.source !== 'guest';
+  const lv = ACCESS_LEVELS.find((l) => l.id === m.level) || ACCESS_LEVELS[1];
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
-      <span style={{ width: 28, height: 28, flexShrink: 0, borderRadius: '50%', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)' }}><Icon name={m.kind === 'group' ? 'users' : 'user'} size={14} /></span>
+      <span style={{ width: 28, height: 28, flexShrink: 0, borderRadius: '50%', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-muted)' }}><Icon name="user" size={14} /></span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{m.name}</div>
-        <div style={{ fontSize: 10.5, color: 'var(--fg-faint)' }}>{m.kind === 'group' ? 'Group' : 'User'}</div>
+        <div style={{ fontSize: 10.5, color: 'var(--fg-faint)' }}>{accessSourceLabel(m)}</div>
       </div>
-      <LevelPicker value={m.level} onPick={onLevel} />
-      <button onClick={onRemove} style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="x" size={13} /></button>
+      {locked ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg-muted)', fontSize: 12, fontWeight: 500 }}>
+          <Icon name={lv.icon} size={12} color="var(--fg-faint)" /> {lv.label}
+        </span>
+      ) : (
+        <LevelPicker value={m.level} onPick={onLevel} />
+      )}
+      {!locked && <button onClick={onRemove} style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="x" size={13} /></button>}
     </div>
   );
 }
 
-function VaultAccess({ vaults, accessFor, onLevel, onAdd, onRemove }: {
-  vaults: string[]; accessFor: (v: string) => Member[];
-  onLevel: (v: string, id: string, l: string) => void; onAdd: (v: string, p: Person) => void; onRemove: (v: string, id: string) => void;
-}) {
+function VaultAccess({ vaults, projectIdByName, workspaceId }: { vaults: string[]; projectIdByName: Map<string, string>; workspaceId: string | null }) {
   const [active, setActive] = useState(vaults[0]);
   useEffect(() => { if (!vaults.includes(active)) setActive(vaults[0]); }, [vaults.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
   const av = vaults.includes(active) ? active : vaults[0];
-  const members = accessFor(av);
+  const activeProjectId = projectIdByName.get(av) ?? null;
+  const { data: accessEntries = [] } = useVaultAccess(activeProjectId);
+  const { data: workspaceMembers = [] } = useWorkspaceMembers(workspaceId);
+  const { data: tenantUsers = [] } = useTenantUsers();
+  const addGuest = useAddGuest(activeProjectId);
+  const setGuestRole = useSetGuestRole(activeProjectId);
+  const removeGuest = useRemoveGuest(activeProjectId);
+  const members: Member[] = accessEntries.map((entry) => ({
+    id: entry.user_id,
+    name: entry.display_name || entry.email,
+    email: entry.email,
+    kind: 'user',
+    level: ROLE_TO_LEVEL[entry.role] ?? 'read',
+    source: entry.source,
+  }));
+  const presentAccess = new Set(accessEntries.map((entry) => entry.user_id));
+  const workspaceMemberIds = new Set(workspaceMembers.map((member) => member.user_id));
+  const candidates: Person[] = tenantUsers
+    .filter((user) => !presentAccess.has(user.user_id) && !workspaceMemberIds.has(user.user_id))
+    .map((user) => ({ id: user.user_id, name: user.display_name || user.email, email: user.email, kind: 'user' }));
+  const setLevel = (userId: string, level: AccessLevelId) => {
+    if (!activeProjectId) return;
+    if (level === 'none') removeGuest.mutate({ project_id: activeProjectId, user_id: userId });
+    else setGuestRole.mutate({ project_id: activeProjectId, user_id: userId, role: LEVEL_TO_ROLE[level] });
+  };
+  const addMember = (person: Person) => {
+    if (!activeProjectId) return;
+    addGuest.mutate({ project_id: activeProjectId, user_id: person.id, role: 'viewer' });
+  };
+  const removeMember = (userId: string) => {
+    if (!activeProjectId) return;
+    removeGuest.mutate({ project_id: activeProjectId, user_id: userId });
+  };
   return (
     <div style={{ marginTop: 12 }}>
       <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 10, lineHeight: 1.45 }}>
@@ -304,10 +356,11 @@ function VaultAccess({ vaults, accessFor, onLevel, onAdd, onRemove }: {
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
           <Icon name="folder" size={14} color="var(--fg-muted)" />
           <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{av}</span>
-          <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{members.filter((m) => m.level !== 'none').length} with access</span>
-          <span style={{ marginLeft: 'auto' }}><AddPeople members={members} onAdd={(p) => onAdd(av, p)} /></span>
+          <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{members.length} with access</span>
+          <span style={{ marginLeft: 'auto' }}><AddPeople members={members} candidates={candidates} onAdd={addMember} /></span>
         </div>
-        {members.map((m) => <AccessRow key={m.id} m={m} onLevel={(l) => onLevel(av, m.id, l)} onRemove={() => onRemove(av, m.id)} />)}
+        {members.map((m) => <AccessRow key={m.id} m={m} onLevel={(l) => setLevel(m.id, l)} onRemove={() => removeMember(m.id)} />)}
+        {!members.length && <div style={{ padding: '14px 12px', color: 'var(--fg-faint)', fontSize: 12 }}>No direct access entries.</div>}
       </div>
     </div>
   );
@@ -431,7 +484,6 @@ export function IngestModal({ open, onClose, files = [] }: {
   const [rows, setRows] = useState<Row[]>(seedRows);
   const [sel, setSel] = useState<Set<string>>(() => new Set());
   const [draft, setDraft] = useState('');
-  const [access, setAccess] = useState<Record<string, Member[]>>({});
 
   useEffect(() => {
     if (open) {
@@ -542,10 +594,7 @@ export function IngestModal({ open, onClose, files = [] }: {
 
   const selectedRows = rows.filter((r) => effectiveIdSet.has(r.id));
   const vaults = [...new Set(selectedRows.map((r) => r.project))];
-  const accessFor = (v: string) => access[v] || seedAccess();
-  const setLevel = (v: string, id: string, level: string) => setAccess((a) => { const cur = a[v] || seedAccess(); return { ...a, [v]: cur.map((m) => m.id === id ? { ...m, level } : m) }; });
-  const addMember = (v: string, p: Person) => setAccess((a) => { const cur = a[v] || seedAccess(); if (cur.some((m) => m.id === p.id)) return a; return { ...a, [v]: [...cur, { ...p, level: 'read' }] }; });
-  const rmMember = (v: string, id: string) => setAccess((a) => { const cur = a[v] || seedAccess(); return { ...a, [v]: cur.filter((m) => m.id !== id) }; });
+  const projectIdByName = new Map(projects.map((project) => [project.name, project.project_id]));
   const selCount = effectiveIds.length;
   const progressEntries = Object.entries(progress);
 
@@ -622,7 +671,7 @@ export function IngestModal({ open, onClose, files = [] }: {
             <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Vault access</span>
             <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{vaults.length} vault{vaults.length > 1 ? 's' : ''}</span>
           </div>
-          <VaultAccess vaults={vaults} accessFor={accessFor} onLevel={setLevel} onAdd={addMember} onRemove={rmMember} />
+          <VaultAccess vaults={vaults} projectIdByName={projectIdByName} workspaceId={workspaceId} />
         </div>
       )}
     </Modal>
