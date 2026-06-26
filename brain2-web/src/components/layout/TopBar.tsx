@@ -316,10 +316,14 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
   })();
   const meLabel = me?.display_name ?? me?.email?.split('@')[0] ?? '…';
 
+  // Pick a workspace once the list loads: keep the last-used one (persisted in
+  // localStorage) when it's still valid, otherwise fall back to the first —
+  // which also makes it the new "last used". This also self-heals a stale id
+  // left over from a previous account/session that isn't in the current list.
   useEffect(() => {
-    if (!workspaceId && workspaces.length > 0) {
-      setWorkspaceId(workspaces[0].workspace_id);
-    }
+    if (workspaces.length === 0) return;
+    const valid = workspaceId != null && workspaces.some((w) => w.workspace_id === workspaceId);
+    if (!valid) setWorkspaceId(workspaces[0].workspace_id);
   }, [workspaceId, workspaces, setWorkspaceId]);
 
   const activeWs = workspaces.find(w => w.workspace_id === workspaceId);
