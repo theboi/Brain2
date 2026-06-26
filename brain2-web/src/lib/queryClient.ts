@@ -53,6 +53,7 @@ export const qk = {
   audits: (pid: string, topic: string) => ['audits', pid, topic] as const,
   me: () => ['me'] as const,
   users: () => ['users'] as const,
+  userDirectory: (workspaceId: string | null) => ['user-directory', workspaceId] as const,
   userAccess: (userId: string) => ['user-access', userId] as const,
   workspaceMembers: (workspaceId: string) => ['workspace-members', workspaceId] as const,
   vaultAccess: (projectId: string) => ['vault-access', projectId] as const,

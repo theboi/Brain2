@@ -16,10 +16,10 @@ import { ToolsSection } from './sections/ToolsSection';
 import { AuditSection } from './sections/AuditSection';
 import { DangerSection } from './sections/DangerSection';
 import { WorkspacesSection } from './sections/workspaces/WorkspacesSection';
+import { useMe } from '@/hooks/me';
+import { visibleSectionIds, type SettingsSectionId } from './settingsNav';
 
-type SectionId =
-  | 'workspaces' | 'people'
-  | 'profile' | 'integrations' | 'models' | 'appearance' | 'tools' | 'audit' | 'danger';
+type SectionId = SettingsSectionId;
 
 interface NavItem {
   id: SectionId;
@@ -66,6 +66,13 @@ interface SettingsPageProps {
 
 export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPageProps) {
   const [sec, setSec] = useState<SectionId>('profile');
+  const { data: me, isSuccess: meLoaded } = useMe();
+  const role = me?.role ?? 'member';
+  const allowedSectionIds = visibleSectionIds(role);
+  const allowed = new Set<SectionId>(allowedSectionIds);
+  const navGroups = NAV_GROUPS
+    .map((g) => ({ ...g, items: g.items.filter((it) => allowed.has(it.id)) }))
+    .filter((g) => g.items.length > 0);
 
   useEffect(() => {
     const readHash = () => {
@@ -77,12 +84,17 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
     return () => window.removeEventListener('hashchange', readHash);
   }, []);
 
+  useEffect(() => {
+    if (meLoaded && !allowed.has(sec)) selectSection('profile');
+  }, [meLoaded, role, sec]);
+
   const selectSection = (id: SectionId) => {
     setSec(id);
     window.history.replaceState(null, '', `${window.location.pathname}#${id}`);
   };
 
-  const cur = ALL_NAV.find((n) => n.id === sec) ?? ALL_NAV[0];
+  const activeSection = allowed.has(sec) ? sec : 'profile';
+  const cur = ALL_NAV.find((n) => n.id === activeSection) ?? ALL_NAV[0];
 
   const body: Record<SectionId, React.ReactNode> = {
     workspaces:   <WorkspacesSection />,
@@ -112,7 +124,7 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
           overflowY: 'auto',
         }}
       >
-        {NAV_GROUPS.map((g, gi) => (
+        {navGroups.map((g, gi) => (
           <div key={g.title} style={{ marginTop: gi ? 18 : 0 }}>
             <div style={{
               fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase',
@@ -121,7 +133,7 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
               {g.title}
             </div>
             {g.items.map((n) => {
-              const on = n.id === sec;
+              const on = n.id === activeSection;
               return (
                 <button
                   key={n.id}
@@ -148,14 +160,14 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
 
       {/* Section content */}
       <main style={{ flex: 1, minWidth: 0, overflowY: 'auto', background: 'var(--bg)' }}>
-        <div style={{ maxWidth: sec === 'workspaces' ? 'none' : 760, margin: '0 auto', padding: '28px 28px 96px' }}>
+        <div style={{ maxWidth: activeSection === 'workspaces' ? 'none' : 760, margin: '0 auto', padding: '28px 28px 96px' }}>
           <h1 style={{ margin: '0 0 4px', fontFamily: 'var(--display-font)', fontSize: 24, fontWeight: 700, letterSpacing: 'var(--display-track)', color: 'var(--fg)' }}>
             {cur.label}
           </h1>
           <div style={{ fontSize: 13, color: 'var(--fg-muted)', marginBottom: 22 }}>
             {cur.subtitle}
           </div>
-          {body[sec]}
+          {body[activeSection]}
         </div>
       </main>
     </div>

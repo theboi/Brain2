@@ -6,9 +6,8 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from '@/components/ui/Icon';
 import { RoleBadge } from '@/components/settings/SettingsCard';
-import { useTenantUsers } from '@/hooks/people';
 import { useAddMember, useSetMemberRole, useRemoveMember } from '@/hooks/members';
-import { useUpdateWorkspace, useArchiveWorkspace } from '@/hooks/useWorkspaces';
+import { useUpdateWorkspace, useArchiveWorkspace, useUserDirectory } from '@/hooks/useWorkspaces';
 import { qk } from '@/lib/queryClient';
 import type { OverviewWorkspace } from '@/lib/types';
 import { capsFromRole, ROLE_DESC } from './mockData';
@@ -27,7 +26,7 @@ export function AccessDrawer({ ws, onClose, onDelete }: {
   const canDelete = caps.canDelete;
   const qc = useQueryClient();
 
-  const { data: tenantUsers } = useTenantUsers();
+  const { data: directoryUsers } = useUserDirectory(canEdit ? ws.workspace_id : null);
   const addMember = useAddMember(ws.workspace_id);
   const setMemberRole = useSetMemberRole(ws.workspace_id);
   const removeMember = useRemoveMember(ws.workspace_id);
@@ -40,7 +39,7 @@ export function AccessDrawer({ ws, onClose, onDelete }: {
 
   const invalidateOverview = () => qc.invalidateQueries({ queryKey: qk.workspacesOverview() });
   const present = new Set(ws.members.map((m) => m.user_id));
-  const candidates: Candidate[] = (tenantUsers ?? [])
+  const candidates: Candidate[] = (directoryUsers ?? [])
     .filter((u) => !present.has(u.user_id))
     .map((u) => ({ u: u.user_id, name: u.display_name || u.email, email: u.email }));
 

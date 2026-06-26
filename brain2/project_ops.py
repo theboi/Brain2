@@ -53,7 +53,8 @@ def _project_to_dict(store: Store, tenant_id: str, p) -> dict:
 def make_list_projects(store: Store):
     def handler(ctx: RequestContext, params: dict) -> dict:
         workspace_id = params.get("workspace_id")
-        projects = store.list_projects(ctx.tenant_id, workspace_id=workspace_id)
+        projects = store.list_accessible_projects(
+            ctx.tenant_id, ctx.user_id, workspace_id=workspace_id)
         return {"projects": [_project_to_dict(store, ctx.tenant_id, p) for p in projects]}
     return handler
 
@@ -64,6 +65,7 @@ def make_get_project(store: Store):
         if pid is None:
             raise NotFound("project_id is required")
         p = _resolve_project(store, ctx.tenant_id, pid)
+        authorize(store, ctx, "read_vault", project_id=pid)
         return _project_to_dict(store, ctx.tenant_id, p)
     return handler
 
@@ -149,13 +151,13 @@ def register_project_ops(ops, store: Store) -> None:
                  params=[{"name": "name", "type": "str", "required": True},
                          {"name": "project_id", "type": "str", "required": False},
                          {"name": "workspace_id", "type": "str", "required": False}])
-    ops.register("list_projects", action="manage_projects",
+    ops.register("list_projects", action="view_stats",
                  handler=make_list_projects(store),
-                 summary="List projects in your tenant",
+                 summary="List projects the caller can access",
                  params=[{"name": "workspace_id", "type": "str", "required": False}])
-    ops.register("get_project", action="manage_projects",
+    ops.register("get_project", action="view_stats",
                  handler=make_get_project(store),
-                 summary="Get a single project",
+                 summary="Get a single project the caller can read",
                  params=[{"name": "project_id", "type": "str", "required": True}])
     ops.register("grant_access", action="manage_access",
                  handler=make_grant_access(store),

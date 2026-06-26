@@ -3,7 +3,10 @@ import pytest
 
 from brain2.context import RequestContext
 from brain2.errors import Conflict, NotFound
+from brain2.api import create_app
+from brain2.app_context import build_app_context
 from brain2.store.local import LocalStore
+from fastapi.testclient import TestClient
 from brain2.workspace_member_ops import (
     make_add_workspace_member,
     make_list_workspace_members,
@@ -29,6 +32,29 @@ def _setup():
 
 def _ctx(uid="owner1", role="owner"):
     return RequestContext(tenant_id="t1", user_id=uid, tenant_role=role)
+
+
+def _client_with_users():
+    s = LocalStore(":memory:")
+    s.migrate()
+    s.create_tenant("t1", "Acme")
+    s.create_user("t1", "owner", "owner@t1.com", "owner")
+    s.create_user("t1", "priya", "priya@t1.com", "member")
+    s.create_user("t1", "bob", "bob@t1.com", "member")
+    actx = build_app_context(store=s, gateway=object())
+    for uid in ("owner", "priya", "bob"):
+        actx.passwords.set_password("t1", uid, "pw")
+    return TestClient(create_app(actx)), s
+
+
+def _token_for(c, email):
+    return c.post("/api/v1/auth/tokens",
+                  json={"tenant_id": "t1", "email": email, "password": "pw"}
+                  ).json()["token"]
+
+
+def _auth(token):
+    return {"Authorization": f"Bearer {token}"}
 
 
 # ---------------------------------------------------------------------------
@@ -188,3 +214,34 @@ def test_set_role_for_non_member_raises_not_found():
         make_set_workspace_member_role(s)(_ctx(), {
             "workspace_id": wid, "user_id": "u2", "role": "admin"
         })
+
+
+def test_users_directory_available_to_workspace_admin():
+    c, s = _client_with_users()
+    s.create_workspace("t1", "Eng", workspace_id="ws_eng")
+    s.add_workspace_member("t1", "ws_eng", "priya", "admin")
+    tok = _token_for(c, "priya@t1.com")
+
+    resp = c.post("/api/v1/ops/users:directory",
+                  json={"workspace_id": "ws_eng"},
+                  headers=_auth(tok))
+
+    assert resp.status_code == 200
+    users = resp.json()["users"]
+    assert all({"user_id", "email", "display_name"} <= set(u) for u in users)
+    assert {u["email"] for u in users} == {
+        "bob@t1.com", "owner@t1.com", "priya@t1.com",
+    }
+
+
+def test_users_directory_denied_for_non_admin_member():
+    c, s = _client_with_users()
+    s.create_workspace("t1", "Eng", workspace_id="ws_eng")
+    s.add_workspace_member("t1", "ws_eng", "bob", "member")
+    tok = _token_for(c, "bob@t1.com")
+
+    resp = c.post("/api/v1/ops/users:directory",
+                  json={"workspace_id": "ws_eng"},
+                  headers=_auth(tok))
+
+    assert resp.status_code == 403

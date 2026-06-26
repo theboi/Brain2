@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
+import { agentAvailability } from '@/lib/agentAvailability';
 import {
   useContinueTodo,
   useCreateTodo,
@@ -30,7 +31,7 @@ export function AgentsPage() {
   const [filter, setFilter] = useState<'all' | 'running' | 'queued' | 'done'>('all');
 
   const agentOf = (id: string | null) => agents.find((a) => a.id === id) || null;
-  const freeCount = agents.filter((a) => a.status === 'idle').length;
+  const availability = agentAvailability(agents);
   const running = todos.filter((t) => t.status === 'running');
   const queued = todos.filter((t) => t.status === 'queued').sort((a, b) => (b.priority ? 1 : 0) - (a.priority ? 1 : 0));
   const done = todos.filter((t) => t.status === 'done').sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
@@ -88,7 +89,7 @@ export function AgentsPage() {
       <div style={{ flexShrink: 0, padding: '4px 24px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
           <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--fg-faint)' }}>Agents</span>
-          <span style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>{agents.length} total · {freeCount} free</span>
+          <span style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>{availability.total} total · {availability.free} free</span>
         </div>
         <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 4 }}>
           {agents.map((a) => <RosterCard key={a.id} a={a} todo={a.taskId ? todos.find((t) => t.id === a.taskId) || null : null} onOpen={actions.open} />)}
@@ -125,7 +126,7 @@ export function AgentsPage() {
         <div className="b2-show-sm" style={{ display: 'none', height: 'calc(56px + env(safe-area-inset-bottom, 0px))' }} />
       </div>
 
-      {adding && <AddTodoModal agents={agents} freeCount={freeCount} onClose={() => setAdding(false)} onAdd={actions.add} />}
+      {adding && <AddTodoModal agents={agents} freeCount={availability.free} onClose={() => setAdding(false)} onAdd={actions.add} />}
       {openId && <ConversationDrawer todoId={openId} agentOf={agentOf} onClose={() => setOpenId(null)} onContinue={actions.continue} />}
     </div>
   );

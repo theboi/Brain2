@@ -60,6 +60,13 @@ USERS: list[dict] = [
         "role": "member",
         "password": "meridian-dev",
     },
+    {
+        "user_id": "tester-member",
+        "email": "tester-member@meridian.sg",
+        "display_name": "Tester Member (Engineering)",
+        "role": "member",
+        "password": "meridian-dev",
+    },
     # R&D / Autonomy
     {
         "user_id": "siti-rahimah",
@@ -147,6 +154,20 @@ GUEST_USERS: list[dict] = [
         "role": "member",
         "password": "guest-dev",
     },
+    {
+        "user_id": "tester-editor",
+        "email": "tester-editor@partner.example",
+        "display_name": "Tester Editor (guest)",
+        "role": "member",
+        "password": "guest-dev",
+    },
+    {
+        "user_id": "tester-viewer",
+        "email": "tester-viewer@partner.example",
+        "display_name": "Tester Viewer (guest)",
+        "role": "member",
+        "password": "guest-dev",
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -161,7 +182,7 @@ WORKSPACES: list[dict] = [
             "engineering for Meridian drone platforms."
         ),
         "head": "priya-nair",
-        "members": ["rafi-halim", "darren-lim"],
+        "members": ["rafi-halim", "darren-lim", "tester-member"],
     },
     {
         "name": "R&D / Autonomy",
@@ -1368,6 +1389,8 @@ GUEST_GRANTS: list[tuple[str, str, str]] = [
     ("caas-consultant", "regulatory-compliance", "viewer"),
     ("cm-partner", "manufacturing-bom", "editor"),
     ("investor-east", "finance-hr", "viewer"),
+    ("tester-editor", "firmware-engineering", "editor"),
+    ("tester-viewer", "firmware-engineering", "viewer"),
 ]
 
 
@@ -1415,9 +1438,12 @@ def _ensure_workspace_description(s, workspace_id: str, description: str) -> Non
 
 def _ensure_project(s, project_id: str, name: str, workspace_id: str,
                     vault_path: Path, mode: str) -> None:
-    if s.get_project(TENANT_ID, project_id) is None:
+    existing = s.get_project(TENANT_ID, project_id)
+    if existing is None:
         s.create_project(TENANT_ID, project_id, name, workspace_id=workspace_id)
-    # set_project_mode is idempotent (UPDATE)
+    elif existing.workspace_id != workspace_id:
+        s.set_project_workspace(TENANT_ID, project_id, workspace_id)
+    # set_project_mode / vault_path are idempotent (UPDATE)
     s.set_project_mode(TENANT_ID, project_id, mode)
     s.set_project_vault_path(TENANT_ID, project_id, str(vault_path))
 

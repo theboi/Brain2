@@ -77,6 +77,12 @@ export interface TenantUser {
   invited: boolean;
 }
 
+export interface UserDirectoryEntry {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+}
+
 export interface UserWorkspaceAccess {
   workspace_id: string;
   name: string;

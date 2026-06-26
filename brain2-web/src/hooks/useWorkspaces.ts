@@ -2,7 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ops } from '@/lib/api';
 import { qk } from '@/lib/queryClient';
-import type { Workspace, Project, WorkspacesOverview } from '@/lib/types';
+import type { Workspace, Project, UserDirectoryEntry, WorkspacesOverview } from '@/lib/types';
 
 export function useWorkspaces() {
   return useQuery({
@@ -27,6 +27,17 @@ export function useWorkspacesOverview() {
   return useQuery({
     queryKey: qk.workspacesOverview(),
     queryFn: () => ops<WorkspacesOverview>('workspaces:overview'),
+  });
+}
+
+export function useUserDirectory(workspaceId: string | null) {
+  return useQuery({
+    queryKey: qk.userDirectory(workspaceId),
+    queryFn: () => ops<{ users: UserDirectoryEntry[] }>(
+      'users:directory',
+      { workspace_id: workspaceId },
+    ).then((r) => r.users),
+    enabled: workspaceId !== null,
   });
 }
 

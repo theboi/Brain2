@@ -156,12 +156,16 @@ function WorkspaceMenu({ workspaces, currentId, onPick, onClose, anchorRef }: {
   );
 }
 
-function ProfileMenu({ theme, onToggleTheme, onClose, onSignOut, anchorRef }: {
+function ProfileMenu({ theme, onToggleTheme, onClose, onSignOut, anchorRef, name, email, role, initial }: {
   theme: Theme;
   onToggleTheme: () => void;
   onClose: () => void;
   onSignOut: () => void;
   anchorRef: RefObject<HTMLButtonElement | null>;
+  name: string;
+  email: string;
+  role: string;
+  initial: string;
 }) {
   const Item = ({ icon, label, href, onClick, danger }: {
     icon: string; label: string; href?: string; onClick?: () => void; danger?: boolean;
@@ -186,13 +190,13 @@ function ProfileMenu({ theme, onToggleTheme, onClose, onSignOut, anchorRef }: {
   return (
     <Popover onClose={onClose} anchorRef={anchorRef} placement="bottom-end" style={{ width: 244, padding: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 8px 10px' }}>
-        <span style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 600 }}>A</span>
+        <span style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 600 }}>{initial}</span>
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <b style={{ fontSize: 13.5, color: 'var(--fg)' }}>Alice Chen</b>
-            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent)', background: 'var(--accent-soft)', borderRadius: 5, padding: '1px 5px' }}>Owner</span>
+            <b style={{ fontSize: 13.5, color: 'var(--fg)' }}>{name}</b>
+            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent)', background: 'var(--accent-soft)', borderRadius: 5, padding: '1px 5px', textTransform: 'capitalize' }}>{role}</span>
           </span>
-          <span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-muted)' }}>alice@brain2.dev</span>
+          <span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-muted)' }}>{email}</span>
         </span>
       </div>
       <div style={{ height: 1, background: 'var(--border)', margin: '0 4px 5px' }} />
@@ -310,11 +314,12 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
   const { data: me } = useMe();
 
   const meInitial = (() => {
-    if (me?.display_name) return me.display_name.trim()[0].toUpperCase();
+    const displayName = me?.display_name?.trim();
+    if (displayName) return displayName[0].toUpperCase();
     if (me?.email) return me.email[0].toUpperCase();
     return '?';
   })();
-  const meLabel = me?.display_name ?? me?.email?.split('@')[0] ?? '…';
+  const meLabel = me?.display_name?.trim() || me?.email?.split('@')[0] || '…';
 
   // Pick a workspace once the list loads: keep the last-used one (persisted in
   // localStorage) when it's still valid, otherwise fall back to the first —
@@ -459,6 +464,10 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
             onToggleTheme={onToggleTheme}
             onClose={() => setMenu(null)}
             anchorRef={profileRef}
+            name={me?.display_name?.trim() || meLabel}
+            email={me?.email ?? ''}
+            role={me?.role ?? 'member'}
+            initial={meInitial}
             onSignOut={async () => {
               setMenu(null);
               await logout();

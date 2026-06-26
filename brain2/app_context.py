@@ -143,6 +143,7 @@ def _build_gateway():
 def _register_core_operations(ops: OperationRegistry, store, passwords, connector_factory,
                               gateway=None, blob_store=None, secrets=None):
     from brain2.admin_ops import (make_create_user, make_list_users,
+                                  make_users_directory,
                                   make_set_user_role, make_transfer_ownership)
     from brain2.knowledge.query_engine import QueryBounds, run_query
 
@@ -169,6 +170,10 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
                           "choices": ["admin", "member"]}])
     ops.register("list_users", action="manage_tenant",
                  handler=make_list_users(store), summary="List tenant users")
+    ops.register("users:directory", action="manage_workspace",
+                 handler=make_users_directory(store),
+                 summary="Minimal user directory for workspace member pickers",
+                 params=[{"name": "workspace_id", "type": "str", "required": True}])
     ops.register("set_user_role", action="manage_tenant",
                  handler=make_set_user_role(store),
                  summary="Set a user's role (admin/member)",

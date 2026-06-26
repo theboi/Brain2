@@ -58,6 +58,12 @@ def make_list_users(store: Store):
     return handler
 
 
+def make_users_directory(store: Store):
+    def handler(ctx: RequestContext, params: dict) -> dict:
+        return {"users": store.list_user_directory(ctx.tenant_id)}
+    return handler
+
+
 def make_set_user_role(store: Store):
     def handler(ctx: RequestContext, params: dict) -> dict:
         user_id, role = params["user_id"], params["role"]

@@ -10,7 +10,7 @@
  *       Sources + Queries tiles     Wiki pages by project (bars)
  *       Token stacked area
  *
- * Modals: IngestModal, ActivityModal, ManageAgentsModal, AddAgentModal
+ * Modals: IngestModal, ActivityModal, AddAgentModal
  */
 import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
@@ -22,7 +22,7 @@ import { StatTile, Legend } from '@/components/dashboard/StatTile';
 import { ActivityPanel } from '@/components/dashboard/ActivityPanel';
 import { WikiHealth } from '@/components/dashboard/WikiHealth';
 import { QuickActions } from '@/components/dashboard/QuickActions';
-import { ActivityModal, ManageAgentsModal, AddAgentModal } from '@/components/home/HomeModals';
+import { ActivityModal, AddAgentModal } from '@/components/home/HomeModals';
 import { IngestModal } from '@/pages/Sources/IngestModal';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import { useMe } from '@/hooks/me';
@@ -35,14 +35,15 @@ import {
   useStatsLlmTokens,
   useStatsWikiByProject,
 } from '@/hooks/useStats';
+import { useWorkers } from '@/hooks/useAgents';
 import { useActivity } from '@/hooks/useActivity';
+import { agentAvailability } from '@/lib/agentAvailability';
 import { bucketsToSeries, pivotTokenSeries, seriesDelta } from '@/lib/stats';
 import { eventToActivityItem } from '@/lib/activity';
-import {
-  AGENTS, WIKI_HEALTH, QUICK_ACTIONS,
-} from '@/lib/mockData';
+import { WIKI_HEALTH, QUICK_ACTIONS, type Agent as DashboardAgent } from '@/lib/mockData';
+import type { Agent as LiveAgent } from '@/pages/Agents/data';
 
-type ModalId = 'ingest' | 'activity' | 'agents' | 'addAgent' | null;
+type ModalId = 'ingest' | 'activity' | 'addAgent' | null;
 
 // ── Hero Band ────────────────────────────────────────────────────────────────
 function HeroBand({ onIngest, name, stats }: { onIngest: () => void; name: string; stats: { label: string; value: string }[] }) {
@@ -98,6 +99,24 @@ const tokenLegend = () => [
   { label: 'Tokens out', color: TOKEN_COLORS[1] },
 ];
 
+function dashboardAgent(agent: LiveAgent): DashboardAgent {
+  const busy = agent.status === 'busy';
+  const offline = agent.status === 'offline';
+  return {
+    id: agent.id,
+    name: agent.name,
+    model: busy ? 'Worker assigned' : 'Auto model pool',
+    provider: 'Agents queue',
+    status: busy ? 'active' : offline ? 'error' : 'idle',
+    statusLabel: busy ? 'running todo' : offline ? 'offline' : 'idle',
+    last: busy ? 'now' : 'available',
+    msgs: 0,
+    cost: offline ? 'offline' : 'live',
+    spark: busy ? [1, 3, 4, 5, 7, 6, 8, 9, 10] : [1, 1, 2, 1, 2, 1, 1, 2, 1],
+    note: busy && agent.taskId ? `todo ${agent.taskId.slice(0, 8)}` : undefined,
+  };
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 export function HomePage() {
   const isMobile = useMedia(MOBILE_QUERY);
@@ -110,12 +129,15 @@ export function HomePage() {
   const tokensQuery = useStatsLlmTokens(30);
   const wikiByProjectQuery = useStatsWikiByProject();
   const activityQuery = useActivity(25);
+  const { data: agents = [] } = useWorkers();
   const { data: projects = [] } = useProjects(workspaceId);
 
   const overview = overviewQuery.data;
   const name = me?.display_name?.trim() || 'there';
+  const availability = agentAvailability(agents);
+  const dashboardAgents = agents.map(dashboardAgent);
   const heroStats = [
-    { label: 'agents online', value: String(overview?.agents_online ?? 0) },
+    { label: 'agents online', value: String(availability.online) },
     { label: 'sources', value: (overview?.sources_total ?? 0).toLocaleString() },
     { label: 'wiki pages', value: (overview?.wiki_pages_total ?? 0).toLocaleString() },
     { label: 'queries today', value: String(overview?.queries_today ?? 0) },
@@ -167,7 +189,7 @@ export function HomePage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 24, minWidth: 0 }}>
               {/* Agents */}
               <div>
-                <SectionLabel action={<MoreLink onClick={() => setModal('agents')}>Manage agents</MoreLink>}>
+                <SectionLabel action={<MoreLink href="/agents">Manage agents</MoreLink>}>
                   Agents
                 </SectionLabel>
                 <div
@@ -177,7 +199,27 @@ export function HomePage() {
                     gap: isMobile ? 10 : 14,
                   }}
                 >
-                  {AGENTS.map((a) => <AgentCard key={a.id} agent={a} />)}
+                  {dashboardAgents.map((a) => <AgentCard key={a.id} agent={a} />)}
+                  {!dashboardAgents.length && (
+                    <div
+                      style={{
+                        minHeight: 120,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        textAlign: 'center',
+                        padding: 16,
+                        border: '1px solid var(--border)',
+                        borderRadius: 12,
+                        background: 'var(--surface)',
+                        color: 'var(--fg-faint)',
+                        fontSize: 12.5,
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      No live workers registered yet.
+                    </div>
+                  )}
                   <AddAgentTile onClick={() => setModal('addAgent')} />
                 </div>
               </div>
@@ -219,12 +261,6 @@ export function HomePage() {
       {/* Modals */}
       {modal === 'ingest'   && <IngestModal open onClose={() => setModal(null)} />}
       {modal === 'activity' && <ActivityModal events={events} onClose={() => setModal(null)} />}
-      {modal === 'agents'   && (
-        <ManageAgentsModal
-          onClose={() => setModal(null)}
-          onAddAgent={() => setModal('addAgent')}
-        />
-      )}
       {modal === 'addAgent' && <AddAgentModal onClose={() => setModal(null)} />}
     </>
   );

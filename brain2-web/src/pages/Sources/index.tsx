@@ -23,6 +23,7 @@ import { MiniMD } from '@/components/browse/MiniMD';
 import { IngestModal } from './IngestModal';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useProjects } from '@/hooks/useWorkspaces';
+import { resolveActiveProjectId } from '@/lib/vaultSelection';
 import {
   useSources, useExtracted,
   usePutExtracted, useReingest, useDeleteSource,
@@ -450,14 +451,13 @@ export function SourcesPage() {
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
 
   const { workspaceId, projectId, setProjectId } = useWorkspace();
-  const { data: projects = [] } = useProjects(workspaceId);
+  const { data: projects = [], isSuccess: projectsLoaded } = useProjects(workspaceId);
   const projectNames = projects.map((p) => p.name);
 
   useEffect(() => {
-    if (projects.length === 0) return;
-    const valid = projects.some((p) => p.project_id === projectId);
-    if (!valid) setProjectId(projects[0].project_id);
-  }, [projectId, projects, setProjectId]);
+    const next = resolveActiveProjectId(projectsLoaded, projects, projectId);
+    if (next !== projectId) setProjectId(next);
+  }, [projectId, projects, projectsLoaded, setProjectId]);
 
   const { data: sourceRows = [], isLoading } = useSources(projectId, {
     status: f.status !== 'all' ? f.status : undefined,

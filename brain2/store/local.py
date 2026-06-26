@@ -215,6 +215,14 @@ class LocalStore:
                  "last_seen_at": r["last_seen_at"], "invited": r["user_id"] in pending}
                 for r in rows]
 
+    def list_user_directory(self, tenant_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT user_id, email, display_name FROM users "
+            "WHERE tenant_id=? ORDER BY email",
+            (tenant_id,)).fetchall()
+        return [{"user_id": r["user_id"], "email": r["email"],
+                 "display_name": r["display_name"]} for r in rows]
+
     # --- groups ---
     def create_group(self, tenant_id: str, group_id: str, name: str) -> None:
         with self.transaction() as cx:
@@ -413,6 +421,17 @@ class LocalStore:
                 "SELECT * FROM projects WHERE tenant_id=? AND workspace_id=? "
                 "ORDER BY name", (tenant_id, workspace_id)).fetchall()
         return [self._row_to_project(r) for r in rows]
+
+    def list_accessible_projects(self, tenant_id: str, user_id: str, *,
+                                 workspace_id: str | None = None) -> list[Project]:
+        projects = self.list_projects(tenant_id, workspace_id=workspace_id)
+        user = self.get_user(tenant_id, user_id)
+        if user is not None and user.role == "owner":
+            return projects
+        return [
+            p for p in projects
+            if self.effective_project_role(tenant_id, p.id, user_id) is not None
+        ]
 
     def set_project_vault_path(self, tenant_id: str, project_id: str, vault_path: str) -> None:
         with self.transaction() as cx:

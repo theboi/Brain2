@@ -11,40 +11,24 @@ import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useMe } from '@/hooks/me';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import { usePersona } from '@/hooks/usePersona';
+import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { useAgents, useCreateSchedule, useGenerateReport, useReports } from '@/hooks/useReports';
 import { useSchedules } from '@/hooks/useSchedules';
 import { CronBuilder } from '@/components/reports/CronBuilder';
 import { buildCron, cadenceLabel } from '@/lib/cron';
 import { parsePersona } from '@/lib/persona';
 import { HistoryOverlay } from './HistoryOverlay';
+import { reportSuggestionsFor, type ReportFormatId, type ReportTone, type SuggestedReport } from './reportSuggestions';
 import { ScheduledRunsOverlay } from './ScheduledRunsOverlay';
 
-type ReportFormatId = 'doc' | 'deck' | 'video';
 type ScheduleId = 'oneoff' | 'weekly' | 'monthly' | 'quarterly' | 'custom';
 type RunScheduleId = 'now' | 'weekly' | 'monthly' | 'quarterly' | 'custom';
-type ReportTone = 'accent' | 'success' | 'warning' | 'muted' | 'destructive';
 
 interface ReportFormat {
   id: ReportFormatId;
   label: string;
   sub: string;
   icon: IconName;
-}
-
-interface SuggestedReport {
-  id: string;
-  title: string;
-  icon: IconName;
-  tone: ReportTone;
-  desc: string;
-  formats: ReportFormatId[];
-  best: ReportFormatId;
-  sources: number;
-  est: string;
-  category: string;
-  why: string;
-  match: number;
-  isNew?: boolean;
 }
 
 interface CatalogReport {
@@ -158,45 +142,6 @@ const REPORT_PARAMS: ReportParam[] = [
       { id: 'standard', label: 'Standard' },
       { id: 'deep', label: 'Deep dive' },
     ],
-  },
-];
-
-const SUGGESTED_REPORTS: SuggestedReport[] = [
-  {
-    id: 'fin-q2', title: 'Q2 Financial Report', icon: 'barChart', tone: 'accent',
-    desc: 'P&L, burn and runway with every figure cited back to your finance sources.',
-    formats: ['doc', 'deck'], best: 'doc', sources: 12, est: '~2 min', category: 'Financial',
-    why: 'You own the finance sources and open the Q2 folder daily.', match: 98,
-  },
-  {
-    id: 'board', title: 'Board Briefing', icon: 'briefcase', tone: 'accent',
-    desc: 'A one-page executive summary of the quarter, written for your board.',
-    formats: ['deck', 'doc'], best: 'deck', sources: 24, est: '~3 min', category: 'Executive',
-    why: 'Board meeting in 6 days, per your linked calendar.', match: 95,
-  },
-  {
-    id: 'sales', title: 'Sales Performance Summary', icon: 'trendingUp', tone: 'success',
-    desc: 'Pipeline, wins and churn for the month, broken down by segment.',
-    formats: ['doc', 'deck'], best: 'doc', sources: 9, est: '~2 min', category: 'Financial',
-    why: 'Pulls from the sales dashboards you ingested last week.', match: 88,
-  },
-  {
-    id: 'video-q2', title: 'Q2 Earnings Walkthrough', icon: 'play', tone: 'warning',
-    desc: 'A 4-minute narrated overview of the quarter, ready to send to the team.',
-    formats: ['video'], best: 'video', sources: 12, est: '~6 min', category: 'Executive',
-    why: 'New: turn your Q2 numbers into something shareable.', match: 84, isNew: true,
-  },
-  {
-    id: 'headcount', title: 'Headcount & Cost Snapshot', icon: 'users', tone: 'muted',
-    desc: 'Team size and spend versus plan, with a hiring-vs-attrition view.',
-    formats: ['doc', 'deck'], best: 'doc', sources: 6, est: '~90 s', category: 'Operations',
-    why: 'Frequently requested in your weekly ops review.', match: 79,
-  },
-  {
-    id: 'investor', title: 'Investor Update', icon: 'mail', tone: 'muted',
-    desc: 'Monthly update with metrics, highlights, lowlights and a clear ask.',
-    formats: ['doc'], best: 'doc', sources: 18, est: '~2 min', category: 'Executive',
-    why: 'Matches the cadence of your last three updates.', match: 74,
   },
 ];
 
@@ -883,6 +828,7 @@ export function ReportsPage() {
   const isNarrow = useMedia('(max-width: 1080px)');
   const { projectId } = useWorkspace();
   const me = useMe().data;
+  const { data: workspaces = [] } = useWorkspaces();
   const persona = usePersona();
   const parsed = parsePersona(persona.data?.content ?? '');
   const displayName = me?.display_name?.trim() || 'you';
@@ -896,6 +842,10 @@ export function ReportsPage() {
   const [scheduledOpen, setScheduledOpen] = useState(false);
   const [generateAction, setGenerateAction] = useState<{ action: ReportAction; schedule: ScheduleId; cron: string } | null>(null);
   const activeScheduleCount = schedules.filter((s) => Boolean(s.enabled)).length;
+  const suggestedReports = reportSuggestionsFor({
+    role: me?.role ?? 'member',
+    accessibleWorkspaceNames: workspaces.map((workspace) => workspace.name),
+  });
 
   const scheduled = schedule !== 'oneoff';
   const currentSchedule = scheduleById(schedule);
@@ -961,7 +911,7 @@ export function ReportsPage() {
               )}
 
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0,1fr))', gap: 14 }}>
-                {SUGGESTED_REPORTS.map((report) => (
+                {suggestedReports.map((report) => (
                   <SuggestCard key={report.id} report={report} scheduled={scheduled} schedule={schedule} onGenerate={openGenerate} />
                 ))}
                 <CustomPromptCard scheduled={scheduled} schedule={schedule} onGenerate={openGenerate} />

@@ -11,6 +11,7 @@ import { Icon } from '@/components/ui/Icon';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useProjects } from '@/hooks/useWorkspaces';
+import { resolveActiveProjectId } from '@/lib/vaultSelection';
 import {
   useVaultPages, useVaultPage, useVaultHistory,
   useWritePage, useWikiTopicSources, useRevertCommit, useVaultHistoryDiff,
@@ -107,10 +108,10 @@ function WikiPicker({ wf, setWf, pages, onSelect }: { wf: WikiFilter; setWf: (f:
 }
 
 // ── Tabs ───────────────────────────────────────────────────────────────────────
-function WikiTabBtn({ label, active, onClick, badge }: { label: string; active: boolean; onClick: () => void; badge?: number }) {
+function WikiTabBtn({ label, active, onClick, badge, disabled = false }: { label: string; active: boolean; onClick: () => void; badge?: number; disabled?: boolean }) {
   return (
-    <button onClick={onClick} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 7, height: 42, padding: '0 2px', border: 'none', background: 'transparent', cursor: 'pointer',
-      color: active ? 'var(--fg)' : 'var(--fg-muted)', fontFamily: 'var(--ui-font)', fontSize: 13.5, fontWeight: active ? 600 : 500 }}>
+    <button disabled={disabled} onClick={() => { if (!disabled) onClick(); }} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 7, height: 42, padding: '0 2px', border: 'none', background: 'transparent', cursor: disabled ? 'not-allowed' : 'pointer',
+      color: disabled ? 'var(--fg-faint)' : (active ? 'var(--fg)' : 'var(--fg-muted)'), opacity: disabled ? 0.55 : 1, fontFamily: 'var(--ui-font)', fontSize: 13.5, fontWeight: active ? 600 : 500 }}>
       {label}
       {badge != null && <span style={{ fontSize: 10.5, fontFamily: 'var(--mono-font)', background: active ? 'var(--accent)' : 'var(--surface-2)', color: active ? '#fff' : 'var(--fg-muted)', borderRadius: 6, padding: '1px 6px' }}>{badge}</span>}
       {active && <span style={{ position: 'absolute', left: 0, right: 0, bottom: -1, height: 2, background: 'var(--accent)', borderRadius: 2 }} />}
@@ -284,13 +285,12 @@ export function WikiPage() {
 
   // ── live data ──────────────────────────────────────────────────────────────
   const { workspaceId, projectId, setProjectId } = useWorkspace();
-  const { data: projects = [] } = useProjects(workspaceId);
+  const { data: projects = [], isSuccess: projectsLoaded } = useProjects(workspaceId);
 
   useEffect(() => {
-    if (projects.length === 0) return;
-    const valid = projects.some((p) => p.project_id === projectId);
-    if (!valid) setProjectId(projects[0].project_id);
-  }, [projectId, projects, setProjectId]);
+    const next = resolveActiveProjectId(projectsLoaded, projects, projectId);
+    if (next !== projectId) setProjectId(next);
+  }, [projectId, projects, projectsLoaded, setProjectId]);
 
   const { data: vaultPages = [] } = useVaultPages(projectId);
   const { data: pageData, isLoading: pageLoading } = useVaultPage(projectId, topic);
@@ -338,10 +338,10 @@ export function WikiPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
           <h1 style={{ margin: 0, fontFamily: 'var(--display-font)', fontSize: isMobile ? 22 : 26, fontWeight: 700, letterSpacing: 'var(--display-track)', color: 'var(--fg)' }}>{topic ?? '—'}</h1>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            {!isMobile && <button style={wbtnGhost()}><Icon name="chats" size={14} /> Open in chat</button>}
+            {!isMobile && <button disabled={!topic} style={{ ...wbtnGhost(), opacity: topic ? 1 : 0.45, cursor: topic ? 'pointer' : 'not-allowed' }}><Icon name="chats" size={14} /> Open in chat</button>}
             {!isMobile && projectId && <Link to={`/graph?vault=${encodeURIComponent(projectId)}`} title="Open this vault's graph" style={{ ...wbtnGhost(), textDecoration: 'none' }}><Icon name="graph" size={14} /> Graph</Link>}
-            <button onClick={() => setAudit(true)} style={{ ...wbtnGhost(), color: 'var(--accent)', borderColor: 'var(--accent-line)' }}><Icon name="sparkles" size={14} color="var(--accent)" /> Audit</button>
-            <button onClick={() => setTab('Edit')} style={wbtnPrimary()}><Icon name="pencil" size={14} color="#fff" /> Edit</button>
+            <button disabled={!topic} onClick={() => topic && setAudit(true)} style={{ ...wbtnGhost(), color: 'var(--accent)', borderColor: 'var(--accent-line)', opacity: topic ? 1 : 0.45, cursor: topic ? 'pointer' : 'not-allowed' }}><Icon name="sparkles" size={14} color="var(--accent)" /> Audit</button>
+            <button disabled={!topic} onClick={() => topic && setTab('Edit')} style={{ ...wbtnPrimary(), opacity: topic ? 1 : 0.45, cursor: topic ? 'pointer' : 'not-allowed' }}><Icon name="pencil" size={14} color="#fff" /> Edit</button>
           </span>
         </div>
         {pageData && (
@@ -349,8 +349,8 @@ export function WikiPage() {
         )}
         {pageLoading && <div style={{ fontSize: 12.5, color: 'var(--fg-faint)', marginTop: 6 }}>Loading…</div>}
         <div className="b2-tabscroll" style={{ display: 'flex', gap: 20, marginTop: 8, overflowX: 'auto' }}>
-          {WIKI_TABS.map((t) => <WikiTabBtn key={t} label={t} active={tab === t} onClick={() => setTab(t)} />)}
-          <WikiTabBtn label="Audit" active={false} onClick={() => setAudit(true)} />
+          {WIKI_TABS.map((t) => <WikiTabBtn key={t} label={t} active={tab === t} disabled={!topic && t === 'Edit'} onClick={() => setTab(t)} />)}
+          <WikiTabBtn label="Audit" active={false} disabled={!topic} onClick={() => setAudit(true)} />
         </div>
       </div>
       {/* body */}

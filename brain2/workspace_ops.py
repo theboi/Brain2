@@ -11,15 +11,17 @@ def _ws_to_dict(ws) -> dict:
 
 def make_list(store):
     def handler(ctx, params):
+        is_owner = ctx.tenant_role == "owner"
         workspaces = store.list_workspaces(ctx.tenant_id)
-        counts = dict(store._conn.execute(
-            "SELECT workspace_id, COUNT(*) FROM projects "
-            "WHERE tenant_id=? GROUP BY workspace_id", (ctx.tenant_id,)
-        ).fetchall())
-        return {"workspaces": [
-            {**_ws_to_dict(w), "vault_count": int(counts.get(w.workspace_id, 0))}
-            for w in workspaces
-        ]}
+        out = []
+        for w in workspaces:
+            if not is_owner and store.get_workspace_member_role(
+                    ctx.tenant_id, w.workspace_id, ctx.user_id) is None:
+                continue
+            accessible = store.list_accessible_projects(
+                ctx.tenant_id, ctx.user_id, workspace_id=w.workspace_id)
+            out.append({**_ws_to_dict(w), "vault_count": len(accessible)})
+        return {"workspaces": out}
     return handler
 
 

@@ -20,6 +20,7 @@ export function useAddMember(workspaceId: string | null) {
       ops('workspace_members:add', params),
     onSuccess: () => {
       if (workspaceId) qc.invalidateQueries({ queryKey: qk.workspaceMembers(workspaceId) });
+      if (workspaceId) qc.invalidateQueries({ queryKey: qk.userDirectory(workspaceId) });
       qc.invalidateQueries({ queryKey: ['user-access'] });
       qc.invalidateQueries({ queryKey: qk.workspacesOverview() });
       qc.invalidateQueries({ queryKey: qk.orgGraph() });
@@ -48,6 +49,7 @@ export function useRemoveMember(workspaceId: string | null) {
       ops('workspace_members:remove', params),
     onSuccess: () => {
       if (workspaceId) qc.invalidateQueries({ queryKey: qk.workspaceMembers(workspaceId) });
+      if (workspaceId) qc.invalidateQueries({ queryKey: qk.userDirectory(workspaceId) });
       qc.invalidateQueries({ queryKey: ['user-access'] });
       qc.invalidateQueries({ queryKey: qk.workspacesOverview() });
       qc.invalidateQueries({ queryKey: qk.orgGraph() });
