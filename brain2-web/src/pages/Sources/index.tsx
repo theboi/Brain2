@@ -5,7 +5,7 @@
  * Full-page drag overlay + Ingest modal. Mobile collapses to a list→detail
  * back-stack. Faithful port of docs/design/v1 sources.jsx + app-sources.jsx.
  */
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
 import { Modal } from '@/components/ui/Modal';
@@ -25,7 +25,7 @@ import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useProjects } from '@/hooks/useWorkspaces';
 import { resolveActiveProjectId } from '@/lib/vaultSelection';
 import {
-  useSources, useExtracted,
+  useWorkspaceSources, useExtracted,
   usePutExtracted, useReingest, useDeleteSource,
   useSourceEvents, useDownloadSource, useExtractionHistory, useExtractionDiff,
   useRestoreExtraction,
@@ -81,8 +81,8 @@ function sourceChipDefs(f: SourceFilter, setF: (f: SourceFilter) => void, projec
 }
 
 // ── Desktop sidebar ────────────────────────────────────────────────────────────
-function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, projectNames, width = 268 }: {
-  f: SourceFilter; setF: (f: SourceFilter) => void; selectedId: string; onSelect: (id: string) => void; onIngest: () => void; items: Source[]; projectNames: string[]; width?: number;
+function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, projectNames, nameById, width = 268 }: {
+  f: SourceFilter; setF: (f: SourceFilter) => void; selectedId: string; onSelect: (id: string) => void; onIngest: () => void; items: Source[]; projectNames: string[]; nameById: Record<string, string>; width?: number;
 }) {
   const [q, setQ] = useState('');
   const [openF, setOpenF] = useState<Record<string, boolean>>({ default: true });
@@ -103,7 +103,7 @@ function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, projec
         {projectLabels.map((proj) => {
           const rows = filtered.filter((s) => s.project === proj);
           return (
-            <Folder key={proj} label={proj} count={rows.length} open={!!openF[proj]} onToggle={() => setOpenF((o) => ({ ...o, [proj]: !o[proj] }))}>
+            <Folder key={proj} label={nameById[proj] ?? proj} count={rows.length} open={openF[proj] ?? true} onToggle={() => setOpenF((o) => ({ ...o, [proj]: !(o[proj] ?? true) }))}>
               {rows.map((s) => {
                 const chip = STATUS_CHIP[s.status];
                 return <NestRow key={s.id} icon={TYPE_ICON[s.type] || 'file'} label={s.name} active={s.id === selectedId} onClick={() => onSelect(s.id)}
@@ -453,31 +453,53 @@ export function SourcesPage() {
   const { workspaceId, projectId, setProjectId } = useWorkspace();
   const { data: projects = [], isSuccess: projectsLoaded } = useProjects(workspaceId);
   const projectNames = projects.map((p) => p.name);
+  const nameById = useMemo(
+    () => Object.fromEntries(projects.map((p) => [p.project_id, p.name])),
+    [projects],
+  );
 
   useEffect(() => {
     const next = resolveActiveProjectId(projectsLoaded, projects, projectId);
     if (next !== projectId) setProjectId(next);
   }, [projectId, projects, projectsLoaded, setProjectId]);
 
-  const { data: sourceRows = [], isLoading } = useSources(projectId, {
+  // Sources for every vault in the workspace — one folder per vault.
+  const projectIds = useMemo(() => projects.map((p) => p.project_id), [projects]);
+  const sourceResults = useWorkspaceSources(projectIds, {
     status: f.status !== 'all' ? f.status : undefined,
     tag: f.tag !== 'all' ? f.tag : undefined,
   });
-  useSourceEvents(projectId);
+  const sourcesLoading = projectIds.length > 0 && sourceResults.some((r) => r.isLoading);
+  const allItems: Source[] = useMemo(
+    () => sourceResults.flatMap((r) => (r.data ?? []).map(toDisplaySource)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [...sourceResults.map((r) => r.data)],
+  );
+  // Honour the project filter chip (value is a vault name).
+  const items = useMemo(
+    () => (f.project === 'all' ? allItems : allItems.filter((s) => nameById[s.project] === f.project)),
+    [allItems, f.project, nameById],
+  );
 
-  const items: Source[] = sourceRows.map(toDisplaySource);
+  // Keep status/source events fresh for the vault currently being previewed.
+  const selectedSource = items.find((s) => s.id === selectedId);
+  const activeProjectId = selectedSource?.project ?? projectId;
+  useSourceEvents(activeProjectId);
 
   useEffect(() => {
     if (!routeSourceId) return;
-    const routed = items.find((s) => s.id === routeSourceId);
-    if (routed) setSelectedId(routed.id);
+    const routed = allItems.find((s) => s.id === routeSourceId);
+    if (routed) { setSelectedId(routed.id); setProjectId(routed.project); }
     setMobileView('detail');
-  }, [items, routeSourceId]);
+  }, [allItems, routeSourceId, setProjectId]);
 
   // Auto-select first source when list loads and nothing is selected
   useEffect(() => {
-    if (!routeSourceId && !selectedId && items.length > 0) setSelectedId(items[0].id);
-  }, [items, routeSourceId, selectedId]);
+    if (!routeSourceId && !selectedId && items.length > 0) {
+      setSelectedId(items[0].id);
+      setProjectId(items[0].project);
+    }
+  }, [items, routeSourceId, selectedId, setProjectId]);
 
   useEffect(() => {
     const onEnter = (e: DragEvent) => { e.preventDefault(); if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragCount.current++; setDragging(true); } };
@@ -490,18 +512,22 @@ export function SourcesPage() {
   }, []);
 
   const selected = items.find((s) => s.id === selectedId) ?? (routeSourceId ? null : items[0] ?? null);
+  // The selected source dictates which vault the preview pane reads/writes.
+  const selectedProjectId = selected?.project ?? projectId;
   const mobileChips = <FilterChips defs={sourceChipDefs(f, setF, projectNames)} />;
 
   function selectSource(id: string) {
     setSelectedId(id);
+    const src = items.find((s) => s.id === id);
+    if (src) setProjectId(src.project);
     navigate(`/sources/${encodeURIComponent(id)}`);
   }
 
-  if (!projectId) {
-    return <div style={{ padding: 24, color: 'var(--fg-muted)' }}>Pick a vault.</div>;
+  if (projectsLoaded && projects.length === 0) {
+    return <div style={{ padding: 24, color: 'var(--fg-muted)' }}>This workspace has no vaults yet.</div>;
   }
 
-  if (isLoading) {
+  if (!projectsLoaded || sourcesLoading) {
     return <div style={{ padding: 24, color: 'var(--fg-muted)' }}>Loading sources…</div>;
   }
 
@@ -512,14 +538,14 @@ export function SourcesPage() {
           {mobileView === 'list'
             ? <ListPane items={items} selectedId={selectedId} onSelect={(id) => { selectSource(id); setMobileView('detail'); }} chips={mobileChips} onIngest={() => setModal(true)} />
             : selected
-              ? <PreviewPane s={selected} projectId={projectId} mobile onBack={() => setMobileView('list')} onDeleted={() => { setSelectedId(''); setMobileView('list'); }} />
+              ? <PreviewPane s={selected} projectId={selectedProjectId} mobile onBack={() => setMobileView('list')} onDeleted={() => { setSelectedId(''); setMobileView('list'); }} />
               : <div style={{ padding: 24, color: 'var(--fg-muted)' }}>No source selected.</div>}
         </div>
       ) : (
         <>
-          <SourcesSidebar f={f} setF={setF} selectedId={selectedId} onSelect={selectSource} onIngest={() => setModal(true)} items={items} projectNames={projectNames} />
+          <SourcesSidebar f={f} setF={setF} selectedId={selectedId} onSelect={selectSource} onIngest={() => setModal(true)} items={items} projectNames={projectNames} nameById={nameById} />
           {selected
-            ? <PreviewPane s={selected} projectId={projectId} onDeleted={() => setSelectedId('')} />
+            ? <PreviewPane s={selected} projectId={selectedProjectId} onDeleted={() => setSelectedId('')} />
             : <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>Select a source to preview.</div>}
         </>
       )}

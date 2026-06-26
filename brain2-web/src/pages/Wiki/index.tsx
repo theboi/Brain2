@@ -5,7 +5,7 @@
  * drawer. Mobile lands on a page picker first. Faithful port of docs/design/v1
  * wiki.jsx + app-wiki.jsx.
  */
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
@@ -13,11 +13,11 @@ import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useProjects } from '@/hooks/useWorkspaces';
 import { resolveActiveProjectId } from '@/lib/vaultSelection';
 import {
-  useVaultPages, useVaultPage, useVaultHistory,
+  useWorkspaceVaultPages, useVaultPage, useVaultHistory,
   useWritePage, useWikiTopicSources, useRevertCommit, useVaultHistoryDiff,
 } from '@/hooks/useVault';
 import { useReingest } from '@/hooks/useSources';
-import type { VaultCommit } from '@/lib/types';
+import type { Project, VaultCommit } from '@/lib/types';
 import {
   FilterChips, Folder, NestRow, SidebarSearch, btnGhost as wbtnGhost, btnPrimary as wbtnPrimary,
   type ChipDef,
@@ -31,6 +31,8 @@ interface WikiFilter { project: string; filter: string; }
 
 // ── Filter chip defs + match helper (shared by sidebar + mobile picker) ───────
 interface LivePage { topic: string; zone: string; tldr: string | null; }
+// One vault and its wiki pages — the sidebar renders a folder per group.
+interface VaultGroup { project: Project; pages: LivePage[]; }
 
 function wikiChipDefs(wf: WikiFilter, setWf: (f: WikiFilter) => void, _pages: LivePage[]): ChipDef[] {
   const filterOpts = [
@@ -48,13 +50,15 @@ function wikiPageMatches(topic: string, _wf: WikiFilter, q: string): boolean {
 }
 
 // ── Desktop sidebar ────────────────────────────────────────────────────────────
-function WikiSidebar({ wf, setWf, selected, onSelect, pages, width = 264 }: {
-  wf: WikiFilter; setWf: (f: WikiFilter) => void; selected: string; onSelect: (t: string) => void;
-  pages: LivePage[]; width?: number;
+function WikiSidebar({ wf, setWf, selectedTopic, selectedProject, onSelect, vaults, width = 264 }: {
+  wf: WikiFilter; setWf: (f: WikiFilter) => void;
+  selectedTopic: string; selectedProject: string | null;
+  onSelect: (projectId: string, topic: string) => void;
+  vaults: VaultGroup[]; width?: number;
 }) {
   const [q, setQ] = useState('');
-  const defs = wikiChipDefs(wf, setWf, pages);
-  const rows = pages.filter((p) => wikiPageMatches(p.topic, wf, q));
+  const [openV, setOpenV] = useState<Record<string, boolean>>({});
+  const defs = wikiChipDefs(wf, setWf, []);
   return (
     <div style={{ width, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -62,10 +66,20 @@ function WikiSidebar({ wf, setWf, selected, onSelect, pages, width = 264 }: {
         <SidebarSearch value={q} onChange={setQ} placeholder="Search wiki…" />
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
-        <Folder label="Pages" count={rows.length} open onToggle={() => {}}>
-          {rows.map((p) => <NestRow key={p.topic} icon="wiki" label={p.topic} active={p.topic === selected} badge={null} onClick={() => onSelect(p.topic)} />)}
-          {!rows.length && <div style={{ padding: '4px 10px 8px 27px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No matching pages</div>}
-        </Folder>
+        {vaults.map(({ project, pages }) => {
+          const rows = pages.filter((p) => wikiPageMatches(p.topic, wf, q));
+          const open = openV[project.project_id] ?? true;
+          return (
+            <Folder key={project.project_id} label={project.name} count={rows.length} open={open}
+              onToggle={() => setOpenV((o) => ({ ...o, [project.project_id]: !(o[project.project_id] ?? true) }))}>
+              {rows.map((p) => <NestRow key={p.topic} icon="wiki" label={p.topic}
+                active={p.topic === selectedTopic && project.project_id === selectedProject}
+                badge={null} onClick={() => onSelect(project.project_id, p.topic)} />)}
+              {!rows.length && <div style={{ padding: '4px 10px 8px 27px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No matching pages</div>}
+            </Folder>
+          );
+        })}
+        {!vaults.length && <div style={{ padding: '4px 10px 8px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No vaults in this workspace</div>}
       </div>
     </div>
   );
@@ -86,22 +100,37 @@ function WikiPageRow({ topic, tldr, onClick }: { topic: string; tldr: string | n
     </button>
   );
 }
-function WikiPicker({ wf, setWf, pages, onSelect }: { wf: WikiFilter; setWf: (f: WikiFilter) => void; pages: LivePage[]; onSelect: (t: string) => void }) {
+function VaultHeader({ name, count }: { name: string; count: number }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '10px 16px 4px', position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 1 }}>
+      <Icon name="folder" size={13} color="var(--fg-muted)" />
+      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+      <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{count}</span>
+    </div>
+  );
+}
+function WikiPicker({ wf, setWf, vaults, onSelect }: { wf: WikiFilter; setWf: (f: WikiFilter) => void; vaults: VaultGroup[]; onSelect: (projectId: string, topic: string) => void }) {
   const [q, setQ] = useState('');
-  const rows = pages.filter((p) => wikiPageMatches(p.topic, wf, q));
+  const groups = vaults.map((v) => ({ project: v.project, rows: v.pages.filter((p) => wikiPageMatches(p.topic, wf, q)) }));
+  const total = groups.reduce((n, g) => n + g.rows.length, 0);
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
       <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <FilterChips defs={wikiChipDefs(wf, setWf, pages)} />
+        <FilterChips defs={wikiChipDefs(wf, setWf, [])} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)' }}>
           <Icon name="search" size={15} color="var(--fg-muted)" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search wiki…" style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', color: 'var(--fg)', fontSize: 13, fontFamily: 'var(--ui-font)' }} />
         </div>
-        <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{rows.length} pages</div>
+        <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{total} pages · {vaults.length} vault{vaults.length !== 1 ? 's' : ''}</div>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 'calc(72px + env(safe-area-inset-bottom, 0px))' }}>
-        {rows.map((p) => <WikiPageRow key={p.topic} topic={p.topic} tldr={p.tldr} onClick={() => onSelect(p.topic)} />)}
-        {!rows.length && <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>No pages match these filters.</div>}
+        {groups.map(({ project, rows }) => (
+          <Fragment key={project.project_id}>
+            <VaultHeader name={project.name} count={rows.length} />
+            {rows.map((p) => <WikiPageRow key={`${project.project_id}:${p.topic}`} topic={p.topic} tldr={p.tldr} onClick={() => onSelect(project.project_id, p.topic)} />)}
+          </Fragment>
+        ))}
+        {!total && <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>No pages match these filters.</div>}
       </div>
     </div>
   );
@@ -292,7 +321,15 @@ export function WikiPage() {
     if (next !== projectId) setProjectId(next);
   }, [projectId, projects, projectsLoaded, setProjectId]);
 
-  const { data: vaultPages = [] } = useVaultPages(projectId);
+  // Pages for every vault in the workspace — one folder per vault in the sidebar.
+  const projectIds = useMemo(() => projects.map((p) => p.project_id), [projects]);
+  const pageResults = useWorkspaceVaultPages(projectIds);
+  const vaults: VaultGroup[] = useMemo(
+    () => projects.map((p, i) => ({ project: p, pages: (pageResults[i]?.data ?? []) as LivePage[] })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [projects, ...pageResults.map((r) => r.data)],
+  );
+
   const { data: pageData, isLoading: pageLoading } = useVaultPage(projectId, topic);
   const { data: historyData } = useVaultHistory(projectId, topic);
   const { data: sourceData } = useWikiTopicSources(projectId, topic);
@@ -302,24 +339,40 @@ export function WikiPage() {
   const content = pageData?.content ?? '';
   const commits = historyData?.commits ?? [];
   const sources = sourceData?.sources ?? [];
-  const knownTopics = useMemo(() => new Set(vaultPages.map((p) => p.topic)), [vaultPages]);
+  // Wiki-link targets are scoped to the vault currently being viewed.
+  const currentPages = useMemo(
+    () => vaults.find((v) => v.project.project_id === projectId)?.pages ?? [],
+    [vaults, projectId],
+  );
+  const knownTopics = useMemo(() => new Set(currentPages.map((p) => p.topic)), [currentPages]);
 
+  // Deep link /wiki/:topic — select the topic and align the active vault to the
+  // first vault that contains it.
   useEffect(() => {
-    if (routeTopic && routeTopic !== topic) {
-      setTopic(routeTopic);
-      setMobilePage(routeTopic);
+    if (!routeTopic || routeTopic === topic) return;
+    setTopic(routeTopic);
+    setMobilePage(routeTopic);
+    const owner = vaults.find((v) => v.pages.some((p) => p.topic === routeTopic));
+    if (owner) setProjectId(owner.project.project_id);
+  }, [routeTopic, topic, vaults, setProjectId]);
+
+  // Pick a page on load: prefer the active vault if it has pages, otherwise the
+  // first vault that has any.
+  useEffect(() => {
+    if (routeTopic || topic) return;
+    const current = vaults.find((v) => v.project.project_id === projectId && v.pages.length > 0);
+    const target = current ?? vaults.find((v) => v.pages.length > 0);
+    if (target) {
+      if (target.project.project_id !== projectId) setProjectId(target.project.project_id);
+      setTopic(target.pages[0].topic);
     }
-  }, [routeTopic, topic]);
-
-  // pick first page when pages load
-  useEffect(() => {
-    if (!routeTopic && !topic && vaultPages.length > 0) setTopic(vaultPages[0].topic);
-  }, [routeTopic, topic, vaultPages]);
+  }, [routeTopic, topic, vaults, projectId, setProjectId]);
 
   const pad = isMobile ? '12px 16px 0' : '16px 28px 0';
   const bodyPad = isMobile ? '18px 16px 48px' : '22px 28px 40px';
   const editH = isMobile ? 'calc(100vh - 330px)' : 'calc(100vh - 260px)';
-  const openPage = (t: string) => {
+  const openPage = (pid: string, t: string) => {
+    setProjectId(pid);
     setTopic(t);
     setTab('Read');
     setMobilePage(t);
@@ -360,7 +413,7 @@ export function WikiPage() {
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', padding: bodyPad, paddingBottom: isMobile ? 'calc(72px + env(safe-area-inset-bottom, 0px))' : undefined }}>
-          {tab === 'Read' && <ReadTab content={content} onAudit={() => setAudit(true)} onAsk={() => setAudit(true)} onWikiLink={openPage} knownTopics={knownTopics} />}
+          {tab === 'Read' && <ReadTab content={content} onAudit={() => setAudit(true)} onAsk={() => setAudit(true)} onWikiLink={(t) => projectId && openPage(projectId, t)} knownTopics={knownTopics} />}
           {tab === 'Edit' && (isMobile
             ? <EditTab initialContent={content} onSave={(c) => topic && writePage.mutate({ topic, content: c })} saving={writePage.isPending} mobile />
             : <div style={{ height: editH }}><EditTab initialContent={content} onSave={(c) => topic && writePage.mutate({ topic, content: c })} saving={writePage.isPending} /></div>
@@ -377,8 +430,8 @@ export function WikiPage() {
 
   return (
     <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
-      {!isMobile && <WikiSidebar wf={wf} setWf={setWf} selected={topic ?? ''} onSelect={openPage} pages={vaultPages} />}
-      {isMobile && !mobilePage ? <WikiPicker wf={wf} setWf={setWf} pages={vaultPages} onSelect={openPage} /> : pageView}
+      {!isMobile && <WikiSidebar wf={wf} setWf={setWf} selectedTopic={topic ?? ''} selectedProject={projectId} onSelect={openPage} vaults={vaults} />}
+      {isMobile && !mobilePage ? <WikiPicker wf={wf} setWf={setWf} vaults={vaults} onSelect={openPage} /> : pageView}
       <AuditDrawer open={audit} onClose={() => setAudit(false)} topic={topic ?? ''} />
     </div>
   );

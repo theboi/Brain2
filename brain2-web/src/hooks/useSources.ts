@@ -1,6 +1,6 @@
 // brain2-web/src/hooks/useSources.ts
 import { useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ops, sse, genIdempotencyKey } from '@/lib/api';
 import { qk } from '@/lib/queryClient';
 import type { SourceRow, SourceEvent } from '@/lib/types';
@@ -19,6 +19,21 @@ export function useSources(projectId: string | null, filters: SourceFilters = {}
     queryFn: () => ops<{ sources: SourceRow[] }>('sources:list',
       { project_id: projectId, ...filters }).then(r => r.sources),
     enabled: !!projectId,
+  });
+}
+
+/**
+ * Sources for every vault in the active workspace, fetched in parallel and
+ * returned aligned with `projectIds`. Shares cache keys with useSources so each
+ * vault's list is fetched once.
+ */
+export function useWorkspaceSources(projectIds: string[], filters: SourceFilters = {}) {
+  return useQueries({
+    queries: projectIds.map((pid) => ({
+      queryKey: qk.sources(pid, filters),
+      queryFn: () => ops<{ sources: SourceRow[] }>('sources:list',
+        { project_id: pid, ...filters }).then((r) => r.sources),
+    })),
   });
 }
 

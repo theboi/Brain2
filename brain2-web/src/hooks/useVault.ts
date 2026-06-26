@@ -1,8 +1,8 @@
 // brain2-web/src/hooks/useVault.ts
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ops, apiFetch, sse, genIdempotencyKey } from '@/lib/api';
 import { qk } from '@/lib/queryClient';
-import type { VaultPage, VaultGraph, VaultCommit } from '@/lib/types';
+import type { VaultPage, VaultGraph, VaultGraphNode, VaultCommit } from '@/lib/types';
 import type { DiffHunk } from '@/lib/wiki';
 
 export function useVaultIndex(projectId: string | null) {
@@ -74,6 +74,21 @@ export function useVaultPages(projectId: string | null) {
     queryFn: () => ops<VaultGraph>('vault:graph', { project_id: projectId })
       .then(r => r.nodes.filter(n => n.zone === 'wiki')),
     enabled: !!projectId,
+  });
+}
+
+/**
+ * Wiki pages for every vault in the active workspace, fetched in parallel and
+ * returned aligned with `projectIds`. Shares cache keys with useVaultPages so a
+ * single vault's pages are only fetched once across the sidebar and page view.
+ */
+export function useWorkspaceVaultPages(projectIds: string[]) {
+  return useQueries({
+    queries: projectIds.map((pid) => ({
+      queryKey: ['vault', pid, 'pages'],
+      queryFn: () => ops<VaultGraph>('vault:graph', { project_id: pid })
+        .then((r) => r.nodes.filter((n: VaultGraphNode) => n.zone === 'wiki')),
+    })),
   });
 }
 
