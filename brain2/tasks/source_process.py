@@ -1,0 +1,114 @@
+"""source.process task: route extracted sources through their mode runner."""
+from __future__ import annotations
+
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from brain2.audit import record_best_effort_audit
+from brain2.source_ops import set_source_extracted, set_source_failed, set_source_status
+from brain2.vault.ingest import IngestRequest, dispatch_ingest
+from brain2.vault.runners import build_runners
+
+
+def _source_row(store, tenant_id: str, source_id: str):
+    return store._conn.execute(
+        "SELECT * FROM sources WHERE tenant_id=? AND source_id=?",
+        (tenant_id, source_id),
+    ).fetchone()
+
+
+def _extract_if_needed(store, tenant_id: str, source_id: str, row, raw_path: str | None) -> str:
+    if row is not None and row["extracted_md"]:
+        return row["extracted_md"]
+
+    from brain2.knowledge.extract import extract_to_markdown, extract_url_to_markdown
+
+    set_source_status(store, tenant_id=tenant_id, source_id=source_id, status="extracting")
+    if row is None:
+        raise RuntimeError(f"source {source_id!r} not found")
+    if row["kind"] == "url":
+        md = extract_url_to_markdown(row["url"])
+    elif row["kind"] == "text":
+        md = row["extracted_md"] or ""
+    else:
+        path = Path(raw_path or row["blob_path"])
+        md = extract_to_markdown(path, mime=row["mime"])
+    set_source_extracted(
+        store,
+        tenant_id=tenant_id,
+        source_id=source_id,
+        extracted_md=md,
+        kind="upload",
+    )
+    return md
+
+
+def _raw_path_for_runner(tmpdir: Path, row, mode: str, raw_path: str | None, extracted_md: str) -> Path:
+    if raw_path and mode != "wiki":
+        path = Path(raw_path)
+        if path.exists():
+            return path
+    if raw_path and mode == "wiki" and not extracted_md:
+        path = Path(raw_path)
+        if path.exists():
+            return path
+    name = "source.md"
+    if row is not None:
+        name = f"{row['source_id']}.md"
+    materialized = tmpdir / name
+    materialized.write_text(extracted_md or "", encoding="utf-8")
+    return materialized
+
+
+def make_source_process_handler(store, gateway, blob_store):
+    runners = build_runners(store, gateway)
+
+    def handler(task: dict) -> None:
+        payload = task["payload"]
+        tenant_id = task["tenant_id"]
+        source_id = payload["source_id"]
+        mode = payload["mode"]
+        actor = "system" if mode != "wiki" else payload.get("agent_id", "wiki-agent")
+        row = _source_row(store, tenant_id, source_id)
+
+        try:
+            raw_path = payload.get("raw_path")
+            extracted_md = _extract_if_needed(store, tenant_id, source_id, row, raw_path)
+            row = _source_row(store, tenant_id, source_id)
+
+            set_source_status(store, tenant_id=tenant_id, source_id=source_id,
+                              status="processing")
+            record_best_effort_audit(
+                store, tenant_id, actor, "source.processing", source_id,
+                {"mode": mode, "project_id": payload["project_id"]},
+            )
+
+            with TemporaryDirectory(prefix="brain2-source-") as tmp:
+                runner_path = _raw_path_for_runner(
+                    Path(tmp), row, mode, raw_path, extracted_md
+                )
+                req = IngestRequest(
+                    project_id=payload["project_id"],
+                    tenant_id=tenant_id,
+                    source_type=mode,
+                    raw_path=runner_path,
+                    uploaded_by=payload.get("uploaded_by"),
+                )
+                dispatch_ingest(req, runners)
+
+            set_source_status(store, tenant_id=tenant_id, source_id=source_id,
+                              status="done")
+            record_best_effort_audit(
+                store, tenant_id, actor, "source.done", source_id,
+                {"mode": mode, "project_id": payload["project_id"]},
+            )
+        except Exception as exc:
+            set_source_failed(store, tenant_id=tenant_id, source_id=source_id,
+                              error=str(exc))
+            record_best_effort_audit(
+                store, tenant_id, actor, "source.failed", source_id,
+                {"mode": mode, "project_id": payload.get("project_id"), "error": str(exc)},
+            )
+            raise
+
+    return handler
