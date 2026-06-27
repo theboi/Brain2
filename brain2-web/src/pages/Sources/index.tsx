@@ -355,6 +355,7 @@ function DetailsBody({ s, onDelete }: { s: Source; onDelete?: () => void }) {
 function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
   s: Source; projectId: string | null; mobile?: boolean; onBack?: () => void; onDeleted?: () => void;
 }) {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<SourceTab>('Preview');
   const [editExtracted, setEditExtracted] = useState(false);
   useEffect(() => { setTab(s.status === 'failed' ? 'Extracted text' : 'Preview'); setEditExtracted(false); }, [s.id, s.status]);
@@ -419,7 +420,7 @@ function PreviewPane({ s, projectId, mobile = false, onBack, onDeleted }: {
               <button style={btnGhost()} onClick={handleReingest} disabled={reingest.isPending}><Icon name="refresh" size={14} /> Retry</button>
             </div>
           )}
-          {tab === 'Preview' && (extractedText ? <MiniMD text={extractedText} /> : <EmptyBody label="Nothing to preview yet." />)}
+          {tab === 'Preview' && (extractedText ? <MiniMD text={extractedText} onWikiLink={(topic) => navigate(`/wiki/${encodeURIComponent(topic)}`)} /> : <EmptyBody label="Nothing to preview yet." />)}
           {tab === 'Raw source' && <RawBody s={s} onDownload={handleDownload} />}
           {tab === 'Extracted text' && (
             <ExtractedBody

@@ -114,10 +114,6 @@ function ProjectPicker({ value, onPick, full, options, loading }: { value: strin
               {value === p && <Icon name="check" size={14} color="var(--accent)" />}
             </button>
           ))}
-          <div style={{ height: 1, background: 'var(--border)', margin: '6px 0' }} />
-          <button onClick={() => { onPick('new-vault'); close(); }} style={ingRowBtn()}>
-            <Icon name="plus" size={13} color="var(--accent)" /><span style={{ color: 'var(--accent)', fontWeight: 600 }}>New vault…</span>
-          </button>
         </div>
       )}
     </IngMenu>
@@ -167,13 +163,13 @@ function TagsMenuBody({ value, options, onChange }: { value: string[]; options: 
 }
 
 function TagsPicker({ value, options, onChange, full }: { value: string[]; options: string[]; onChange: (tags: string[]) => void; full?: boolean }) {
-  const label = value.length ? `${value.length} tag${value.length > 1 ? 's' : ''}` : 'Tags';
+  const hasTags = value.length > 0;
   return (
     <IngMenu width={252} full={full} trigger={(open) => (
-      <button style={{ ...ingPill(open, full), color: value.length ? 'var(--fg)' : 'var(--fg-muted)' }} title={value.join(', ') || 'Choose tags'}>
-        <Icon name="hash" size={13} color={value.length ? 'var(--accent)' : 'var(--fg-muted)'} />
-        <span style={{ flex: full ? 1 : 'none', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'left' }}>{label}</span>
-        <Icon name="chevDown" size={12} color="var(--fg-muted)" />
+      <button style={{ ...ingPill(open, full), width: hasTags && !full ? 28 : full ? '100%' : 'auto', justifyContent: hasTags && !full ? 'center' : 'flex-start', padding: hasTags && !full ? 0 : '0 9px', color: hasTags ? 'var(--fg)' : 'var(--fg-muted)' }} title={value.join(', ') || 'Choose tags'} aria-label={hasTags ? 'Add tag' : 'Choose tags'}>
+        <Icon name={hasTags ? 'plus' : 'hash'} size={13} color={hasTags ? 'var(--accent)' : 'var(--fg-muted)'} />
+        {(!hasTags || full) && <span style={{ flex: full ? 1 : 'none', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'left' }}>{hasTags ? 'Add tag' : 'Tags'}</span>}
+        {(!hasTags || full) && <Icon name="chevDown" size={12} color="var(--fg-muted)" />}
       </button>
     )}>
       {() => <TagsMenuBody value={value} options={options} onChange={onChange} />}
@@ -365,10 +361,10 @@ function VaultAccess({ vaults, projectIdByName, workspaceId }: { vaults: string[
   );
 }
 
-function IngestQueueBar({ total, selCount, allSel, onToggleAll, onBulk, onClearSel, onRemoveSel, vaultOptions, vaultsLoading, tagOptions }: {
+function IngestQueueBar({ total, selCount, allSel, onToggleAll, onBulk, onClearSel, onRemoveSel, tagOptions }: {
   total: number; selCount: number; allSel: boolean; onToggleAll: () => void;
   onBulk: (p: Partial<Row>) => void; onClearSel: () => void; onRemoveSel: () => void;
-  vaultOptions: string[]; vaultsLoading?: boolean; tagOptions: string[];
+  tagOptions: string[];
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)', minHeight: 46, flexWrap: 'wrap' }}>
@@ -379,7 +375,6 @@ function IngestQueueBar({ total, selCount, allSel, onToggleAll, onBulk, onClearS
           <button onClick={onClearSel} style={{ border: 'none', background: 'transparent', color: 'var(--fg-muted)', fontSize: 11.5, cursor: 'pointer', fontFamily: 'var(--ui-font)' }}>clear</button>
           <span style={{ width: 1, height: 18, background: 'var(--border-strong)' }} />
           <span style={{ fontSize: 11.5, color: 'var(--fg-muted)', whiteSpace: 'nowrap' }}>Set for all:</span>
-          <ProjectPicker value={null} onPick={(v) => onBulk({ project: v })} options={vaultOptions} loading={vaultsLoading} />
           <TagsPicker value={[]} options={tagOptions} onChange={(tags) => onBulk({ tags })} />
           <ModePicker value={null} onPick={(v) => onBulk({ mode: v })} />
           <button onClick={onRemoveSel} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 28, padding: '0 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--destructive)', fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--ui-font)', marginLeft: 'auto' }}><Icon name="trash" size={13} /> Remove</button>
@@ -391,9 +386,9 @@ function IngestQueueBar({ total, selCount, allSel, onToggleAll, onBulk, onClearS
   );
 }
 
-function IngestRow({ r, selected, onToggle, onChange, onRemove, vaultOptions, vaultsLoading, tagOptions }: {
+function IngestRow({ r, selected, onToggle, onChange, onRemove, tagOptions }: {
   r: Row; selected: boolean; onToggle: () => void; onChange: (p: Partial<Row>) => void; onRemove: () => void;
-  vaultOptions: string[]; vaultsLoading?: boolean; tagOptions: string[];
+  tagOptions: string[];
 }) {
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(r.name);
@@ -438,8 +433,23 @@ function IngestRow({ r, selected, onToggle, onChange, onRemove, vaultOptions, va
           {r.kind === 'url' ? `web page${r.url ? ` · ${r.url}` : ''}` : `${r.type} · ${r.size}`}{r.collision && <span style={{ color: 'var(--warning)' }}> · possible duplicate</span>}
         </div>
       </div>
-      <div style={{ flexShrink: 0, width: 124, minWidth: 0 }}><ProjectPicker value={r.project} onPick={(v) => onChange({ project: v })} full options={vaultOptions} loading={vaultsLoading} /></div>
-      <div style={{ flexShrink: 0, width: 150, minWidth: 0 }}><TagsPicker value={r.tags} options={tagOptions} onChange={(tags) => onChange({ tags })} full /></div>
+      <div style={{ flexShrink: 0, width: 180, minWidth: 0, display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+        {r.tags.map((tag) => (
+          <span key={tag} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 22, padding: '0 7px', borderRadius: 6, background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 11.5, fontWeight: 500, fontFamily: 'var(--ui-font)' }}>
+            <Icon name="hash" size={10} color="var(--accent)" />
+            <span style={{ maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tag}</span>
+            <button
+              onClick={() => onChange({ tags: r.tags.filter((t) => t !== tag) })}
+              style={{ border: 'none', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', padding: 0, display: 'flex', lineHeight: 1 }}
+              title={`Remove ${tag}`}
+              aria-label={`Remove ${tag}`}
+            >
+              <Icon name="x" size={10} />
+            </button>
+          </span>
+        ))}
+        <TagsPicker value={r.tags} options={tagOptions} onChange={(tags) => onChange({ tags })} />
+      </div>
       <div style={{ flexShrink: 0, width: 104, minWidth: 0 }}><ModePicker value={r.mode} onPick={(v) => onChange({ mode: v })} full /></div>
       <button onClick={onRemove} style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="x" size={13} /></button>
     </div>
@@ -465,19 +475,23 @@ const norm = (f: Partial<DroppedFile> & { kind?: string; url?: string }, i: numb
 export function IngestModal({ open, onClose, files = [] }: {
   open: boolean; onClose: () => void; files?: DroppedFile[];
 }) {
-  const { workspaceId, projectId } = useWorkspace();
+  const { workspaceId } = useWorkspace();
   const { data: projects = [], isLoading: vaultsLoading } = useProjects(workspaceId);
-  const { data: projectTags = [] } = useProjectTags(projectId);
+  const vaultOptions = projects.map((p) => p.name);
+  const defaultVault = vaultOptions[0] ?? '';
+  const [selectedVaultName, setSelectedVaultName] = useState<string>(() => defaultVault);
+  const projectIdByName = new Map(projects.map((project) => [project.name, project.project_id]));
+  const vaultProjectId = projectIdByName.get(selectedVaultName) ?? null;
+  const { data: projectTags = [] } = useProjectTags(vaultProjectId);
   const qc = useQueryClient();
-  const ingestUrl = useIngestUrl(projectId);
+  const ingestUrl = useIngestUrl(vaultProjectId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingFiles = useRef<Map<string, File>>(new Map());
   const [progress, setProgress] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-
-  const vaultOptions = projects.map((p) => p.name);
-  const defaultVault = vaultOptions[0] ?? 'default';
+  const [manageTagsOpen, setManageTagsOpen] = useState(false);
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
 
   const seedRows = (): Row[] => files.map((f, i) => norm(f, i, defaultVault));
   const [rows, setRows] = useState<Row[]>(seedRows);
@@ -485,11 +499,18 @@ export function IngestModal({ open, onClose, files = [] }: {
   const [draft, setDraft] = useState('');
 
   useEffect(() => {
+    if (vaultOptions.length > 0 && (!selectedVaultName || !vaultOptions.includes(selectedVaultName))) {
+      setSelectedVaultName(vaultOptions[0]);
+    }
+  }, [vaultOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (open) {
       setRows(seedRows());
       setSel(new Set());
       setProgress({});
       setSubmitting(false);
+      setUploadErrors([]);
       pendingFiles.current = new Map();
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -499,7 +520,7 @@ export function IngestModal({ open, onClose, files = [] }: {
   const addUrl = () => {
     const v = draft.trim();
     if (!v) return;
-    setRows((rs) => [...rs, { id: 'u' + Date.now(), kind: 'url', name: v, url: v, type: 'url', size: '—', project: defaultVault, tags: [], mode: 'wiki', collision: false }]);
+    setRows((rs) => [...rs, { id: 'u' + Date.now(), kind: 'url', name: v, url: v, type: 'url', size: '—', project: selectedVaultName, tags: [], mode: 'wiki', collision: false }]);
     setDraft('');
   };
 
@@ -511,7 +532,7 @@ export function IngestModal({ open, onClose, files = [] }: {
       const sizeKb = f.size / 1024;
       const size = sizeKb < 1024 ? `${sizeKb.toFixed(0)} KB` : `${(sizeKb / 1024).toFixed(1)} MB`;
       pendingFiles.current.set(f.name, f);
-      return norm({ name: f.name, type, size, project: defaultVault, tags: [], mode: 'wiki' }, rows.length + i, defaultVault);
+      return norm({ name: f.name, type, size, project: selectedVaultName, tags: [], mode: 'wiki' }, rows.length + i, selectedVaultName);
     });
     setRows((rs) => [...rs, ...newRows]);
   };
@@ -534,66 +555,85 @@ export function IngestModal({ open, onClose, files = [] }: {
   const onIngest = async () => {
     if (rows.length === 0 || submitting) return;
     const applyTags = async (sourceId: string, row: Row) => {
-      if (!projectId) return;
+      if (!vaultProjectId) return;
       for (const tag of row.tags) {
-        await ops('sources:tag', { project_id: projectId, source_id: sourceId, tag });
+        await ops('sources:tag', { project_id: vaultProjectId, source_id: sourceId, tag });
       }
     };
+    const errs: string[] = [];
+    setUploadErrors([]);
     setSubmitting(true);
     try {
+      if (!vaultProjectId) {
+        setUploadErrors(['Choose a vault before ingesting sources.']);
+        return;
+      }
       const urlRows = rows.filter((r) => r.kind === 'url');
-      await Promise.allSettled(
+      const urlResults = await Promise.allSettled(
         urlRows.map(async (r) => {
           const out = await ingestUrl.mutateAsync({ url: r.url ?? r.name, mode: r.mode });
           await applyTags(out.source_id, r);
         }),
       );
-      if (projectId) {
+      urlResults.forEach((result, i) => {
+        if (result.status === 'rejected') {
+          errs.push(`URL "${urlRows[i].name}": ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+        }
+      });
+      if (vaultProjectId) {
         const fileRows = rows.filter((r) => r.kind === 'file');
         const uploads = Array.from(pendingFiles.current.entries()).map(([name, file]) => {
           const row = fileRows.find((r) => r.name === name);
-          const handle = uploadFileWithProgress(projectId, file, {
+          const handle = uploadFileWithProgress(vaultProjectId, file, {
             mode: row?.mode,
             onProgress: (frac) => setProgress((p) => ({ ...p, [name]: frac })),
           });
           return handle.promise
             .then(async (out) => {
               if (row) await applyTags(out.source_id, row);
-              setProgress((p) => { const { [name]: _omit, ...rest } = p; return rest; });
             })
-            .catch((err) => console.error('upload error', name, err));
+            .finally(() => {
+              setProgress((p) => { const { [name]: _omit, ...rest } = p; return rest; });
+            });
         });
-        await Promise.allSettled(uploads);
-        qc.invalidateQueries({ queryKey: ['sources', projectId] });
-        qc.invalidateQueries({ queryKey: ['source-tags', projectId] });
+        const fileResults = await Promise.allSettled(uploads);
+        fileResults.forEach((result, i) => {
+          if (result.status === 'rejected') {
+            const name = Array.from(pendingFiles.current.keys())[i] ?? 'unknown file';
+            const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+            errs.push(`File "${name}": ${message}`);
+          }
+        });
+        qc.invalidateQueries({ queryKey: ['sources', vaultProjectId] });
+        qc.invalidateQueries({ queryKey: ['source-tags', vaultProjectId] });
       }
-      onClose();
+      if (errs.length > 0) {
+        setUploadErrors(errs);
+      } else {
+        onClose();
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
   const ids = rows.map((r) => r.id);
-  const implicitAll = sel.size === 0;
-  const isChecked = (id: string) => implicitAll || sel.has(id);
-  const allSel = implicitAll || (ids.length > 0 && ids.every((id) => sel.has(id)));
-  const effectiveIds = implicitAll ? ids : ids.filter((id) => sel.has(id));
+  const isChecked = (id: string) => sel.has(id);
+  const allSel = ids.length > 0 && ids.every((id) => sel.has(id));
+  const effectiveIds = ids.filter((id) => sel.has(id));
   const effectiveIdSet = new Set(effectiveIds);
   const toggle = (id: string) => setSel((s) => {
-    if (s.size === 0) return new Set([id]);
     const n = new Set(s);
     n.has(id) ? n.delete(id) : n.add(id);
     return n;
   });
-  const toggleAll = () => setSel(new Set());
+  const toggleAll = () => setSel(allSel ? new Set() : new Set(ids));
   const patch = (id: string, p: Partial<Row>) => setRows((rs) => rs.map((r) => r.id === id ? { ...r, ...p } : r));
   const bulk = (p: Partial<Row>) => setRows((rs) => rs.map((r) => effectiveIdSet.has(r.id) ? { ...r, ...p } : r));
   const removeRow = (id: string) => { setRows((rs) => rs.filter((r) => r.id !== id)); setSel((s) => { const n = new Set(s); n.delete(id); return n; }); };
   const removeSel = () => { setRows((rs) => rs.filter((r) => !effectiveIdSet.has(r.id))); setSel(new Set()); };
 
-  const selectedRows = rows.filter((r) => effectiveIdSet.has(r.id));
-  const vaults = [...new Set(selectedRows.map((r) => r.project))];
-  const projectIdByName = new Map(projects.map((project) => [project.name, project.project_id]));
+  const vaults = selectedVaultName ? [selectedVaultName] : [];
   const selCount = effectiveIds.length;
   const progressEntries = Object.entries(progress);
 
@@ -617,6 +657,23 @@ export function IngestModal({ open, onClose, files = [] }: {
       <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }}
         onClick={(e) => e.stopPropagation()}
         onChange={onFileInputChange} />
+
+      {/* Vault selector — single vault for the whole session */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 12.5, color: 'var(--fg-muted)', fontWeight: 500 }}>Vault</span>
+        <ProjectPicker
+          value={selectedVaultName}
+          onPick={setSelectedVaultName}
+          options={vaultOptions}
+          loading={vaultsLoading}
+        />
+        <button
+          onClick={() => setManageTagsOpen(true)}
+          style={{ ...ingBtnGhost(), marginLeft: 'auto' }}
+        >
+          <Icon name="hash" size={14} /> Manage Tags
+        </button>
+      </div>
 
       {/* combined add area — files + URL */}
       <div
@@ -655,9 +712,9 @@ export function IngestModal({ open, onClose, files = [] }: {
 
       {/* queue */}
       <div style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)' }}>
-        <IngestQueueBar total={rows.length} selCount={selCount} allSel={allSel} onToggleAll={toggleAll} onBulk={bulk} onClearSel={() => setSel(new Set())} onRemoveSel={removeSel} vaultOptions={vaultOptions} vaultsLoading={vaultsLoading} tagOptions={projectTags} />
+        <IngestQueueBar total={rows.length} selCount={selCount} allSel={allSel} onToggleAll={toggleAll} onBulk={bulk} onClearSel={() => setSel(new Set())} onRemoveSel={removeSel} tagOptions={projectTags} />
         <div>
-          {rows.map((r) => <IngestRow key={r.id} r={r} selected={isChecked(r.id)} onToggle={() => toggle(r.id)} onChange={(p) => patch(r.id, p)} onRemove={() => removeRow(r.id)} vaultOptions={vaultOptions} vaultsLoading={vaultsLoading} tagOptions={projectTags} />)}
+          {rows.map((r) => <IngestRow key={r.id} r={r} selected={isChecked(r.id)} onToggle={() => toggle(r.id)} onChange={(p) => patch(r.id, p)} onRemove={() => removeRow(r.id)} tagOptions={projectTags} />)}
           {!rows.length && <div style={{ textAlign: 'center', color: 'var(--fg-faint)', padding: '26px 0', fontSize: 12.5 }}>Nothing queued — drop files or paste a link above.</div>}
         </div>
       </div>
@@ -671,6 +728,23 @@ export function IngestModal({ open, onClose, files = [] }: {
             <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{vaults.length} vault{vaults.length > 1 ? 's' : ''}</span>
           </div>
           <VaultAccess vaults={vaults} projectIdByName={projectIdByName} workspaceId={workspaceId} />
+        </div>
+      )}
+      {uploadErrors.length > 0 && (
+        <div role="alert" style={{ padding: '10px 14px', borderRadius: 10, background: 'var(--destructive-soft)', border: '1px solid var(--border)', color: 'var(--destructive)', fontSize: 12.5 }}>
+          <b>{uploadErrors.length} error{uploadErrors.length > 1 ? 's' : ''}:</b>
+          <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+            {uploadErrors.map((e, i) => <li key={i}>{e}</li>)}
+          </ul>
+          <button onClick={() => setUploadErrors([])} style={{ marginTop: 8, border: 'none', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontSize: 12, fontFamily: 'var(--ui-font)', padding: 0 }}>Dismiss</button>
+        </div>
+      )}
+      {manageTagsOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 400, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 14, padding: 32, width: 400, maxWidth: 'calc(100vw - 32px)', textAlign: 'center', border: '1px solid var(--border)', boxShadow: '0 18px 50px rgba(0,0,0,0.45)' }}>
+            <p style={{ color: 'var(--fg)', fontSize: 14, margin: '0 0 16px' }}>Tag management coming soon (Plan B).</p>
+            <button onClick={() => setManageTagsOpen(false)} style={ingBtnPrimary()}>Close</button>
+          </div>
         </div>
       )}
     </Modal>

@@ -12,7 +12,7 @@
  *
  * Modals: IngestModal, ActivityModal, AddAgentModal
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { Panel, MoreLink, SectionLabel } from '@/components/ui/Panel';
 import { StackedArea } from '@/components/charts/StackedArea';
@@ -40,6 +40,7 @@ import { useActivity } from '@/hooks/useActivity';
 import { agentAvailability } from '@/lib/agentAvailability';
 import { bucketsToSeries, pivotTokenSeries, seriesDelta } from '@/lib/stats';
 import { eventToActivityItem } from '@/lib/activity';
+import { resolveActiveProjectId } from '@/lib/vaultSelection';
 import { WIKI_HEALTH, QUICK_ACTIONS, type Agent as DashboardAgent } from '@/lib/mockData';
 import type { Agent as LiveAgent } from '@/pages/Agents/data';
 
@@ -121,7 +122,7 @@ function dashboardAgent(agent: LiveAgent): DashboardAgent {
 export function HomePage() {
   const isMobile = useMedia(MOBILE_QUERY);
   const [modal, setModal] = useState<ModalId>(null);
-  const { workspaceId } = useWorkspace();
+  const { workspaceId, projectId, setProjectId } = useWorkspace();
   const me = useMe().data;
   const overviewQuery = useStatsOverview();
   const sourcesQuery = useStatsSources(30);
@@ -130,7 +131,12 @@ export function HomePage() {
   const wikiByProjectQuery = useStatsWikiByProject();
   const activityQuery = useActivity(25);
   const { data: agents = [] } = useWorkers();
-  const { data: projects = [] } = useProjects(workspaceId);
+  const { data: projects = [], isSuccess: projectsLoaded } = useProjects(workspaceId);
+
+  useEffect(() => {
+    const next = resolveActiveProjectId(projectsLoaded, projects, projectId);
+    if (next !== projectId) setProjectId(next);
+  }, [projectId, projects, projectsLoaded, setProjectId]);
 
   const overview = overviewQuery.data;
   const name = me?.display_name?.trim() || 'there';
