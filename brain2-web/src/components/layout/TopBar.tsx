@@ -11,7 +11,8 @@ import { Icon } from '@/components/ui/Icon';
 import { Popover } from '@/components/ui/Popover';
 import type { Theme } from '@/lib/tokens';
 import type { IconName } from '@/components/ui/Icon';
-import { INBOX_TONE, inboxItems, useInboxRead } from '@/lib/inbox';
+import { INBOX_TONE, notificationToInboxItem, useInboxRead } from '@/lib/inbox';
+import { useNotifications, useMarkAllNotificationsRead } from '@/hooks/useNotifications';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import type { Workspace } from '@/lib/types';
@@ -64,7 +65,14 @@ const iconBtn = (): React.CSSProperties => ({
 
 function InboxMenu({ onClose, anchorRef }: { onClose: () => void; anchorRef: RefObject<HTMLButtonElement | null> }) {
   const { isRead, markRead, markAll } = useInboxRead();
-  const items = inboxItems().filter((it) => !isRead(it.id));
+  const { data: notifData } = useNotifications();
+  const markAllMutation = useMarkAllNotificationsRead();
+  const all = (notifData?.notifications ?? []).map(notificationToInboxItem);
+  const items = all.filter((it) => !isRead(it.id));
+  const handleMarkAll = () => {
+    markAllMutation.mutate();
+    markAll(all.map((it) => it.id));
+  };
   return (
     <Popover onClose={onClose} anchorRef={anchorRef} placement="bottom-end" style={{ width: 380, maxWidth: 'calc(100vw - 24px)', padding: 0, overflow: 'hidden' }}>
       {/* Header */}
@@ -75,7 +83,7 @@ function InboxMenu({ onClose, anchorRef }: { onClose: () => void; anchorRef: Ref
           {items.length}
         </span>
         <button
-          onClick={markAll}
+          onClick={handleMarkAll}
           disabled={!items.length}
           style={{ marginLeft: 'auto', border: 'none', background: 'transparent', cursor: items.length ? 'pointer' : 'default', color: items.length ? 'var(--accent)' : 'var(--fg-faint)', fontFamily: 'var(--ui-font)', fontSize: 12, fontWeight: 500 }}
         >
@@ -310,6 +318,7 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
   const profileRef = useRef<HTMLButtonElement>(null);
   const navigate = useNavigate();
   const { isRead } = useInboxRead();
+  const { data: notifData } = useNotifications();
   const { data: workspaces = [] } = useWorkspaces();
   const { workspaceId, setWorkspaceId } = useWorkspace();
   const { data: me } = useMe();
@@ -334,7 +343,9 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
 
   const activeWs = workspaces.find(w => w.workspace_id === workspaceId);
   const wsLabel = activeWs?.name ?? '—';
-  const UNREAD = inboxItems().filter((it) => !isRead(it.id)).length;
+  const UNREAD = (notifData?.notifications ?? [])
+    .map(notificationToInboxItem)
+    .filter((it) => !isRead(it.id)).length;
 
   const open = useCallback((id: MenuId) => setMenu((m) => (m === id ? null : id)), []);
 
