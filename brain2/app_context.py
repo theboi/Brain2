@@ -247,6 +247,9 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
     from brain2.persona_ops import register_persona_ops
     register_persona_ops(ops, store)
 
+    from brain2.notification_ops import register_notification_ops
+    register_notification_ops(ops, store)
+
 
 # Map add-on op name -> (authorize action, signature adapter).
 # Bridges AddonRegistry handlers into the OperationRegistry so REST `/ops` can reach them.
@@ -282,7 +285,7 @@ def _make_addon_bridge_handler(addons, name: str, kwarg_names: tuple, store):
         # reports:generate takes (tenant_id, project_id, template_id, title)
         if name == "reports:generate":
             return op(ctx.tenant_id, params["project_id"], params["template_id"],
-                      params["title"])
+                      params["title"], requested_by=ctx.user_id)
         return op(ctx.tenant_id, ctx.user_id, **kwargs)
     return handler
 

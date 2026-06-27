@@ -162,20 +162,25 @@ class LocalStore:
                        (now_iso, tenant_id, user_id))
 
     def create_invite(self, tenant_id: str, user_id: str, token_hash: str,
-                      email: str, created_at: str, expires_at: str) -> None:
+                      email: str, created_at: str, expires_at: str,
+                      invited_by: str | None = None) -> None:
         with self.transaction() as cx:
             cx.execute(
                 "INSERT INTO invites"
-                "(tenant_id, user_id, token_hash, email, created_at, expires_at, accepted_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, NULL) "
+                "(tenant_id, user_id, token_hash, email, created_at, expires_at, "
+                "accepted_at, invited_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, NULL, ?) "
                 "ON CONFLICT(tenant_id, user_id) DO UPDATE SET "
                 "token_hash=excluded.token_hash, email=excluded.email, "
-                "created_at=excluded.created_at, expires_at=excluded.expires_at, accepted_at=NULL",
-                (tenant_id, user_id, token_hash, email, created_at, expires_at))
+                "created_at=excluded.created_at, expires_at=excluded.expires_at, "
+                "accepted_at=NULL, invited_by=excluded.invited_by",
+                (tenant_id, user_id, token_hash, email, created_at, expires_at,
+                 invited_by))
 
     def get_invite_by_token_hash(self, token_hash: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT tenant_id, user_id, email, created_at, expires_at, accepted_at "
+            "SELECT tenant_id, user_id, email, created_at, expires_at, accepted_at, "
+            "invited_by "
             "FROM invites WHERE token_hash=?", (token_hash,)).fetchone()
         return dict(row) if row else None
 

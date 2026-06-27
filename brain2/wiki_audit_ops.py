@@ -7,9 +7,13 @@ write a new wiki revision via merge), dismiss (= mark suggestion).
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 
 from brain2.errors import Conflict, NotFound
+from brain2.notification_ops import create_notification
+
+logger = logging.getLogger(__name__)
 
 
 def _now():
@@ -59,6 +63,28 @@ def insert_suggestion(store, *, tenant_id: str, audit_id: str, section: str | No
             "created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (sid, audit_id, tenant_id, section, diff_text, proposed_content,
              rationale, json.dumps(sources_cited), "pending", _now()))
+    audit = store._conn.execute(
+        "SELECT topic, created_by FROM wiki_audits WHERE tenant_id=? AND audit_id=?",
+        (tenant_id, audit_id),
+    ).fetchone()
+    if audit is not None and audit["created_by"]:
+        try:
+            create_notification(
+                store,
+                tenant_id,
+                audit["created_by"],
+                type="wiki_suggestion",
+                title=f"New wiki suggestion: {audit['topic']}",
+                body=(rationale or proposed_content)[:200],
+                resource_id=sid,
+                resource_type="wiki_suggestion",
+            )
+        except Exception as notification_exc:  # noqa: BLE001
+            logger.warning(
+                "notification_dropped wiki_suggestion %s: %s",
+                sid,
+                notification_exc,
+            )
     return sid
 
 

@@ -16,6 +16,7 @@ from addons.report_generation.sanitize import sanitize_markdown
 from addons.report_generation.store import ReportStore
 from brain2.knowledge.query_engine import QueryBounds, run_query
 from brain2.llm.providers import CompletionRequest, ServiceClass
+from brain2.notification_ops import create_notification
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ def generate_report(report_store: ReportStore, gateway, connector_factory,
     the template writes back to the wiki."""
     inputs: list[dict] = []
     section_md: list[str] = []
+    report_row = report_store.get_report(tenant_id, report_id)
     try:
         for section in template.sections:
             connector = connector_factory(section.data_source_id)
@@ -41,6 +43,11 @@ def generate_report(report_store: ReportStore, gateway, connector_factory,
         content_md = f"# {template.name}\n\n" + "\n\n".join(section_md)
         report_store.finish_report(tenant_id, report_id, content_md=content_md,
                                    inputs=inputs, status="done")
+        _notify_report(
+            store, report_row, "report_done",
+            f"Report ready: {report_row.title if report_row else template.name}",
+            "Your report has been generated and is ready to view.",
+        )
 
         if template.writeback_to_wiki and store is not None:
             _writeback(store, gateway, tenant_id, template, content_md)
@@ -50,7 +57,36 @@ def generate_report(report_store: ReportStore, gateway, connector_factory,
         logger.warning("report %s generation failed: %s", report_id, exc)
         report_store.finish_report(tenant_id, report_id, content_md="",
                                    inputs=inputs, status="failed", error=str(exc))
+        _notify_report(
+            store, report_row, "report_failed",
+            f"Report failed: {report_row.title if report_row else template.name}",
+            f"Generation failed: {str(exc)[:200]}",
+        )
         return report_store.get_report(tenant_id, report_id)
+
+
+def _notify_report(store, report_row: Report | None, type_: str,
+                   title: str, body: str) -> None:
+    if store is None or report_row is None or not report_row.requested_by:
+        return
+    try:
+        create_notification(
+            store,
+            report_row.tenant_id,
+            report_row.requested_by,
+            type=type_,
+            title=title,
+            body=body,
+            resource_id=report_row.report_id,
+            resource_type="report",
+        )
+    except Exception as notification_exc:  # noqa: BLE001
+        logger.warning(
+            "notification_dropped %s %s: %s",
+            type_,
+            report_row.report_id,
+            notification_exc,
+        )
 
 
 def _compose_section(gateway, tenant_id: str, user_id: str, title: str,

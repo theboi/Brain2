@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { BRIEFING } from '@/lib/mockData';
+import type { IconName } from '@/components/ui/Icon';
+import type { Notification } from '@/hooks/useNotifications';
 
 export const INBOX_TONE: Record<string, string> = {
   accent: 'var(--accent)', destructive: 'var(--destructive)',
@@ -13,7 +14,7 @@ export const INBOX_TONE_SOFT: Record<string, string> = {
 
 export interface InboxItem {
   id: string;
-  icon: string;
+  icon: IconName;
   group: string;
   groupKey: string;
   tone: string;
@@ -22,20 +23,42 @@ export interface InboxItem {
   itemTone: string;
 }
 
-export function inboxItems(): InboxItem[] {
-  const out: InboxItem[] = [];
-  BRIEFING.forEach((g) =>
-    g.items.forEach((it, i) =>
-      out.push({ id: g.key + ':' + i, icon: g.icon, group: g.title, groupKey: g.key, tone: g.tone, title: it.title, meta: it.meta, itemTone: it.tone }),
-    ),
-  );
-  return out;
+const TYPE_META: Record<string, { label: string; tone: string; icon: IconName }> = {
+  report_done: { label: 'Report ready', tone: 'success', icon: 'file' },
+  report_failed: { label: 'Report error', tone: 'destructive', icon: 'alert' },
+  source_done: { label: 'Source ingested', tone: 'accent', icon: 'sources' },
+  source_failed: { label: 'Source error', tone: 'destructive', icon: 'alert' },
+  wiki_suggestion: { label: 'Wiki update', tone: 'warning', icon: 'wiki' },
+  invite_accepted: { label: 'Team', tone: 'success', icon: 'users' },
+};
+
+const DEFAULT_META = { label: 'Notification', tone: 'muted', icon: 'bell' } as const;
+
+function formatNotificationDate(createdAt: string): string {
+  if (!createdAt) return '';
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString();
 }
 
-export function groupedInbox(): { key: string; title: string; icon: string; tone: string; items: InboxItem[] }[] {
+export function notificationToInboxItem(notification: Notification): InboxItem {
+  const meta = TYPE_META[notification.type] ?? DEFAULT_META;
+  return {
+    id: notification.notification_id,
+    icon: meta.icon,
+    group: meta.label,
+    groupKey: notification.type,
+    tone: meta.tone,
+    title: notification.title,
+    meta: formatNotificationDate(notification.created_at),
+    itemTone: meta.tone,
+  };
+}
+
+export function groupedInbox(items: InboxItem[]): { key: string; title: string; icon: IconName; tone: string; items: InboxItem[] }[] {
   const order: string[] = [];
-  const map: Record<string, { key: string; title: string; icon: string; tone: string; items: InboxItem[] }> = {};
-  inboxItems().forEach((it) => {
+  const map: Record<string, { key: string; title: string; icon: IconName; tone: string; items: InboxItem[] }> = {};
+  items.forEach((it) => {
     if (!map[it.groupKey]) { map[it.groupKey] = { key: it.groupKey, title: it.group, icon: it.icon, tone: it.tone, items: [] }; order.push(it.groupKey); }
     map[it.groupKey].items.push(it);
   });
@@ -68,7 +91,7 @@ export function useInboxRead() {
   return {
     ids,
     isRead: (id: string) => ids.includes(id),
-    markAll: () => persist(inboxItems().map((it) => it.id)),
+    markAll: (ids: string[]) => persist(ids),
     markRead: (id: string) => persist([...readInboxIds(), id]),
     markUnread: (id: string) => persist(readInboxIds().filter((x) => x !== id)),
     reset: () => persist([]),

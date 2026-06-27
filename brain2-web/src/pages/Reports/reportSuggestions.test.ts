@@ -1,14 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { reportSuggestionsFor } from './reportSuggestions';
+import { REPORT_SUGGESTIONS, reportSuggestionsFor } from './reportSuggestions';
 
 describe('reportSuggestionsFor', () => {
-  it('returns no suggestions until the catalog is wired to live workspace IDs', () => {
-    const out = reportSuggestionsFor({ role: 'member', accessibleWorkspaceNames: ['Engineering'] });
-    expect(out).toEqual([]);
+  it('returns empty array when user has no accessible workspaces', () => {
+    const result = reportSuggestionsFor({ role: 'member', accessibleWorkspaceNames: [] });
+
+    expect(result).toEqual([]);
   });
 
-  it('returns no owner suggestions from the static catalog', () => {
-    const out = reportSuggestionsFor({ role: 'owner', accessibleWorkspaceNames: [] });
-    expect(out).toEqual([]);
+  it('returns suggestions when user has at least one workspace', () => {
+    const result = reportSuggestionsFor({
+      role: 'member',
+      accessibleWorkspaceNames: ['Finance & HR'],
+    });
+
+    expect(result.length).toBeGreaterThan(0);
+    expect(result).toEqual(REPORT_SUGGESTIONS);
+  });
+
+  it('each suggestion has required fields', () => {
+    const result = reportSuggestionsFor({
+      role: 'owner',
+      accessibleWorkspaceNames: ['Any'],
+    });
+
+    for (const suggestion of result) {
+      expect(suggestion).toHaveProperty('id');
+      expect(suggestion).toHaveProperty('title');
+      expect(suggestion).toHaveProperty('formats');
+      expect(suggestion).toHaveProperty('match');
+    }
   });
 });

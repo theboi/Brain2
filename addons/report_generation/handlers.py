@@ -20,14 +20,17 @@ GENERATE_TASK = "report_generation:generate"
 
 
 def handle_generate_report(store, tenant_id: str, project_id: str,
-                           template_id: str, title: str) -> dict:
+                           template_id: str, title: str,
+                           requested_by: str = "") -> dict:
     """Create a pending Report and enqueue the generation task. Returns ids."""
     rs = ReportStore(store._conn)
-    report_id = rs.create_report(tenant_id, project_id, template_id, title)
+    report_id = rs.create_report(
+        tenant_id, project_id, template_id, title, requested_by=requested_by)
     with store.transaction() as cx:
         task_id = enqueue(store, cx, tenant_id, GENERATE_TASK,
                           {"report_id": report_id, "template_id": template_id,
-                           "project_id": project_id})
+                           "project_id": project_id,
+                           "requested_by": requested_by})
     return {"report_id": report_id, "task_id": task_id}
 
 
@@ -62,8 +65,10 @@ def register_reports_addon(registry, task_registry, store, gateway,
 
     registry.register_operation(
         "reports:generate",
-        lambda tenant_id, project_id, template_id, title:
-            handle_generate_report(store, tenant_id, project_id, template_id, title))
+        lambda tenant_id, project_id, template_id, title, requested_by="":
+            handle_generate_report(
+                store, tenant_id, project_id, template_id, title,
+                requested_by=requested_by))
     registry.register_operation(
         "reports:list",
         lambda tenant_id, accessible_projects:

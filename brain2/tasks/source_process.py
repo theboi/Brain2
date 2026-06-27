@@ -1,13 +1,17 @@
 """source.process task: route extracted sources through their mode runner."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from brain2.audit import record_best_effort_audit
+from brain2.notification_ops import create_notification
 from brain2.source_ops import set_source_extracted, set_source_failed, set_source_status
 from brain2.vault.ingest import IngestRequest, dispatch_ingest
 from brain2.vault.runners import build_runners
+
+logger = logging.getLogger(__name__)
 
 
 def _source_row(store, tenant_id: str, source_id: str):
@@ -121,6 +125,25 @@ def make_source_process_handler(store, gateway, blob_store):
 
             set_source_status(store, tenant_id=tenant_id, source_id=source_id,
                               status="done")
+            uploaded_by = payload.get("uploaded_by") or ""
+            if uploaded_by:
+                try:
+                    create_notification(
+                        store,
+                        tenant_id,
+                        uploaded_by,
+                        type="source_done",
+                        title="Source processed",
+                        body=f"Source '{source_id}' has been ingested ({mode}).",
+                        resource_id=source_id,
+                        resource_type="source",
+                    )
+                except Exception as notification_exc:  # noqa: BLE001
+                    logger.warning(
+                        "notification_dropped source_done %s: %s",
+                        source_id,
+                        notification_exc,
+                    )
             record_best_effort_audit(
                 store, tenant_id, actor, "source.done", source_id,
                 {"mode": mode, "project_id": payload["project_id"]},
@@ -128,6 +151,25 @@ def make_source_process_handler(store, gateway, blob_store):
         except Exception as exc:
             set_source_failed(store, tenant_id=tenant_id, source_id=source_id,
                               error=str(exc))
+            uploaded_by = payload.get("uploaded_by") or ""
+            if uploaded_by:
+                try:
+                    create_notification(
+                        store,
+                        tenant_id,
+                        uploaded_by,
+                        type="source_failed",
+                        title="Source ingestion failed",
+                        body=f"Source '{source_id}' failed: {str(exc)[:200]}",
+                        resource_id=source_id,
+                        resource_type="source",
+                    )
+                except Exception as notification_exc:  # noqa: BLE001
+                    logger.warning(
+                        "notification_dropped source_failed %s: %s",
+                        source_id,
+                        notification_exc,
+                    )
             record_best_effort_audit(
                 store, tenant_id, actor, "source.failed", source_id,
                 {"mode": mode, "project_id": payload.get("project_id"), "error": str(exc)},

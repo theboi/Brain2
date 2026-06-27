@@ -83,12 +83,13 @@ class ReportStore:
 
     # --- reports ---
     def create_report(self, tenant_id: str, project_id: str, template_id: str | None,
-                       title: str) -> str:
+                       title: str, requested_by: str = "") -> str:
         report_id = f"rpt-{uuid.uuid4().hex[:12]}"
         self._conn.execute(
             "INSERT INTO reports(report_id, tenant_id, project_id, template_id, title, "
-            "status, created_at) VALUES (?,?,?,?,?, 'pending', ?)",
-            (report_id, tenant_id, project_id, template_id, title, _now_iso()))
+            "status, requested_by, created_at) VALUES (?,?,?,?,?, 'pending', ?, ?)",
+            (report_id, tenant_id, project_id, template_id, title,
+             requested_by, _now_iso()))
         self._conn.commit()
         return report_id
 
@@ -144,10 +145,12 @@ class ReportStore:
             created_at=row["created_at"], updated_at=row["updated_at"])
 
     def _row_to_report(self, row) -> Report:
+        keys = row.keys()
         return Report(
             report_id=row["report_id"], tenant_id=row["tenant_id"],
             project_id=row["project_id"], template_id=row["template_id"],
             title=row["title"], content_md=row["content_md"],
             inputs=json.loads(row["inputs"]), status=row["status"],
             error=row["error"], generated_at=row["generated_at"],
-            created_at=row["created_at"])
+            created_at=row["created_at"],
+            requested_by=(row["requested_by"] if "requested_by" in keys else "") or "")

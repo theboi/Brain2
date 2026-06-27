@@ -296,17 +296,29 @@ def test_reports_list_no_project_returns_only_accessible(c=None):
     """reports:list without project_id must filter to accessible vaults."""
     c, s = _client_with_finance_vault()
     from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    accessible_id = str(uuid.uuid4())
+    restricted_id = str(uuid.uuid4())
     s._conn.execute(
         "INSERT INTO reports(report_id, tenant_id, project_id, title, format, "
         "prompt, status, schedule, created_by, created_at, updated_at) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (str(uuid.uuid4()), "t1", "fin-vault", "Secret Report", "doc",
-         "p", "ready", "now", "owner",
-         datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()),
+        (accessible_id, "t1", "eng-vault", "Visible Report", "doc",
+         "p", "ready", "now", "owner", now, now),
+    )
+    s._conn.execute(
+        "INSERT INTO reports(report_id, tenant_id, project_id, title, format, "
+        "prompt, status, schedule, created_by, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (restricted_id, "t1", "fin-vault", "Secret Report", "doc",
+         "p", "ready", "now", "owner", now, now),
     )
     s._conn.commit()
     tok = _tok(c, "u2@t1.com")
     r = c.post("/api/v1/ops/reports:list", json={}, headers=_auth(tok))
     assert r.status_code == 200
     reports = r.json()["reports"]
+    report_ids = {rep["report_id"] for rep in reports}
+    assert accessible_id in report_ids
+    assert restricted_id not in report_ids
     assert not any(rep["project_id"] == "fin-vault" for rep in reports)

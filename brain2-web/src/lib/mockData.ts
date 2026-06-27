@@ -31,22 +31,6 @@ export interface WikiHealthRow {
   value: string;
 }
 
-export interface BriefingItem {
-  title: string;
-  meta: string;
-  tone: 'accent' | 'success' | 'warning' | 'destructive' | 'muted';
-}
-
-export interface BriefingGroup {
-  key: string;
-  title: string;
-  icon: string;
-  tone: 'accent' | 'destructive' | 'warning' | 'success' | 'muted';
-  count: number;
-  lead: string;
-  items: BriefingItem[];
-}
-
 export interface QuickAction {
   id: string;
   title: string;
@@ -93,33 +77,5 @@ export const WIKI_HEALTH: {
   coverage: number;
   rows: WikiHealthRow[];
 } | null = null;
-
-export const BRIEFING: BriefingGroup[] = [
-  {
-    key: 'digests', title: 'Digests', icon: 'sparkles', tone: 'accent', count: 2,
-    lead: '2 new',
-    items: [
-      { title: 'Morning digest · 12 sources summarised', meta: '3,201 tok · 8m ago', tone: 'accent' },
-      { title: 'Weekly wiki digest is ready', meta: '24 pages changed', tone: 'muted' },
-    ],
-  },
-  {
-    key: 'errors', title: 'Critical errors', icon: 'alert', tone: 'destructive', count: 2,
-    lead: '2 active',
-    items: [
-      { title: 'Archivist · circuit breaker open', meta: 'per-tenant limit · retry 30s', tone: 'destructive' },
-      { title: 'Gemini · 3 failed calls', meta: 'HTTP 429 · rate limited', tone: 'destructive' },
-    ],
-  },
-  {
-    key: 'queries', title: 'Customer queries', icon: 'users', tone: 'warning', count: 7,
-    lead: '7 waiting',
-    items: [
-      { title: '"Refund window for EU orders?"', meta: 'unanswered · routed to wiki', tone: 'warning' },
-      { title: '"Does the Pro plan include SSO?"', meta: '2 sources cited · draft ready', tone: 'success' },
-      { title: '+5 more in the queue', meta: 'oldest 2h ago', tone: 'muted' },
-    ],
-  },
-];
 
 export const QUICK_ACTIONS: QuickAction[] = [];

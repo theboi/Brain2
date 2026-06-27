@@ -5,7 +5,8 @@
 import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
-import { inboxItems, groupedInbox, useInboxRead, INBOX_TONE, INBOX_TONE_SOFT, type InboxItem } from '@/lib/inbox';
+import { useMarkAllNotificationsRead, useNotifications } from '@/hooks/useNotifications';
+import { groupedInbox, notificationToInboxItem, useInboxRead, INBOX_TONE, INBOX_TONE_SOFT, type InboxItem } from '@/lib/inbox';
 
 // ── Category tag metadata ─────────────────────────────────────────────────────
 const INBOX_TAG: Record<string, { label: string; tone: string }> = {
@@ -167,12 +168,14 @@ function InboxRow({ it, read, onToggle }: { it: InboxItem; read: boolean; onTogg
 // ── InboxPage ─────────────────────────────────────────────────────────────────
 export function InboxPage() {
   const { isRead, markRead, markUnread, markAll, reset } = useInboxRead();
+  const { data: notifData, isLoading } = useNotifications(100);
+  const markAllMutation = useMarkAllNotificationsRead();
   const [tab, setTab] = useState<'all' | 'unread'>('all');
   const [cat, setCat] = useState('all');
   const [q, setQ] = useState('');
 
-  const groups = groupedInbox();
-  const all = inboxItems();
+  const all = (notifData?.notifications ?? []).map(notificationToInboxItem);
+  const groups = groupedInbox(all);
   const unreadCount = all.filter((it) => !isRead(it.id)).length;
 
   const query = q.trim().toLowerCase();
@@ -185,6 +188,10 @@ export function InboxPage() {
 
   const toggle = (id: string) => (isRead(id) ? markUnread(id) : markRead(id));
   const hasFilters = query || cat !== 'all';
+  const markAllRead = () => {
+    markAllMutation.mutate();
+    markAll(all.map((it) => it.id));
+  };
 
   const typeOptions = groups.map((g) => ({
     key: g.key,
@@ -210,7 +217,7 @@ export function InboxPage() {
             </p>
           </div>
           <button
-            onClick={markAll}
+            onClick={markAllRead}
             disabled={!unreadCount}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 7, height: 36, padding: '0 15px', borderRadius: 9, border: 'none',
@@ -248,7 +255,12 @@ export function InboxPage() {
         </div>
 
         {/* Item list */}
-        {filtered.length > 0 ? (
+        {isLoading ? (
+          <div style={{ textAlign: 'center', padding: '56px 20px', color: 'var(--fg-faint)' }}>
+            <Icon name="loader" size={24} />
+            <div style={{ fontSize: 13, marginTop: 10 }}>Loading notifications...</div>
+          </div>
+        ) : filtered.length > 0 ? (
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 5 }}>
             {filtered.map((it, i) => (
               <div key={it.id}>
@@ -271,7 +283,7 @@ export function InboxPage() {
               {hasFilters ? 'No matching items' : 'Inbox zero'}
             </div>
             <div style={{ fontSize: 13, marginTop: 5 }}>
-              {hasFilters ? 'Try a different search or filter.' : 'No unread items. Nice.'}
+              {hasFilters ? 'Try a different search or filter.' : 'No notifications yet.'}
             </div>
             {hasFilters && (
               <button

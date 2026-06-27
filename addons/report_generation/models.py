@@ -48,3 +48,4 @@ class Report:
     error: str | None = None
     generated_at: str | None = None
     created_at: str = field(default_factory=_now)
+    requested_by: str = ""
