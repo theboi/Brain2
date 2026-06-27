@@ -16,6 +16,7 @@ import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import type { Workspace } from '@/lib/types';
 import { logout } from '@/lib/auth';
+import { queryClient } from '@/lib/queryClient';
 import { useMe } from '@/hooks/me';
 
 const PALETTE_GROUPS = [
@@ -471,6 +472,7 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
             onSignOut={async () => {
               setMenu(null);
               await logout();
+              queryClient.clear();
               navigate('/login', { replace: true });
             }}
           />

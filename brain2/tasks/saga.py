@@ -22,6 +22,7 @@ def delete_user_saga(store: Store, tenant_id: str, user_id: str,
         cx.execute(
             "UPDATE users SET status='disabled' WHERE tenant_id=? AND user_id=?",
             (tenant_id, user_id))
+    store.revoke_all_user_tokens(tenant_id, user_id)
 
     for handler in addon_handlers:
         try:

@@ -7,11 +7,10 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSPropert
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@/components/ui/Modal';
-import { useProjects } from '@/hooks/useWorkspaces';
+import { useProjects, useUserDirectory } from '@/hooks/useWorkspaces';
 import { useProjectTags } from '@/hooks/useSources';
 import { useVaultAccess, useAddGuest, useSetGuestRole, useRemoveGuest } from '@/hooks/access';
 import { useWorkspaceMembers } from '@/hooks/members';
-import { useTenantUsers } from '@/hooks/people';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
@@ -230,7 +229,7 @@ function AddPeopleBody({ members, candidates, onAdd }: { members: Member[]; cand
             <span style={{ fontSize: 10.5, color: 'var(--fg-faint)' }}>user</span>
           </button>
         ))}
-        {!list.length && <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--fg-faint)' }}>{ql ? 'No matching people.' : 'Everyone available is already added.'}</div>}
+        {!list.length && <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--fg-faint)' }}>{ql ? 'No matching people.' : 'All available people are already added.'}</div>}
       </div>
     </div>
   );
@@ -308,7 +307,7 @@ function VaultAccess({ vaults, projectIdByName, workspaceId }: { vaults: string[
   const activeProjectId = projectIdByName.get(av) ?? null;
   const { data: accessEntries = [] } = useVaultAccess(activeProjectId);
   const { data: workspaceMembers = [] } = useWorkspaceMembers(workspaceId);
-  const { data: tenantUsers = [] } = useTenantUsers();
+  const { data: tenantUsers = [] } = useUserDirectory(workspaceId);
   const addGuest = useAddGuest(activeProjectId);
   const setGuestRole = useSetGuestRole(activeProjectId);
   const removeGuest = useRemoveGuest(activeProjectId);

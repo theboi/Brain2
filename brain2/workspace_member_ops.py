@@ -27,6 +27,8 @@ def make_add_workspace_member(store: Store):
         role = params["role"]
         if role not in _MEMBER_ROLES:
             raise Conflict(f"role must be one of {sorted(_MEMBER_ROLES)}")
+        if role == "admin" and ctx.tenant_role != "owner":
+            raise Conflict("only tenant owners can grant workspace admin role")
         store.add_workspace_member(ctx.tenant_id, workspace_id, user_id, role)
         return {"workspace_id": workspace_id, "user_id": user_id, "role": role}
     return handler
@@ -39,6 +41,8 @@ def make_set_workspace_member_role(store: Store):
         role = params["role"]
         if role not in _MEMBER_ROLES:
             raise Conflict(f"role must be one of {sorted(_MEMBER_ROLES)}")
+        if role == "admin" and ctx.tenant_role != "owner":
+            raise Conflict("only tenant owners can grant workspace admin role")
         # NotFound propagates if user is not a member
         store.set_workspace_member_role(ctx.tenant_id, workspace_id, user_id, role)
         return {"workspace_id": workspace_id, "user_id": user_id, "role": role}

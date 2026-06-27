@@ -87,17 +87,12 @@ export const AGENTS: Agent[] = [
   },
 ];
 
-export const WIKI_HEALTH = {
-  score: 86,
-  label: 'Healthy',
-  coverage: 95,
-  rows: [
-    { icon: 'check', tone: 'success' as const, label: 'Pages with provenance', value: '298' },
-    { icon: 'alert', tone: 'warning' as const, label: 'Open LLM audits', value: '3' },
-    { icon: 'alert', tone: 'warning' as const, label: 'Flagged for review · drift', value: '7' },
-    { icon: 'clock', tone: 'muted' as const, label: 'Stale · not edited 30d+', value: '12' },
-  ],
-};
+export const WIKI_HEALTH: {
+  score: number;
+  label: string;
+  coverage: number;
+  rows: WikiHealthRow[];
+} | null = null;
 
 export const BRIEFING: BriefingGroup[] = [
   {
@@ -127,10 +122,4 @@ export const BRIEFING: BriefingGroup[] = [
   },
 ];
 
-export const QUICK_ACTIONS: QuickAction[] = [
-  { id: 'fin-q2', title: 'Generate financial report · Q2', plugin: 'Reports', icon: 'file', tone: 'accent', est: 'PDF · ~2 min', runner: 'Researcher', available: false, unavailableReason: 'Report job launch is not wired yet' },
-  { id: 'queries', title: 'Draft replies to waiting queries', plugin: 'Query Desk', icon: 'users', tone: 'warning', est: '7 in queue', runner: 'Researcher', available: false, unavailableReason: 'Query drafting jobs are not wired yet' },
-  { id: 'audit', title: 'Audit wiki for unsupported claims', plugin: 'Citations Guard', icon: 'shield', tone: 'accent', est: '312 pages', runner: 'Archivist', available: false, unavailableReason: 'Wiki audit jobs are not wired yet' },
-  { id: 'digest', title: 'Send the weekly exec digest', plugin: 'Digest', icon: 'mail', tone: 'accent', est: 'to 4 people', runner: 'Summariser', available: false, unavailableReason: 'Digest sending jobs are not wired yet' },
-  { id: 'recrawl', title: 'Re-crawl tracked sources', plugin: 'Web Crawler', icon: 'globe', tone: 'muted', est: '1,284 sources', runner: 'Editor', available: false, unavailableReason: 'Source recrawl jobs are not wired yet' },
-];
+export const QUICK_ACTIONS: QuickAction[] = [];

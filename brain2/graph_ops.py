@@ -53,17 +53,38 @@ def make_org_graph(store: Store):
                 })
             workspaces.append({"id": workspace_id, "name": ws["name"], "vaults": vaults})
 
-        users = store.list_users(tenant_id, limit=1000)
+        all_users = store.list_users(tenant_id, limit=1000)
+        all_users_by_id = {u["user_id"]: u for u in all_users}
+
+        if ctx.tenant_role == "owner":
+            allowed_user_ids = {u["user_id"] for u in all_users}
+        else:
+            allowed_user_ids: set[str] = set()
+            for ws_id in visible_workspaces:
+                rows = store._conn.execute(
+                    "SELECT user_id FROM workspace_members WHERE tenant_id=? AND workspace_id=?",
+                    (tenant_id, ws_id)).fetchall()
+                allowed_user_ids.update(r["user_id"] for r in rows)
+            for u in all_users:
+                if u["role"] == "owner":
+                    allowed_user_ids.add(u["user_id"])
+            for guest in store.list_guests(tenant_id):
+                if any(v["project_id"] in visible_vault_ids for v in guest["vaults"]):
+                    allowed_user_ids.add(guest["user_id"])
+
         people = {
-            user["user_id"]: {
-                "name": user["display_name"] or user["email"],
-                "email": user["email"],
+            uid: {
+                "name": u["display_name"] or u["email"],
+                "email": u["email"],
             }
-            for user in users
+            for uid, u in all_users_by_id.items()
+            if uid in allowed_user_ids
         }
         members = []
-        for user in users:
-            uid = user["user_id"]
+        for uid in allowed_user_ids:
+            user = all_users_by_id.get(uid)
+            if user is None:
+                continue
             rows = store._conn.execute(
                 "SELECT workspace_id, role FROM workspace_members "
                 "WHERE tenant_id=? AND user_id=?",
@@ -96,11 +117,16 @@ def make_org_graph(store: Store):
                 "name": group["name"],
                 "ws": ws_roles,
                 "vaults": vault_grants,
-                "members": store.list_group_member_ids(tenant_id, group_id),
+                "members": [
+                    uid for uid in store.list_group_member_ids(tenant_id, group_id)
+                    if uid in allowed_user_ids
+                ],
             })
 
         guests = []
         for guest in store.list_guests(tenant_id):
+            if guest["user_id"] not in allowed_user_ids:
+                continue
             vaults = [
                 {"v": vault["project_id"],
                  "level": "editor" if vault["role"] in ("editor", "admin") else "viewer"}

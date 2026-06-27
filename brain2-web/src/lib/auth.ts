@@ -32,6 +32,14 @@ export function clearToken() {
   writeStorage(null, null);
 }
 
+/**
+ * Called on logout or account switch. Clears in-memory tokens and storage.
+ * Callers are responsible for also clearing the React Query cache.
+ */
+export function clearSession() {
+  clearToken();
+}
+
 export async function login(email: string, password: string): Promise<void> {
   const r = await fetch('/api/v1/auth/tokens', {
     method: 'POST',
@@ -100,7 +108,7 @@ export async function logout(): Promise<void> {
       });
     } catch { /* ignore network errors on logout */ }
   }
-  clearToken();
+  clearSession();
 }
 
 export function currentToken(): string | null { return memToken; }

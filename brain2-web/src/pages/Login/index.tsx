@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { login } from '@/lib/auth';
+import { queryClient } from '@/lib/queryClient';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -18,6 +19,7 @@ export function LoginPage() {
     setLoading(true);
     try {
       await login(email, password);
+      queryClient.clear();
       navigate(from, { replace: true });
     } catch (err: any) {
       const msg = err?.message ?? '';

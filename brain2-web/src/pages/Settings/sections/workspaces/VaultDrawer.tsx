@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { useVaultAccess, useAddGuest, useSetGuestRole, useRemoveGuest } from '@/hooks/access';
 import { useRenameVault, useSetVaultMode, useMoveVault, useArchiveVault } from '@/hooks/useWorkspaces';
-import { useTenantUsers } from '@/hooks/people';
+import { useUserDirectory } from '@/hooks/useWorkspaces';
 import type { OverviewWorkspace, OverviewVault } from '@/lib/types';
 import {
   VAULT_MODE_OPTS, ACCESS_LEVELS, capsFromRole,
@@ -29,7 +29,7 @@ export function VaultDrawer({ vault, ws, allWorkspaces, onClose }: {
   const ro = !caps.canManageVaults;
 
   const { data: access } = useVaultAccess(vault.project_id);
-  const { data: tenantUsers } = useTenantUsers();
+  const { data: tenantUsers } = useUserDirectory(ws.workspace_id);
   const addGuest = useAddGuest(vault.project_id);
   const setGuestRole = useSetGuestRole(vault.project_id);
   const removeGuest = useRemoveGuest(vault.project_id);

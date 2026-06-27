@@ -242,12 +242,14 @@ export function HomePage() {
             {/* Sidebar */}
             <aside style={{ display: 'flex', flexDirection: 'column', gap: 16, position: isMobile ? 'static' : 'sticky', top: 0 }}>
               <ActivityPanel rows={activityRows} onViewAll={() => setModal('activity')} />
-              <WikiHealth
-                score={WIKI_HEALTH.score}
-                label={WIKI_HEALTH.label}
-                coverage={WIKI_HEALTH.coverage}
-                rows={WIKI_HEALTH.rows}
-              />
+              {WIKI_HEALTH && (
+                <WikiHealth
+                  score={WIKI_HEALTH.score}
+                  label={WIKI_HEALTH.label}
+                  coverage={WIKI_HEALTH.coverage}
+                  rows={WIKI_HEALTH.rows}
+                />
+              )}
               <Panel title="Wiki pages by project" action={<MoreLink href="/wiki">Open wiki</MoreLink>}>
                 <div style={{ paddingTop: 4 }}>
                   {wikiBars.length ? <BarsH data={wikiBars} /> : <div style={{ padding: '8px 0', fontSize: 12.5, color: 'var(--fg-faint)' }}>No wiki pages yet.</div>}

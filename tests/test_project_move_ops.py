@@ -98,9 +98,9 @@ def test_rename():
 
 def test_archive_then_unarchive():
     s = _setup()
-    make_archive_project(s)(_admin(), {"project_id": "p1"})
+    make_archive_project(s)(_owner(), {"project_id": "p1"})
     assert s.project_meta("t1", "p1")["archived_at"] is not None
-    make_unarchive_project(s)(_admin(), {"project_id": "p1"})
+    make_unarchive_project(s)(_owner(), {"project_id": "p1"})
     assert s.project_meta("t1", "p1")["archived_at"] is None
 
 

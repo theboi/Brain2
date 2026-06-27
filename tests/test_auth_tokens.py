@@ -63,3 +63,51 @@ def test_logout_then_refresh_is_not_theft(tm):
         tm.refresh(raw_refresh)
     # Must NOT be TokenReuseError (that would trigger family revocation for a normal logout)
     assert not isinstance(exc_info.value, TokenReuseError)
+
+
+def test_all_user_tokens_revoked():
+    """revoke_all_user_tokens() invalidates every active token for that user."""
+    from brain2.store.local import LocalStore
+    from brain2.auth.tokens import TokenManager
+
+    s = LocalStore(":memory:")
+    s.migrate()
+    s.create_tenant("t1", "Acme")
+    s.create_user("t1", "u1", "u@t.com", "member")
+
+    tm = TokenManager(s)
+    raw1, _ = tm.issue("t1", "u1")
+    raw2, _ = tm.issue("t1", "u1")
+
+    s.revoke_all_user_tokens("t1", "u1")
+
+    row1 = s.lookup_token(
+        __import__('hashlib').sha256(raw1.encode()).hexdigest()
+    )
+    row2 = s.lookup_token(
+        __import__('hashlib').sha256(raw2.encode()).hexdigest()
+    )
+    assert row1["revoked_at"] is not None
+    assert row2["revoked_at"] is not None
+
+
+def test_delete_user_saga_revokes_tokens():
+    """delete_user_saga revokes all tokens for the deleted user."""
+    import hashlib
+    from brain2.store.local import LocalStore
+    from brain2.auth.tokens import TokenManager
+    from brain2.tasks.saga import delete_user_saga
+
+    s = LocalStore(":memory:")
+    s.migrate()
+    s.create_tenant("t1", "Acme")
+    s.create_user("t1", "u1", "u@t.com", "member")
+
+    tm = TokenManager(s)
+    raw, _ = tm.issue("t1", "u1")
+
+    delete_user_saga(s, "t1", "u1", addon_handlers=[])
+
+    lookup = hashlib.sha256(raw.encode()).hexdigest()
+    row = s.lookup_token(lookup)
+    assert row["revoked_at"] is not None

@@ -113,6 +113,8 @@ export function QuickActions({ actions, isMobile = false }: QuickActionsProps) {
   const runAction = (_a: QuickAction) => { /* TODO: launch plugin job */ };
   const openAgents = () => navigate('/agents');
 
+  if (actions.length === 0) return null;
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', gap: isMobile ? 10 : 14 }}>
       {actions.map((a) => <ActionTile key={a.id} action={a} onRun={runAction} />)}

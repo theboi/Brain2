@@ -127,8 +127,8 @@ def make_rename_project(store: Store):
 def make_archive_project(store: Store):
     def handler(ctx: RequestContext, params: dict) -> dict:
         project_id = params["project_id"]
-        project = _resolve_project(store, ctx.tenant_id, project_id)
-        authorize(store, ctx, "manage_workspace", workspace_id=project.workspace_id)
+        _resolve_project(store, ctx.tenant_id, project_id)
+        authorize(store, ctx, "manage_tenant")
         store.set_project_archived(ctx.tenant_id, project_id, True)
         return {"project_id": project_id, "archived": True}
     return handler
@@ -137,8 +137,8 @@ def make_archive_project(store: Store):
 def make_unarchive_project(store: Store):
     def handler(ctx: RequestContext, params: dict) -> dict:
         project_id = params["project_id"]
-        project = _resolve_project(store, ctx.tenant_id, project_id)
-        authorize(store, ctx, "manage_workspace", workspace_id=project.workspace_id)
+        _resolve_project(store, ctx.tenant_id, project_id)
+        authorize(store, ctx, "manage_tenant")
         store.set_project_archived(ctx.tenant_id, project_id, False)
         return {"project_id": project_id, "archived": False}
     return handler
@@ -184,11 +184,11 @@ def register_project_ops(ops, store: Store) -> None:
                  summary="Rename a vault",
                  params=[{"name": "project_id", "type": "str", "required": True},
                          {"name": "name", "type": "str", "required": True}])
-    ops.register("projects:archive", action="view_stats",
+    ops.register("projects:archive", action="manage_tenant",
                  handler=make_archive_project(store),
                  summary="Archive a vault",
                  params=[{"name": "project_id", "type": "str", "required": True}])
-    ops.register("projects:unarchive", action="view_stats",
+    ops.register("projects:unarchive", action="manage_tenant",
                  handler=make_unarchive_project(store),
                  summary="Unarchive a vault",
                  params=[{"name": "project_id", "type": "str", "required": True}])

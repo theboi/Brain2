@@ -1,5 +1,10 @@
 import uuid
 
+import pytest
+from fastapi.testclient import TestClient
+
+from brain2.api import create_app
+from brain2.app_context import build_app_context
 from brain2.context import RequestContext
 from brain2.operations import OperationRegistry, dispatch
 from brain2.report_ops import (
@@ -9,6 +14,7 @@ from brain2.report_ops import (
     _hist_status,
     register_report_ops,
 )
+from brain2.store.local import LocalStore
 
 
 def _ctx():
@@ -211,3 +217,96 @@ def test_history_month_without_year_rejected(store):
     with pytest.raises(ValueError):
         dispatch(store, reg, _ctx(), "reports:history",
                  {"project_id": "p1", "month": 5})
+
+
+def _client_with_finance_vault():
+    """
+    Tenant t1: owner, member u2 (Engineering only), Finance vault they can't read.
+    """
+    s = LocalStore(":memory:")
+    s.migrate()
+    s.create_tenant("t1", "Acme")
+    s.create_user("t1", "owner", "owner@t1.com", "owner")
+    s.create_user("t1", "u2", "u2@t1.com", "member")
+    ws_eng = s.create_workspace("t1", "Engineering")
+    ws_fin = s.create_workspace("t1", "Finance")
+    s.add_workspace_member("t1", ws_eng.workspace_id, "u2", "member")
+    s.create_project("t1", "eng-vault", "Eng Vault", workspace_id=ws_eng.workspace_id)
+    s.create_project("t1", "fin-vault", "Finance Vault", workspace_id=ws_fin.workspace_id)
+    s.grant_access("t1", "eng-vault", "user", "u2", "viewer")
+    actx = build_app_context(store=s, gateway=object())
+    for uid in ("owner", "u2"):
+        actx.passwords.set_password("t1", uid, "pw")
+    return TestClient(create_app(actx)), s
+
+
+def _tok(client, email):
+    return client.post(
+        "/api/v1/auth/tokens",
+        json={"tenant_id": "t1", "email": email, "password": "pw"},
+    ).json()["token"]
+
+
+def _auth(tok):
+    return {"Authorization": f"Bearer {tok}"}
+
+
+def test_reports_list_blocked_for_inaccessible_vault():
+    c, _ = _client_with_finance_vault()
+    tok = _tok(c, "u2@t1.com")
+    r = c.post("/api/v1/ops/reports:list",
+               json={"project_id": "fin-vault"}, headers=_auth(tok))
+    assert r.status_code == 403
+
+
+def test_reports_list_allowed_for_accessible_vault():
+    c, _ = _client_with_finance_vault()
+    tok = _tok(c, "u2@t1.com")
+    r = c.post("/api/v1/ops/reports:list",
+               json={"project_id": "eng-vault"}, headers=_auth(tok))
+    assert r.status_code == 200
+
+
+def test_reports_generate_blocked_for_inaccessible_vault():
+    c, s = _client_with_finance_vault()
+    model_id = str(uuid.uuid4())
+    s._conn.execute(
+        "INSERT INTO models(model_id, tenant_id, name, provider, model, status, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,datetime('now'),datetime('now'))",
+        (model_id, "t1", "Test Agent", "stub", "stub", "ready"),
+    )
+    s._conn.commit()
+    tok = _tok(c, "u2@t1.com")
+    r = c.post("/api/v1/ops/reports:generate",
+               json={"project_id": "fin-vault", "agent_id": model_id,
+                     "title": "Test", "prompt": "Summarize"},
+               headers=_auth(tok))
+    assert r.status_code == 403
+
+
+def test_reports_history_blocked_for_inaccessible_vault():
+    c, _ = _client_with_finance_vault()
+    tok = _tok(c, "u2@t1.com")
+    r = c.post("/api/v1/ops/reports:history",
+               json={"project_id": "fin-vault"}, headers=_auth(tok))
+    assert r.status_code == 403
+
+
+def test_reports_list_no_project_returns_only_accessible(c=None):
+    """reports:list without project_id must filter to accessible vaults."""
+    c, s = _client_with_finance_vault()
+    from datetime import datetime, timezone
+    s._conn.execute(
+        "INSERT INTO reports(report_id, tenant_id, project_id, title, format, "
+        "prompt, status, schedule, created_by, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (str(uuid.uuid4()), "t1", "fin-vault", "Secret Report", "doc",
+         "p", "ready", "now", "owner",
+         datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()),
+    )
+    s._conn.commit()
+    tok = _tok(c, "u2@t1.com")
+    r = c.post("/api/v1/ops/reports:list", json={}, headers=_auth(tok))
+    assert r.status_code == 200
+    reports = r.json()["reports"]
+    assert not any(rep["project_id"] == "fin-vault" for rep in reports)

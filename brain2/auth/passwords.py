@@ -37,6 +37,10 @@ class PasswordManager:
             _dummy_verify(plaintext)
             raise CredentialError("invalid credentials")
 
+        if user.status == "disabled":
+            _dummy_verify(plaintext)
+            raise CredentialError("account disabled")
+
         # Auto-unlock if lock window has expired
         if user.status == "locked":
             if user.locked_until and _is_past(user.locked_until):

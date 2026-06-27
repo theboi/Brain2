@@ -5,6 +5,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+from brain2.auth.authorize import authorize
 from brain2.errors import NotFound
 
 
@@ -71,6 +72,8 @@ def make_reports_generate(store):
         now = _now()
         schedule = params.get("schedule", "now")
         project_id = params.get("project_id") or ctx.project_id
+        if project_id:
+            authorize(store, ctx, "read_vault", project_id=project_id)
         title = params["title"]
         fmt = params.get("format", "doc")
         category = params.get("category")
@@ -118,15 +121,23 @@ def make_reports_list(store):
         limit = int(params.get("limit", 50))
         project_id = params.get("project_id") or ctx.project_id
         if project_id:
+            authorize(store, ctx, "read_vault", project_id=project_id)
             rows = store._conn.execute(
                 "SELECT * FROM reports WHERE tenant_id=? AND project_id=? "
                 "ORDER BY created_at DESC LIMIT ?",
                 (ctx.tenant_id, project_id, limit),
             ).fetchall()
         else:
+            accessible_ids = {
+                p.id for p in store.list_accessible_projects(ctx.tenant_id, ctx.user_id)
+            }
+            if not accessible_ids:
+                return {"reports": []}
+            placeholders = ",".join("?" * len(accessible_ids))
             rows = store._conn.execute(
-                "SELECT * FROM reports WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?",
-                (ctx.tenant_id, limit),
+                f"SELECT * FROM reports WHERE tenant_id=? AND project_id IN ({placeholders}) "
+                "ORDER BY created_at DESC LIMIT ?",
+                (ctx.tenant_id, *accessible_ids, limit),
             ).fetchall()
         return {"reports": [_row_to_dict(r) for r in rows]}
     return handler
@@ -140,6 +151,7 @@ def make_reports_get(store):
         ).fetchone()
         if row is None:
             raise NotFound(f"report {params['report_id']!r} not found")
+        authorize(store, ctx, "read_vault", project_id=row["project_id"])
         return _row_to_dict(row)
     return handler
 
@@ -161,8 +173,23 @@ def make_reports_history(store):
         where = ["tenant_id = ?", "status != 'scheduled'"]
         args = [ctx.tenant_id]
         if project_id:
+            authorize(store, ctx, "read_vault", project_id=project_id)
             where.append("project_id = ?")
             args.append(project_id)
+        else:
+            accessible_ids = list(
+                p.id for p in store.list_accessible_projects(ctx.tenant_id, ctx.user_id)
+            )
+            if not accessible_ids:
+                return {
+                    "items": [],
+                    "total": 0,
+                    "type_counts": {"all": 0, "doc": 0, "deck": 0, "video": 0},
+                    "periods": {},
+                }
+            placeholders = ",".join("?" * len(accessible_ids))
+            where.append(f"project_id IN ({placeholders})")
+            args.extend(accessible_ids)
         rows = store._conn.execute(
             "SELECT report_id, title, format, status, schedule, inputs, category, "
             "created_at FROM reports WHERE " + " AND ".join(where) +

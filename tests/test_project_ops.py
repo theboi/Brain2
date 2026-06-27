@@ -98,3 +98,40 @@ def test_get_project_requires_project_access():
                      json={"project_id": "p_eng"}, headers=_h(tok_m))
     assert allowed.status_code == 200
     assert allowed.json()["project_id"] == "p_eng"
+
+
+def _archive_client():
+    s = LocalStore(":memory:")
+    s.migrate()
+    s.create_tenant("t1", "Acme")
+    s.create_user("t1", "owner", "owner@t1.com", "owner")
+    s.create_user("t1", "priya", "priya@t1.com", "member")
+    ws = s.create_workspace("t1", "Engineering")
+    s.add_workspace_member("t1", ws.workspace_id, "priya", "admin")
+    s.create_project("t1", "p1", "Vault One", workspace_id=ws.workspace_id)
+    s.grant_access("t1", "p1", "user", "priya", "admin")
+    actx = build_app_context(store=s, gateway=object())
+    for uid in ("owner", "priya"):
+        actx.passwords.set_password("t1", uid, "pw")
+    return TestClient(create_app(actx))
+
+
+def _archive_token(c, email):
+    return c.post("/api/v1/auth/tokens",
+                  json={"tenant_id": "t1", "email": email, "password": "pw"}).json()["token"]
+
+
+def test_workspace_admin_cannot_archive_vault():
+    """Workspace admins may not archive vaults; only owners can."""
+    c = _archive_client()
+    tok = _archive_token(c, "priya@t1.com")
+    r = c.post("/api/v1/ops/projects:archive", json={"project_id": "p1"}, headers=_h(tok))
+    assert r.status_code == 403
+
+
+def test_owner_can_archive_vault():
+    c = _archive_client()
+    tok = _archive_token(c, "owner@t1.com")
+    r = c.post("/api/v1/ops/projects:archive", json={"project_id": "p1"}, headers=_h(tok))
+    assert r.status_code == 200
+    assert r.json()["archived"] is True

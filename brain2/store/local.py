@@ -943,6 +943,14 @@ class LocalStore:
             cx.execute("UPDATE tokens SET revoked_at=? WHERE family_id=? AND revoked_at IS NULL",
                        (_now_iso(), family_id))
 
+    def revoke_all_user_tokens(self, tenant_id: str, user_id: str) -> None:
+        with self.transaction() as cx:
+            cx.execute(
+                "UPDATE tokens SET revoked_at=? "
+                "WHERE tenant_id=? AND user_id=? AND revoked_at IS NULL",
+                (_now_iso(), tenant_id, user_id),
+            )
+
     def lookup_token_by_refresh(self, refresh_lookup: str) -> dict | None:
         row = self._conn.execute(
             "SELECT * FROM tokens WHERE refresh_lookup=?", (refresh_lookup,)).fetchone()

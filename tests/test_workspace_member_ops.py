@@ -245,3 +245,53 @@ def test_users_directory_denied_for_non_admin_member():
                   headers=_auth(tok))
 
     assert resp.status_code == 403
+
+
+def test_workspace_admin_cannot_grant_admin_role():
+    """A workspace admin cannot add another user as workspace admin."""
+    s, ws_id = _setup()
+    s.create_user("t1", "priya", "priya@t1.com", "member")
+    s.create_user("t1", "bob", "bob@t1.com", "member")
+    s.add_workspace_member("t1", ws_id, "priya", "admin")
+
+    ctx = RequestContext(tenant_id="t1", user_id="priya", tenant_role="member")
+    handler = make_add_workspace_member(s)
+    with pytest.raises(Conflict, match="owner"):
+        handler(ctx, {"workspace_id": ws_id, "user_id": "bob", "role": "admin"})
+
+
+def test_workspace_admin_can_grant_member_role():
+    """A workspace admin CAN still add a user as a regular member."""
+    s, ws_id = _setup()
+    s.create_user("t1", "priya", "priya@t1.com", "member")
+    s.create_user("t1", "bob", "bob@t1.com", "member")
+    s.add_workspace_member("t1", ws_id, "priya", "admin")
+
+    ctx = RequestContext(tenant_id="t1", user_id="priya", tenant_role="member")
+    handler = make_add_workspace_member(s)
+    result = handler(ctx, {"workspace_id": ws_id, "user_id": "bob", "role": "member"})
+    assert result["role"] == "member"
+
+
+def test_workspace_admin_cannot_promote_to_admin_via_set_role():
+    """A workspace admin cannot promote a member to admin via set_role."""
+    s, ws_id = _setup()
+    s.create_user("t1", "priya", "priya@t1.com", "member")
+    s.create_user("t1", "bob", "bob@t1.com", "member")
+    s.add_workspace_member("t1", ws_id, "priya", "admin")
+    s.add_workspace_member("t1", ws_id, "bob", "member")
+
+    ctx = RequestContext(tenant_id="t1", user_id="priya", tenant_role="member")
+    handler = make_set_workspace_member_role(s)
+    with pytest.raises(Conflict, match="owner"):
+        handler(ctx, {"workspace_id": ws_id, "user_id": "bob", "role": "admin"})
+
+
+def test_owner_can_grant_admin_role():
+    """The tenant owner can grant workspace admin role."""
+    s, ws_id = _setup()
+    s.create_user("t1", "bob", "bob@t1.com", "member")
+    ctx = RequestContext(tenant_id="t1", user_id="owner1", tenant_role="owner")
+    handler = make_add_workspace_member(s)
+    result = handler(ctx, {"workspace_id": ws_id, "user_id": "bob", "role": "admin"})
+    assert result["role"] == "admin"

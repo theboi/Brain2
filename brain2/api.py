@@ -98,10 +98,11 @@ def create_app(actx: AppContext) -> FastAPI:
         except Exception:
             raise HTTPException(status_code=401, detail="invalid token")
         user = actx.store.get_user(ctx.tenant_id, ctx.user_id)
-        if user is not None:
-            actx.store.update_last_seen(
-                ctx.tenant_id, ctx.user_id, datetime.now(timezone.utc).isoformat(),
-                min_gap_s=60)
+        if user is None or user.status == "disabled":
+            raise HTTPException(status_code=401, detail="account disabled or not found")
+        actx.store.update_last_seen(
+            ctx.tenant_id, ctx.user_id, datetime.now(timezone.utc).isoformat(),
+            min_gap_s=60)
         return dataclasses.replace(ctx, tenant_role=user.role if user else "member",
                                    idempotency_key=idempotency_key)
 
