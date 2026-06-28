@@ -1566,36 +1566,36 @@ class LocalStore:
                 (page.tenant_id, page.project_id, page.path, page.zone, page.topic, page.tldr,
                  page.content_hash, page.mtime, page.source_type))
 
-    def get_vault_page(self, project_id: str, path: str) -> VaultPage | None:
+    def get_vault_page(self, tenant_id: str, project_id: str, path: str) -> VaultPage | None:
         row = self._conn.execute(
-            "SELECT * FROM vault_pages WHERE project_id=? AND path=?",
-            (project_id, path)).fetchone()
+            "SELECT * FROM vault_pages WHERE tenant_id=? AND project_id=? AND path=?",
+            (tenant_id, project_id, path)).fetchone()
         return self._row_to_vault_page(row) if row else None
 
-    def get_vault_page_by_topic(self, project_id: str, topic: str) -> VaultPage | None:
+    def get_vault_page_by_topic(self, tenant_id: str, project_id: str, topic: str) -> VaultPage | None:
         row = self._conn.execute(
-            "SELECT * FROM vault_pages WHERE project_id=? AND topic=? AND zone='wiki' LIMIT 1",
-            (project_id, topic)).fetchone()
+            "SELECT * FROM vault_pages WHERE tenant_id=? AND project_id=? AND topic=? AND zone='wiki' LIMIT 1",
+            (tenant_id, project_id, topic)).fetchone()
         return self._row_to_vault_page(row) if row else None
 
-    def delete_vault_page(self, project_id: str, path: str) -> None:
+    def delete_vault_page(self, tenant_id: str, project_id: str, path: str) -> None:
         with self.transaction() as cx:
-            cx.execute("DELETE FROM vault_pages WHERE project_id=? AND path=?",
-                       (project_id, path))
+            cx.execute("DELETE FROM vault_pages WHERE tenant_id=? AND project_id=? AND path=?",
+                       (tenant_id, project_id, path))
 
-    def list_vault_pages(self, project_id: str, *, zone: str | None = None) -> list[VaultPage]:
+    def list_vault_pages(self, tenant_id: str, project_id: str, *, zone: str | None = None) -> list[VaultPage]:
         if zone:
             rows = self._conn.execute(
-                "SELECT * FROM vault_pages WHERE project_id=? AND zone=? ORDER BY path",
-                (project_id, zone)).fetchall()
+                "SELECT * FROM vault_pages WHERE tenant_id=? AND project_id=? AND zone=? ORDER BY path",
+                (tenant_id, project_id, zone)).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM vault_pages WHERE project_id=? ORDER BY path",
-                (project_id,)).fetchall()
+                "SELECT * FROM vault_pages WHERE tenant_id=? AND project_id=? ORDER BY path",
+                (tenant_id, project_id)).fetchall()
         return [self._row_to_vault_page(r) for r in rows]
 
-    def vault_pages_and_links(self, project_id: str) -> dict:
-        pages = [p for p in self.list_vault_pages(project_id)
+    def vault_pages_and_links(self, tenant_id: str, project_id: str) -> dict:
+        pages = [p for p in self.list_vault_pages(tenant_id, project_id)
                  if p.zone in ("wiki", "static", "dynamic")]
         titles = [p.topic for p in pages]
         title_set = set(titles)
@@ -1603,7 +1603,7 @@ class LocalStore:
         for page in pages:
             if page.zone != "wiki":
                 continue
-            for link in self.get_outgoing_links(project_id, page.path):
+            for link in self.get_outgoing_links(tenant_id, project_id, page.path):
                 if link.target_topic in title_set:
                     links.append([page.topic, link.target_topic])
         return {"pages": titles, "links": links}
@@ -1622,15 +1622,15 @@ class LocalStore:
                         "mime": r["mime"], "kind": r["kind"], "cites": cites})
         return out
 
-    def search_vault_pages(self, project_id: str, query: str,
+    def search_vault_pages(self, tenant_id: str, project_id: str, query: str,
                            limit: int = 20) -> list[dict]:
         rows = self._conn.execute(
             "SELECT vp.topic, vp.path, vp.tldr "
             "FROM vault_pages_fts f JOIN vault_pages vp "
-            "  ON vp.project_id=f.project_id AND vp.path=f.path "
-            "WHERE f.project_id=? AND vault_pages_fts MATCH ? "
+            "  ON vp.tenant_id=f.tenant_id AND vp.project_id=f.project_id AND vp.path=f.path "
+            "WHERE f.tenant_id=? AND f.project_id=? AND vault_pages_fts MATCH ? "
             "LIMIT ?",
-            (project_id, query, int(limit))).fetchall()
+            (tenant_id, project_id, query, int(limit))).fetchall()
         return [{"topic": r[0], "path": r[1], "excerpt": r[2] or ""} for r in rows]
 
     # --- vault links ---
@@ -1655,34 +1655,34 @@ class LocalStore:
                     "VALUES (?,?,?,?,?)",
                     (link.tenant_id, link.project_id, link.source_path, link.target_topic, link.target_zone))
 
-    def get_outgoing_links(self, project_id: str, source_path: str) -> list[VaultLink]:
+    def get_outgoing_links(self, tenant_id: str, project_id: str, source_path: str) -> list[VaultLink]:
         rows = self._conn.execute(
-            "SELECT * FROM vault_links WHERE project_id=? AND source_path=?",
-            (project_id, source_path)).fetchall()
+            "SELECT * FROM vault_links WHERE tenant_id=? AND project_id=? AND source_path=?",
+            (tenant_id, project_id, source_path)).fetchall()
         return [self._row_to_link(r) for r in rows]
 
-    def get_backlinks(self, project_id: str, target_topic: str) -> list[VaultLink]:
+    def get_backlinks(self, tenant_id: str, project_id: str, target_topic: str) -> list[VaultLink]:
         rows = self._conn.execute(
-            "SELECT * FROM vault_links WHERE project_id=? AND target_topic=?",
-            (project_id, target_topic)).fetchall()
+            "SELECT * FROM vault_links WHERE tenant_id=? AND project_id=? AND target_topic=?",
+            (tenant_id, project_id, target_topic)).fetchall()
         return [self._row_to_link(r) for r in rows]
 
-    def list_unresolved_links(self, project_id: str) -> list[VaultLink]:
+    def list_unresolved_links(self, tenant_id: str, project_id: str) -> list[VaultLink]:
         rows = self._conn.execute(
-            "SELECT * FROM vault_links WHERE project_id=? AND target_zone IS NULL",
-            (project_id,)).fetchall()
+            "SELECT * FROM vault_links WHERE tenant_id=? AND project_id=? AND target_zone IS NULL",
+            (tenant_id, project_id)).fetchall()
         return [self._row_to_link(r) for r in rows]
 
-    def list_orphan_pages(self, project_id: str) -> list[VaultPage]:
+    def list_orphan_pages(self, tenant_id: str, project_id: str) -> list[VaultPage]:
         """Return wiki-zone pages that have no inbound links."""
         rows = self._conn.execute(
             "SELECT vp.* FROM vault_pages vp "
-            "WHERE vp.project_id=? AND vp.zone='wiki' "
+            "WHERE vp.tenant_id=? AND vp.project_id=? AND vp.zone='wiki' "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM vault_links vl "
-            "  WHERE vl.project_id=vp.project_id AND vl.target_topic=vp.topic"
+            "  WHERE vl.tenant_id=vp.tenant_id AND vl.project_id=vp.project_id AND vl.target_topic=vp.topic"
             ") ORDER BY vp.path",
-            (project_id,)).fetchall()
+            (tenant_id, project_id)).fetchall()
         return [self._row_to_vault_page(r) for r in rows]
 
     # --- vault commits ---
@@ -1706,18 +1706,18 @@ class LocalStore:
                 (commit.tenant_id, commit.project_id, commit.sha, commit.kind, commit.message,
                  commit.source_file, commit.agent_id, commit.created_at))
 
-    def list_vault_commits(self, project_id: str, *, limit: int = 50,
+    def list_vault_commits(self, tenant_id: str, project_id: str, *, limit: int = 50,
                             cursor_created_at: str | None = None) -> list[VaultCommit]:
         if cursor_created_at:
             rows = self._conn.execute(
-                "SELECT * FROM vault_commits WHERE project_id=? AND created_at < ? "
+                "SELECT * FROM vault_commits WHERE tenant_id=? AND project_id=? AND created_at < ? "
                 "ORDER BY created_at DESC LIMIT ?",
-                (project_id, cursor_created_at, limit)).fetchall()
+                (tenant_id, project_id, cursor_created_at, limit)).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM vault_commits WHERE project_id=? "
+                "SELECT * FROM vault_commits WHERE tenant_id=? AND project_id=? "
                 "ORDER BY created_at DESC LIMIT ?",
-                (project_id, limit)).fetchall()
+                (tenant_id, project_id, limit)).fetchall()
         return [self._row_to_vault_commit(r) for r in rows]
 
     def _row_to_addon(self, row):

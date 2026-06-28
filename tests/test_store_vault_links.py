@@ -19,7 +19,7 @@ def test_replace_links_and_get_outgoing():
                   target_topic="attention", target_zone="wiki"),
     ]
     s.replace_links_for_source("t1", "p1", "wiki/concepts/transformers.md", links)
-    outgoing = s.get_outgoing_links("p1", "wiki/concepts/transformers.md")
+    outgoing = s.get_outgoing_links("t1", "p1", "wiki/concepts/transformers.md")
     assert len(outgoing) == 1
     assert outgoing[0].target_topic == "attention"
 
@@ -37,7 +37,7 @@ def test_replace_links_replaces_old():
                   target_topic="attention", target_zone="wiki"),
     ]
     s.replace_links_for_source("t1", "p1", "wiki/concepts/transformers.md", new_links)
-    outgoing = s.get_outgoing_links("p1", "wiki/concepts/transformers.md")
+    outgoing = s.get_outgoing_links("t1", "p1", "wiki/concepts/transformers.md")
     assert len(outgoing) == 1
 
 def test_get_backlinks():
@@ -47,7 +47,7 @@ def test_get_backlinks():
                   target_topic="attention", target_zone="wiki"),
     ]
     s.replace_links_for_source("t1", "p1", "wiki/concepts/transformers.md", links)
-    backlinks = s.get_backlinks("p1", "attention")
+    backlinks = s.get_backlinks("t1", "p1", "attention")
     assert len(backlinks) == 1
     assert backlinks[0].source_path == "wiki/concepts/transformers.md"
 
@@ -60,7 +60,7 @@ def test_list_unresolved_links():
                   target_topic="unknown-topic", target_zone=None),
     ]
     s.replace_links_for_source("t1", "p1", "wiki/concepts/transformers.md", links)
-    unresolved = s.list_unresolved_links("p1")
+    unresolved = s.list_unresolved_links("t1", "p1")
     assert len(unresolved) == 1
     assert unresolved[0].target_topic == "unknown-topic"
 
@@ -74,7 +74,7 @@ def test_list_orphan_pages():
                   target_topic="attention", target_zone="wiki"),
     ]
     s.replace_links_for_source("t1", "p1", "wiki/concepts/transformers.md", links)
-    orphans = s.list_orphan_pages("p1")
+    orphans = s.list_orphan_pages("t1", "p1")
     # transformers has no inbound links, so it's an orphan; attention is not
     assert len(orphans) == 1
     assert orphans[0].topic == "transformers"

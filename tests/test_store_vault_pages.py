@@ -14,7 +14,7 @@ PAGE = VaultPage(tenant_id="t1", project_id="p1", path="wiki/concepts/attention.
 def test_upsert_and_get():
     s = _seed()
     s.upsert_vault_page(PAGE)
-    p = s.get_vault_page("p1", "wiki/concepts/attention.md")
+    p = s.get_vault_page("t1", "p1", "wiki/concepts/attention.md")
     assert p is not None
     assert p.topic == "attention"
     assert p.content_hash == "abc123"
@@ -26,15 +26,15 @@ def test_upsert_updates():
                         topic="attention", tldr="Updated tldr",
                         content_hash="xyz789", mtime=1700000001, source_type="wiki")
     s.upsert_vault_page(updated)
-    p = s.get_vault_page("p1", "wiki/concepts/attention.md")
+    p = s.get_vault_page("t1", "p1", "wiki/concepts/attention.md")
     assert p.content_hash == "xyz789"
     assert p.tldr == "Updated tldr"
 
 def test_delete():
     s = _seed()
     s.upsert_vault_page(PAGE)
-    s.delete_vault_page("p1", "wiki/concepts/attention.md")
-    assert s.get_vault_page("p1", "wiki/concepts/attention.md") is None
+    s.delete_vault_page("t1", "p1", "wiki/concepts/attention.md")
+    assert s.get_vault_page("t1", "p1", "wiki/concepts/attention.md") is None
 
 def test_list_by_zone():
     s = _seed()
@@ -42,16 +42,16 @@ def test_list_by_zone():
     raw_page = VaultPage(tenant_id="t1", project_id="p1", path="raw/wiki/attention.md", zone="raw",
                          topic="attention-raw", content_hash="raw1", mtime=1700000000)
     s.upsert_vault_page(raw_page)
-    wiki_pages = s.list_vault_pages("p1", zone="wiki")
+    wiki_pages = s.list_vault_pages("t1", "p1", zone="wiki")
     assert len(wiki_pages) == 1
     assert wiki_pages[0].path == "wiki/concepts/attention.md"
-    all_pages = s.list_vault_pages("p1")
+    all_pages = s.list_vault_pages("t1", "p1")
     assert len(all_pages) == 2
 
 def test_get_by_topic():
     s = _seed()
     s.upsert_vault_page(PAGE)
-    p = s.get_vault_page_by_topic("p1", "attention")
+    p = s.get_vault_page_by_topic("t1", "p1", "attention")
     assert p is not None
     assert p.zone == "wiki"
 
@@ -61,9 +61,9 @@ def test_get_by_topic_only_wiki():
     raw_page = VaultPage(tenant_id="t1", project_id="p1", path="raw/wiki/attention.md", zone="raw",
                          topic="attention", content_hash="raw1", mtime=1700000000)
     s.upsert_vault_page(raw_page)
-    result = s.get_vault_page_by_topic("p1", "attention")
+    result = s.get_vault_page_by_topic("t1", "p1", "attention")
     assert result is None  # no wiki zone page for this topic
 
 def test_get_vault_page_none():
     s = _seed()
-    assert s.get_vault_page("p1", "nonexistent.md") is None
+    assert s.get_vault_page("t1", "p1", "nonexistent.md") is None
