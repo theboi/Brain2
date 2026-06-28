@@ -124,10 +124,11 @@ export function HomePage() {
   const [modal, setModal] = useState<ModalId>(null);
   const { workspaceId, projectId, setProjectId } = useWorkspace();
   const me = useMe().data;
+  const canViewTokenStats = me?.role === 'admin' || me?.role === 'owner';
   const overviewQuery = useStatsOverview();
   const sourcesQuery = useStatsSources(30);
   const queriesQuery = useStatsQueries(30);
-  const tokensQuery = useStatsLlmTokens(30);
+  const tokensQuery = useStatsLlmTokens(30, canViewTokenStats);
   const wikiByProjectQuery = useStatsWikiByProject();
   const activityQuery = useActivity(25);
   const { data: agents = [] } = useWorkers();
@@ -238,8 +239,14 @@ export function HomePage() {
                     <StatTile label="Sources ingested"       value={(overview?.sources_total ?? 0).toLocaleString()} delta={sourcesDelta?.delta} deltaUp={sourcesDelta?.up ?? true} data={sourcesSeries} id="src" />
                     <StatTile label="Queries served · today" value={String(overview?.queries_today ?? 0)}             delta={queriesDelta?.delta} deltaUp={queriesDelta?.up ?? true} data={queriesSeries} id="qry" />
                   </div>
-                  <Panel title="LLM tokens used" action={<Legend items={tokenLegend()} />}>
-                    <StackedArea series={tokenSeries} colors={TOKEN_COLORS} h={150} id="tok" />
+                  <Panel title="LLM tokens used" action={canViewTokenStats ? <Legend items={tokenLegend()} /> : undefined}>
+                    {canViewTokenStats ? (
+                      <StackedArea series={tokenSeries} colors={TOKEN_COLORS} h={150} id="tok" />
+                    ) : (
+                      <div style={{ height: 150, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-faint)', fontSize: 12.5 }}>
+                        Admin only
+                      </div>
+                    )}
                   </Panel>
                 </div>
               </div>

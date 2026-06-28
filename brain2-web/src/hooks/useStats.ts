@@ -36,10 +36,11 @@ export function useStatsQueries(windowDays = 30) {
   });
 }
 
-export function useStatsLlmTokens(windowDays = 30) {
+export function useStatsLlmTokens(windowDays = 30, enabled = true) {
   return useQuery({
     queryKey: qk.statsLlmTokens(windowDays),
     queryFn: () => ops<{ rows: TokenRow[] }>('stats:llm_tokens', { window_days: windowDays }),
+    enabled,
   });
 }
 
