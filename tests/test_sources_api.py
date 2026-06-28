@@ -68,3 +68,26 @@ def test_upload_enqueues_source_process(tmp_path, monkeypatch):
     assert resp.json()["queued"] is True
     assert enqueued[0][0] == "source.process"
     assert enqueued[0][1]["mode"] == "wiki"
+
+
+def test_source_raw_download_returns_uploaded_blob(tmp_path, monkeypatch):
+    monkeypatch.setattr("brain2.tasks.queue.enqueue", lambda *args, **kwargs: "task-1")
+    client, token, _actx = _client(tmp_path)
+
+    upload = client.post(
+        "/api/v1/sources/upload",
+        files={"file": ("note.txt", b"hello raw", "text/plain")},
+        data={"project_id": "p1", "mode": "static"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload.status_code == 200, upload.text
+
+    resp = client.get(
+        f"/api/v1/sources/{upload.json()['source_id']}/raw",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.content == b"hello raw"
+    assert resp.headers["content-type"].startswith("text/plain")
+    assert 'filename="note.txt"' in resp.headers["content-disposition"]
