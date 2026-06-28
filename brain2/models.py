@@ -115,6 +115,7 @@ class Addon(_Base):
 
 
 class VaultPage(_Base):
+    tenant_id: str
     project_id: str
     path: str
     zone: str
@@ -126,6 +127,7 @@ class VaultPage(_Base):
 
 
 class VaultLink(_Base):
+    tenant_id: str
     project_id: str
     source_path: str
     target_topic: str
@@ -133,6 +135,7 @@ class VaultLink(_Base):
 
 
 class VaultCommit(_Base):
+    tenant_id: str
     project_id: str
     sha: str
     kind: str

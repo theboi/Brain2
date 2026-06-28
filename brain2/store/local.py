@@ -1544,6 +1544,7 @@ class LocalStore:
     # --- vault pages ---
     def _row_to_vault_page(self, r) -> VaultPage:
         return VaultPage(
+            tenant_id=r["tenant_id"],
             project_id=r["project_id"],
             path=r["path"],
             zone=r["zone"],
@@ -1557,12 +1558,12 @@ class LocalStore:
     def upsert_vault_page(self, page: VaultPage) -> None:
         with self.transaction() as cx:
             cx.execute(
-                "INSERT INTO vault_pages(project_id, path, zone, topic, tldr, content_hash, mtime, source_type) "
-                "VALUES (?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(project_id, path) DO UPDATE SET "
+                "INSERT INTO vault_pages(tenant_id, project_id, path, zone, topic, tldr, content_hash, mtime, source_type) "
+                "VALUES (?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(tenant_id, project_id, path) DO UPDATE SET "
                 "zone=excluded.zone, topic=excluded.topic, tldr=excluded.tldr, "
                 "content_hash=excluded.content_hash, mtime=excluded.mtime, source_type=excluded.source_type",
-                (page.project_id, page.path, page.zone, page.topic, page.tldr,
+                (page.tenant_id, page.project_id, page.path, page.zone, page.topic, page.tldr,
                  page.content_hash, page.mtime, page.source_type))
 
     def get_vault_page(self, project_id: str, path: str) -> VaultPage | None:
@@ -1635,23 +1636,24 @@ class LocalStore:
     # --- vault links ---
     def _row_to_link(self, r) -> VaultLink:
         return VaultLink(
+            tenant_id=r["tenant_id"],
             project_id=r["project_id"],
             source_path=r["source_path"],
             target_topic=r["target_topic"],
             target_zone=r["target_zone"],
         )
 
-    def replace_links_for_source(self, project_id: str, source_path: str,
+    def replace_links_for_source(self, tenant_id: str, project_id: str, source_path: str,
                                   links: list[VaultLink]) -> None:
         with self.transaction() as cx:
             cx.execute(
-                "DELETE FROM vault_links WHERE project_id=? AND source_path=?",
-                (project_id, source_path))
+                "DELETE FROM vault_links WHERE tenant_id=? AND project_id=? AND source_path=?",
+                (tenant_id, project_id, source_path))
             for link in links:
                 cx.execute(
-                    "INSERT INTO vault_links(project_id, source_path, target_topic, target_zone) "
-                    "VALUES (?,?,?,?)",
-                    (link.project_id, link.source_path, link.target_topic, link.target_zone))
+                    "INSERT INTO vault_links(tenant_id, project_id, source_path, target_topic, target_zone) "
+                    "VALUES (?,?,?,?,?)",
+                    (link.tenant_id, link.project_id, link.source_path, link.target_topic, link.target_zone))
 
     def get_outgoing_links(self, project_id: str, source_path: str) -> list[VaultLink]:
         rows = self._conn.execute(
@@ -1686,6 +1688,7 @@ class LocalStore:
     # --- vault commits ---
     def _row_to_vault_commit(self, r) -> VaultCommit:
         return VaultCommit(
+            tenant_id=r["tenant_id"],
             project_id=r["project_id"],
             sha=r["sha"],
             kind=r["kind"],
@@ -1698,9 +1701,9 @@ class LocalStore:
     def record_vault_commit(self, commit: VaultCommit) -> None:
         with self.transaction() as cx:
             cx.execute(
-                "INSERT INTO vault_commits(project_id, sha, kind, message, source_file, agent_id, created_at) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (commit.project_id, commit.sha, commit.kind, commit.message,
+                "INSERT INTO vault_commits(tenant_id, project_id, sha, kind, message, source_file, agent_id, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (commit.tenant_id, commit.project_id, commit.sha, commit.kind, commit.message,
                  commit.source_file, commit.agent_id, commit.created_at))
 
     def list_vault_commits(self, project_id: str, *, limit: int = 50,

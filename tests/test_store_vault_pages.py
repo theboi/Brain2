@@ -7,7 +7,7 @@ def _seed():
     s.create_project("t1", "p1", "Research")
     return s
 
-PAGE = VaultPage(project_id="p1", path="wiki/concepts/attention.md", zone="wiki",
+PAGE = VaultPage(tenant_id="t1", project_id="p1", path="wiki/concepts/attention.md", zone="wiki",
                  topic="attention", tldr="How transformers focus",
                  content_hash="abc123", mtime=1700000000, source_type="wiki")
 
@@ -22,7 +22,7 @@ def test_upsert_and_get():
 def test_upsert_updates():
     s = _seed()
     s.upsert_vault_page(PAGE)
-    updated = VaultPage(project_id="p1", path="wiki/concepts/attention.md", zone="wiki",
+    updated = VaultPage(tenant_id="t1", project_id="p1", path="wiki/concepts/attention.md", zone="wiki",
                         topic="attention", tldr="Updated tldr",
                         content_hash="xyz789", mtime=1700000001, source_type="wiki")
     s.upsert_vault_page(updated)
@@ -39,7 +39,7 @@ def test_delete():
 def test_list_by_zone():
     s = _seed()
     s.upsert_vault_page(PAGE)
-    raw_page = VaultPage(project_id="p1", path="raw/wiki/attention.md", zone="raw",
+    raw_page = VaultPage(tenant_id="t1", project_id="p1", path="raw/wiki/attention.md", zone="raw",
                          topic="attention-raw", content_hash="raw1", mtime=1700000000)
     s.upsert_vault_page(raw_page)
     wiki_pages = s.list_vault_pages("p1", zone="wiki")
@@ -58,7 +58,7 @@ def test_get_by_topic():
 def test_get_by_topic_only_wiki():
     s = _seed()
     # Store a non-wiki page with same topic — should not be returned
-    raw_page = VaultPage(project_id="p1", path="raw/wiki/attention.md", zone="raw",
+    raw_page = VaultPage(tenant_id="t1", project_id="p1", path="raw/wiki/attention.md", zone="raw",
                          topic="attention", content_hash="raw1", mtime=1700000000)
     s.upsert_vault_page(raw_page)
     result = s.get_vault_page_by_topic("p1", "attention")
