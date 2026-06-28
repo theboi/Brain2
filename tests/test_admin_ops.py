@@ -1,7 +1,7 @@
 import pytest
 
 from brain2.admin_ops import (make_create_user, make_list_users, make_set_user_role,
-                              make_transfer_ownership)
+                              make_transfer_ownership, make_users_directory)
 from brain2.auth.passwords import PasswordManager
 from brain2.context import RequestContext
 from brain2.errors import Conflict
@@ -59,6 +59,22 @@ def test_list_users_returns_rows():
     s, pw, _ = _setup()
     rows = make_list_users(s)(_ctx(), {})
     assert any(r["user_id"] == "owner1" and r["role"] == "owner" for r in rows["users"])
+
+
+def test_users_directory_is_workspace_scoped():
+    s = LocalStore(":memory:"); s.migrate()
+    s.create_tenant("t1", "Acme")
+    s.create_workspace("t1", "Engineering", workspace_id="eng")
+    s.create_workspace("t1", "Finance", workspace_id="fin")
+    s.create_user("t1", "admin_eng", "admin@acme.com", "member")
+    s.create_user("t1", "u_fin", "fin@acme.com", "member")
+    s.add_workspace_member("t1", "eng", "admin_eng", "admin")
+    s.add_workspace_member("t1", "fin", "u_fin", "member")
+    ctx = RequestContext(tenant_id="t1", user_id="admin_eng", tenant_role="member")
+    out = make_users_directory(s)(ctx, {"workspace_id": "eng"})
+    emails = {u["email"] for u in out["users"]}
+    assert "fin@acme.com" not in emails
+    assert "admin@acme.com" in emails
 
 
 def test_set_user_role_changes_member_admin():

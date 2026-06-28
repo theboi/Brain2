@@ -60,7 +60,8 @@ def make_list_users(store: Store):
 
 def make_users_directory(store: Store):
     def handler(ctx: RequestContext, params: dict) -> dict:
-        return {"users": store.list_user_directory(ctx.tenant_id)}
+        workspace_id = params["workspace_id"]
+        return {"users": store.list_workspace_user_directory(ctx.tenant_id, workspace_id)}
     return handler
 
 

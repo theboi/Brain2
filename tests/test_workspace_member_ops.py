@@ -229,9 +229,7 @@ def test_users_directory_available_to_workspace_admin():
     assert resp.status_code == 200
     users = resp.json()["users"]
     assert all({"user_id", "email", "display_name"} <= set(u) for u in users)
-    assert {u["email"] for u in users} == {
-        "bob@t1.com", "owner@t1.com", "priya@t1.com",
-    }
+    assert {u["email"] for u in users} == {"priya@t1.com"}
 
 
 def test_users_directory_denied_for_non_admin_member():
