@@ -216,6 +216,14 @@ def test_set_role_for_non_member_raises_not_found():
         })
 
 
+def test_add_member_to_nonexistent_workspace_rejected():
+    s = LocalStore(":memory:"); s.migrate()
+    s.create_tenant("t1", "Acme")
+    s.create_user("t1", "u1", "u1@acme.com", "member")
+    with pytest.raises(NotFound):
+        s.add_workspace_member("t1", "engineering", "u1", "member")
+
+
 def test_users_directory_available_to_workspace_admin():
     c, s = _client_with_users()
     s.create_workspace("t1", "Eng", workspace_id="ws_eng")

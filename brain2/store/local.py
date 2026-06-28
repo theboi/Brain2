@@ -384,6 +384,8 @@ class LocalStore:
     def create_project(self, tenant_id: str, project_id: str, name: str, *,
                        workspace_id: str | None = None) -> Project:
         wid = workspace_id
+        if wid is not None and self.get_workspace(tenant_id, wid) is None:
+            raise NotFound(f"workspace {wid!r} not found")
         now = _now_iso()
         with self.transaction() as cx:
             try:
@@ -677,6 +679,8 @@ class LocalStore:
 
     def add_workspace_member(self, tenant_id: str, workspace_id: str,
                              user_id: str, role: str) -> None:
+        if self.get_workspace(tenant_id, workspace_id) is None:
+            raise NotFound(f"workspace {workspace_id!r} not found")
         with self.transaction() as cx:
             cx.execute(
                 "INSERT INTO workspace_members(tenant_id, workspace_id, user_id, role, created_at) "

@@ -1,5 +1,8 @@
+import pytest
+
 from brain2.api import create_app
 from brain2.app_context import build_app_context
+from brain2.errors import NotFound
 from brain2.store.local import LocalStore
 from fastapi.testclient import TestClient
 
@@ -33,6 +36,7 @@ def _token(c, s, email):
 
 def test_list_projects_includes_workspace_id():
     c, tok, s = _client("owner")
+    s.create_workspace("t1", "A", workspace_id="ws_a")
     s.create_project("t1", "p1", "Vault One", workspace_id="ws_a")
     rows = c.post("/api/v1/ops/list_projects", json={}, headers=_h(tok)).json()["projects"]
     p1 = next(p for p in rows if p["project_id"] == "p1")
@@ -42,6 +46,8 @@ def test_list_projects_includes_workspace_id():
 
 def test_list_projects_filters_by_workspace_id():
     c, tok, s = _client("owner")
+    s.create_workspace("t1", "A", workspace_id="ws_a")
+    s.create_workspace("t1", "B", workspace_id="ws_b")
     s.create_project("t1", "p1", "Vault One", workspace_id="ws_a")
     s.create_project("t1", "p2", "Vault Two", workspace_id="ws_b")
     rows = c.post("/api/v1/ops/list_projects",
@@ -80,6 +86,13 @@ def test_list_projects_no_longer_requires_tenant_admin():
 
     assert resp.status_code == 200
     assert resp.json()["projects"] == []
+
+
+def test_create_project_in_nonexistent_workspace_rejected():
+    s = LocalStore(":memory:"); s.migrate()
+    s.create_tenant("t1", "Acme")
+    with pytest.raises(NotFound):
+        s.create_project("t1", "p1", "Vault", workspace_id="ghost-ws")
 
 
 def test_get_project_requires_project_access():
