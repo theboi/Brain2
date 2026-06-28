@@ -19,6 +19,7 @@ export interface DroppedFile { name: string; type: string; size: string; project
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useIngestUrl, uploadFileWithProgress } from '@/hooks/useIngest';
 import { ops } from '@/lib/api';
+import { resolveActiveProjectId, vaultLabel } from '@/lib/vaultSelection';
 
 // ── constants ─────────────────────────────────────────────────────────────────
 const INGEST_TYPE_ICON: Record<string, IconName> = { pdf: 'file', md: 'hash', url: 'globe', txt: 'file', img: 'image', code: 'code', audio: 'sparkles' };
@@ -301,11 +302,8 @@ function AccessRow({ m, onLevel, onRemove }: { m: Member; onLevel: (l: AccessLev
   );
 }
 
-function VaultAccess({ vaults, projectIdByName, workspaceId }: { vaults: string[]; projectIdByName: Map<string, string>; workspaceId: string | null }) {
-  const [active, setActive] = useState(vaults[0]);
-  useEffect(() => { if (!vaults.includes(active)) setActive(vaults[0]); }, [vaults.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
-  const av = vaults.includes(active) ? active : vaults[0];
-  const activeProjectId = projectIdByName.get(av) ?? null;
+function VaultAccess({ projectId, projectName, workspaceId }: { projectId: string | null; projectName: string; workspaceId: string | null }) {
+  const activeProjectId = projectId;
   const { data: accessEntries = [] } = useVaultAccess(activeProjectId);
   const { data: workspaceMembers = [] } = useWorkspaceMembers(workspaceId);
   const { data: tenantUsers = [] } = useUserDirectory(workspaceId);
@@ -343,19 +341,10 @@ function VaultAccess({ vaults, projectIdByName, workspaceId }: { vaults: string[
       <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 10, lineHeight: 1.45 }}>
         <Icon name="key" size={13} color="var(--fg-faint)" /> <span>Vaults are isolated — access is set per vault.</span>
       </div>
-      {vaults.length > 1 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-          {vaults.map((v) => (
-            <button key={v} onClick={() => setActive(v)} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 7, border: `1px solid ${v === av ? 'var(--accent)' : 'var(--border)'}`, background: v === av ? 'var(--accent-soft)' : 'transparent', color: v === av ? 'var(--fg)' : 'var(--fg-muted)', fontSize: 12, fontWeight: v === av ? 600 : 500, cursor: 'pointer', fontFamily: 'var(--ui-font)' }}>
-              <Icon name="folder" size={12} color={v === av ? 'var(--accent)' : 'var(--fg-muted)'} /> {v}
-            </button>
-          ))}
-        </div>
-      )}
       <div style={{ borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
           <Icon name="folder" size={14} color="var(--fg-muted)" />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{av}</span>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{projectName}</span>
           <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{members.length} with access</span>
           <span style={{ marginLeft: 'auto' }}><AddPeople members={members} candidates={candidates} onAdd={addMember} /></span>
         </div>
@@ -482,11 +471,9 @@ export function IngestModal({ open, onClose, files = [] }: {
 }) {
   const { workspaceId } = useWorkspace();
   const { data: projects = [], isLoading: vaultsLoading } = useProjects(workspaceId);
-  const vaultOptions = projects.map((p) => p.name);
-  const defaultVault = vaultOptions[0] ?? '';
-  const [selectedVaultName, setSelectedVaultName] = useState<string>(() => defaultVault);
-  const projectIdByName = new Map(projects.map((project) => [project.name, project.project_id]));
-  const vaultProjectId = projectIdByName.get(selectedVaultName) ?? null;
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const vaultProjectId = resolveActiveProjectId(!vaultsLoading, projects, selectedProjectId);
+  const selectedVaultName = vaultLabel(projects, vaultProjectId);
   const { data: projectTags = [] } = useProjectTags(vaultProjectId);
   const qc = useQueryClient();
   const ingestUrl = useIngestUrl(vaultProjectId);
@@ -498,7 +485,7 @@ export function IngestModal({ open, onClose, files = [] }: {
   const [manageTagsOpen, setManageTagsOpen] = useState(false);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
 
-  const seedRows = (): Row[] => files.map((f, i) => norm(f, i, defaultVault));
+  const seedRows = (): Row[] => files.map((f, i) => norm(f, i, selectedVaultName));
   const [rows, setRows] = useState<Row[]>(seedRows);
   const [sel, setSel] = useState<Set<string>>(() => new Set());
   const [draft, setDraft] = useState('');
@@ -510,12 +497,6 @@ export function IngestModal({ open, onClose, files = [] }: {
     enabled: wikiModeSelected,
   });
   const ollamaWarning = wikiModeSelected && ollamaRuntime && !(ollamaRuntime.available ?? ollamaRuntime.ollama_ok);
-
-  useEffect(() => {
-    if (vaultOptions.length > 0 && (!selectedVaultName || !vaultOptions.includes(selectedVaultName))) {
-      setSelectedVaultName(vaultOptions[0]);
-    }
-  }, [vaultOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (open) {
@@ -646,7 +627,6 @@ export function IngestModal({ open, onClose, files = [] }: {
   const removeRow = (id: string) => { setRows((rs) => rs.filter((r) => r.id !== id)); setSel((s) => { const n = new Set(s); n.delete(id); return n; }); };
   const removeSel = () => { setRows((rs) => rs.filter((r) => !effectiveIdSet.has(r.id))); setSel(new Set()); };
 
-  const vaults = selectedVaultName ? [selectedVaultName] : [];
   const selCount = effectiveIds.length;
   const progressEntries = Object.entries(progress);
 
@@ -658,7 +638,7 @@ export function IngestModal({ open, onClose, files = [] }: {
       title="Ingest sources"
       footer={
         <Fragment>
-          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{rows.length} item{rows.length === 1 ? '' : 's'} → <b style={{ color: 'var(--fg)' }}>{vaults.length}</b> vault{vaults.length === 1 ? '' : 's'}</span>
+          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{rows.length} item{rows.length === 1 ? '' : 's'} → <b style={{ color: 'var(--fg)' }}>{vaultProjectId ? 1 : 0}</b> vault{vaultProjectId ? '' : 's'}</span>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button onClick={onClose} style={ingBtnGhost()}>Cancel</button>
             <button onClick={onIngest} disabled={submitting || rows.length === 0} style={{ ...ingBtnPrimary(), opacity: (rows.length && !submitting) ? 1 : 0.5, cursor: submitting ? 'wait' : 'pointer' }}><Icon name="download" size={14} color="#fff" /> {submitting ? 'Ingesting…' : `Ingest${rows.length ? ` ${rows.length}` : ''}`}</button>
@@ -675,9 +655,9 @@ export function IngestModal({ open, onClose, files = [] }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ fontSize: 12.5, color: 'var(--fg-muted)', fontWeight: 500 }}>Vault</span>
         <ProjectPicker
-          value={selectedVaultName}
-          onPick={setSelectedVaultName}
-          options={vaultOptions}
+          value={vaultProjectId}
+          onPick={setSelectedProjectId}
+          options={projects}
           loading={vaultsLoading}
         />
         <button
@@ -733,14 +713,13 @@ export function IngestModal({ open, onClose, files = [] }: {
       </div>
 
       {/* access management */}
-      {vaults.length > 0 && (
+      {vaultProjectId && (
         <div style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)', padding: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: 0 }}>
             <Icon name="shield" size={16} color="var(--accent)" />
             <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>Vault access</span>
-            <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{vaults.length} vault{vaults.length > 1 ? 's' : ''}</span>
           </div>
-          <VaultAccess vaults={vaults} projectIdByName={projectIdByName} workspaceId={workspaceId} />
+          <VaultAccess projectId={vaultProjectId} projectName={selectedVaultName} workspaceId={workspaceId} />
         </div>
       )}
       {uploadErrors.length > 0 && (
