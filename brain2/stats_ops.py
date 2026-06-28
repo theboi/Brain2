@@ -288,17 +288,17 @@ def register_stats_ops(ops, store):
                  handler=make_stats_queries(store),
                  summary="Operations executed over a time window (per day)",
                  params=[{"name": "window_days", "type": "int", "required": False}])
-    ops.register("stats:llm_tokens", action="view_stats",
+    ops.register("stats:llm_tokens", action="view_audit_logs",
                  handler=make_stats_llm_tokens(store),
-                 summary="LLM token usage over a window",
+                 summary="LLM token usage over a window (tenant cost metadata - admin only)",
                  params=[{"name": "window_days", "type": "int", "required": False}])
     ops.register("activity:list", action="view_activity",
                  handler=make_activity_list(store),
                  summary="Recent events from the outbox (most recent first)",
                  params=[{"name": "limit", "type": "int", "required": False}])
-    ops.register("audit:list", action="view_activity",
+    ops.register("audit:list", action="view_audit_logs",
                  handler=make_audit_list(store),
-                 summary="Recent audit events from the outbox (most recent first)",
+                 summary="Recent audit events from the outbox (admin only)",
                  params=[{"name": "limit", "type": "int", "required": False},
                          {"name": "actor_id", "type": "str", "required": False},
                          {"name": "action", "type": "str", "required": False},

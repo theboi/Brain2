@@ -4,6 +4,9 @@ from fastapi.testclient import TestClient
 
 from brain2.api import create_app
 from brain2.app_context import build_app_context
+from brain2.context import RequestContext
+from brain2.errors import PermissionDenied
+from brain2.operations import dispatch
 from brain2.store.local import LocalStore
 
 
@@ -12,6 +15,22 @@ def client_member():
     s = LocalStore(":memory:"); s.migrate()
     s.create_tenant("t1", "Acme")
     s.create_user("t1", "u1", "u1@t1.com", "member")
+    actx = build_app_context(store=s, gateway=object())
+    actx.passwords.set_password("t1", "u1", "pw")
+    app = create_app(actx)
+    app.state.actx = actx
+    c = TestClient(app)
+    tok = c.post("/api/v1/auth/tokens",
+                 json={"tenant_id": "t1", "email": "u1@t1.com",
+                       "password": "pw"}).json()["token"]
+    return c, tok
+
+
+@pytest.fixture
+def client_admin():
+    s = LocalStore(":memory:"); s.migrate()
+    s.create_tenant("t1", "Acme")
+    s.create_user("t1", "u1", "u1@t1.com", "admin")
     actx = build_app_context(store=s, gateway=object())
     actx.passwords.set_password("t1", "u1", "pw")
     app = create_app(actx)
@@ -41,8 +60,20 @@ def test_activity_list_empty(client_member):
     assert r.json() == {"events": []}
 
 
-def test_audit_list_returns_normalized_audit_events(client_member):
-    c, tok = client_member
+def test_member_cannot_read_audit_or_token_stats():
+    s = LocalStore(":memory:"); s.migrate()
+    s.create_tenant("t1", "Acme")
+    s.create_user("t1", "u1", "u1@t1.com", "member")
+    actx = build_app_context(store=s, gateway=object())
+    member_ctx = RequestContext(tenant_id="t1", user_id="u1", tenant_role="member")
+    with pytest.raises(PermissionDenied):
+        dispatch(s, actx.operations, member_ctx, "audit:list", {})
+    with pytest.raises(PermissionDenied):
+        dispatch(s, actx.operations, member_ctx, "stats:llm_tokens", {})
+
+
+def test_audit_list_returns_normalized_audit_events(client_admin):
+    c, tok = client_admin
     from brain2.audit import record_best_effort_audit
 
     record_best_effort_audit(
