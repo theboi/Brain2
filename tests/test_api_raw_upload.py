@@ -55,3 +55,24 @@ def test_upload_requires_auth(upload_client):
                data={"project_id": "p1", "type": "static", "filename": "x.txt"},
                files=files)
     assert r.status_code == 401
+
+
+def test_upload_rejects_parent_traversal_filename(upload_client):
+    c, tok, root = upload_client
+    files = {"file": ("x", b"evil", "text/plain")}
+    r = c.post("/api/v1/raw/upload",
+               data={"project_id": "p1", "type": "static",
+                     "filename": "../../escape.md"},
+               files=files, headers=_h(tok))
+    assert r.status_code == 400, r.text
+    assert not (root.parent / "escape.md").exists()
+
+
+def test_upload_rejects_absolute_filename(upload_client):
+    c, tok, root = upload_client
+    files = {"file": ("x", b"evil", "text/plain")}
+    r = c.post("/api/v1/raw/upload",
+               data={"project_id": "p1", "type": "static",
+                     "filename": "/tmp/escape.md"},
+               files=files, headers=_h(tok))
+    assert r.status_code == 400, r.text

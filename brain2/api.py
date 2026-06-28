@@ -780,11 +780,13 @@ def create_app(actx: AppContext) -> FastAPI:
             raise HTTPException(status_code=404, detail="project has no vault")
         from pathlib import Path
         from brain2.vault.fs import write_bytes_atomic
-        target = Path(proj.vault_path) / "raw" / type / filename
+        from brain2.vault.safe_path import resolve_vault_path
+        target = resolve_vault_path(proj.vault_path, str(Path("raw") / type / filename))
         target.parent.mkdir(parents=True, exist_ok=True)
         body = await file.read()
         write_bytes_atomic(target, body)
-        return {"path": str(target.relative_to(proj.vault_path)), "size": len(body)}
+        return {"path": str(target.relative_to(Path(proj.vault_path).resolve())),
+                "size": len(body)}
 
     @app.get("/api/v1/sources/{source_id}/raw")
     def source_raw(source_id: str, ctx: RequestContext = Depends(_auth)):
