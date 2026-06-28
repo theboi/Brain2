@@ -2,14 +2,7 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { qk, queryClient } from '@/lib/queryClient';
 import type { MeResponse } from '@/lib/types';
-
-function wsKey(userId: string | null) {
-  return userId ? `b2-workspace-id:${userId}` : 'b2-workspace-id';
-}
-
-function projKey(userId: string | null) {
-  return userId ? `b2-project-id:${userId}` : 'b2-project-id';
-}
+import { projKey, scopeFromMe, wsKey } from './workspaceStorageKey';
 
 function readStored(key: string) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -22,15 +15,15 @@ function writeStored(key: string, value: string | null) {
   } catch { /* ignore */ }
 }
 
-function currentUserIdFromCache() {
-  return queryClient.getQueryData<MeResponse>(qk.me())?.user_id ?? null;
+function currentScopeFromCache() {
+  return scopeFromMe(queryClient.getQueryData<MeResponse>(qk.me()) ?? null);
 }
 
-function useCachedUserId() {
+function useCachedScope() {
   return useSyncExternalStore(
     (onStoreChange) => queryClient.getQueryCache().subscribe(onStoreChange),
-    currentUserIdFromCache,
-    () => null,
+    currentScopeFromCache,
+    () => '__global__',
   );
 }
 
@@ -44,27 +37,27 @@ interface Ctx {
 const WorkspaceCtx = createContext<Ctx | null>(null);
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const userId = useCachedUserId();
-  const storageScope = userId ?? '__global__';
+  const scope = useCachedScope();
+  const storageScope = scope;
   const [loadedScope, setLoadedScope] = useState(storageScope);
-  const [workspaceId, setWid] = useState<string | null>(() => readStored(wsKey(null)));
-  const [projectId, setPid] = useState<string | null>(() => readStored(projKey(null)));
+  const [workspaceId, setWid] = useState<string | null>(() => readStored(wsKey('__global__')));
+  const [projectId, setPid] = useState<string | null>(() => readStored(projKey('__global__')));
 
   useEffect(() => {
-    setWid(readStored(wsKey(userId)));
-    setPid(readStored(projKey(userId)));
+    setWid(readStored(wsKey(scope)));
+    setPid(readStored(projKey(scope)));
     setLoadedScope(storageScope);
-  }, [storageScope, userId]);
+  }, [storageScope, scope]);
 
   useEffect(() => {
     if (loadedScope !== storageScope) return;
-    writeStored(wsKey(userId), workspaceId);
-  }, [loadedScope, storageScope, userId, workspaceId]);
+    writeStored(wsKey(scope), workspaceId);
+  }, [loadedScope, storageScope, scope, workspaceId]);
 
   useEffect(() => {
     if (loadedScope !== storageScope) return;
-    writeStored(projKey(userId), projectId);
-  }, [loadedScope, storageScope, userId, projectId]);
+    writeStored(projKey(scope), projectId);
+  }, [loadedScope, storageScope, scope, projectId]);
 
   const setWorkspaceId = (id: string | null) => {
     setWid(id);
