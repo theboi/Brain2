@@ -97,50 +97,68 @@ The existing lifecycle event log (`record_best_effort_audit`, the mock Settings
 live events. This frees the **"Audit"** name for the auditor LLM feature, which
 owns its own tables (`page_audits`, `audit_suggestions`) and the AuditDrawer.
 
-## Data Model (new)
+## Data Model (REUSE existing — do not create new tables)
 
-`page_audits` — one row per audit run:
-`audit_id, tenant_id, project_id, page_path, source_id, agent_id, verdict,
-attempt, prompt, scope, citation_policy, created_at`.
+> Codebase reality (discovered during planning): a complete on-demand wiki
+> auditor already ships — tables `wiki_audits` + `wiki_audit_suggestions`, ops in
+> `brain2/wiki_audit_ops.py` (`create_audit_row`, `insert_suggestion`,
+> `set_audit_status`, `make_accept_suggestion`, `make_dismiss_suggestion`,
+> `make_list_audits`, `make_list_suggestions`), an inline SSE runner in
+> `brain2/api.py` (`/api/v1/wiki/{topic}/audit/stream`), and a fully wired
+> `AuditDrawer.tsx` (which already disables **Accept** when `!cited`). The plans
+> BUILD ON this; they do not duplicate it.
 
-`audit_suggestions` — one row per suggestion:
-`suggestion_id, audit_id, tenant_id, section, cited, sources_cited (json),
-diff (json), why, status (pending|accepted|dismissed|auto_applied), created_at`.
+`wiki_audits` — one row per audit run (existing): `audit_id, tenant_id,
+project_id, topic, agent_id, instructions, scope, selection, citation_policy,
+status, created_by, created_at, updated_at`.
 
-Wiki revisions gain a `source` discriminator: `user | ingest | llm_audit`
-(already implied by the v1 revisions model).
+`wiki_audit_suggestions` — one row per suggestion (existing): `suggestion_id,
+audit_id, tenant_id, section, diff_text, proposed_content, rationale,
+sources_cited (json), status (pending|accepted|edited_accepted|dismissed),
+decided_by, decided_at, created_at`.
+
+**Derived `cited`** = `len(sources_cited) > 0` (no new column). This gates both
+auto-apply (loop) and the UI Accept button. The "verdict" (`pass|warn|fail`) is
+derived in the UI/loop from the pending suggestions, not stored.
 
 ## Component Boundaries
 
 - `brain2/vault/ingest_wiki.py` — curator (unchanged contract; personaless).
-- `brain2/vault/audit_wiki.py` — **new** auditor: `run_audit(store, gateway, req)
-  -> AuditResult` (verdict + suggestions), pure of orchestration.
+- `brain2/wiki_audit_runner.py` — **new**: `run_wiki_audit_once(...)` extracted
+  from the SSE endpoint so the auditor LLM can run headlessly; `derive_cited`.
+- `brain2/wiki_audit_ops.py` — **extend**: factor out headless
+  `apply_suggestion(...)`; expose `cited`; add `wiki:open_audit_counts`;
+  `auto` flag to suppress per-suggestion notifications on auto runs.
 - `brain2/tasks/source_process.py` — routes by type; chains `audit.run` for wiki.
-- `brain2/tasks/audit_run.py` — **new** orchestration: runs auditor, auto-applies
-  cited corrections, loops, sets `needs_review`, notifies.
-- `brain2/audit_ops.py` — **new** read/write ops: list audits/suggestions for a
-  page, accept/dismiss/edit a suggestion (applies diff → revision).
-- Frontend `AuditDrawer.tsx` + wiki page integration + Settings Activity rename.
+- `brain2/tasks/audit_run.py` + `brain2/tasks/audit_targets.py` — **new**
+  orchestration: resolve topics + auditor agent, run auditor, auto-apply cited
+  suggestions, loop up to N, notify on uncited remainder.
+- Frontend: `AuditDrawer.tsx` seeds latest auto-audit suggestions + verdict badge;
+  wiki list open-audit badge/filter; Settings `Audit log → Activity` rename;
+  IngestModal mode-copy alignment.
 
 ## Plan Decomposition
 
-1. **Raw staging & type routing** (backend) — `raw/` layout, persist-to-raw on
-   upload, type field plumbed end-to-end, static/dynamic framed as symlink-into-
-   wiki, `source.process` routes by type and chains audit for wiki.
-2. **Auditor core** (backend) — `page_audits` + `audit_suggestions` migration,
-   `audit_wiki.py` auditor LLM (sections vs linked sources → verdict +
-   suggestions), `audit_ops.py` read ops, revision `source` discriminator.
-3. **Audit orchestration & auto-correct** (backend) — `audit_run.py` task chained
-   after curation, auto-apply cited corrections + re-audit loop (N passes),
-   `needs_review`, accept/dismiss/edit suggestion ops, notifications.
-4. **Activity rename** (backend + UI) — `activity:list` op + Settings section
-   `Audit → Activity` reading live events.
-5. **AuditDrawer UI + wiki integration** (frontend) — port the v1 AuditDrawer
-   live, on-demand Run audit, suggestion accept/dismiss/edit → revision, audit
-   log, page `audits` badge, "Has open audit" filter, per-page Sources panel,
-   `llm_audit` revision rows.
-6. **Ingest UI alignment** (frontend) — type picker (wiki/static/dynamic) per
-   source in IngestModal, `/raw` staging semantics, status surfacing.
+1. **Raw staging & type routing** (backend) — `raw/` layout, materialize uploads
+   into `raw/`, type plumbed end-to-end, `source.process` routes by type and
+   chains `audit.run` for wiki. (`2026-06-28-ingest-raw-plan-1-staging-routing.md`)
+2. **Auditor core** (backend) — extract headless `run_wiki_audit_once` from the
+   SSE endpoint, headless `apply_suggestion`, expose derived `cited`. Reuses
+   existing tables/ops. (`...-plan-2-auditor-core.md`)
+3. **Audit auto-trigger & auto-correct loop** (backend) — `audit_run.py` +
+   `audit_targets.py`: auto-audit after curation, auto-apply cited + re-audit up
+   to N, notify on uncited remainder. (`...-plan-3-orchestration.md`)
+4. **Activity rename** (UI) — Settings `Audit log → Activity`. (`...-plan-4-activity-rename.md`)
+5. **Audit UI surfacing** (frontend) — AuditDrawer seeds latest auto-audit
+   pending suggestions + verdict badge; wiki list open-audit badge + "Has open
+   audit" filter. Accept-gating-on-cited already exists. (`...-plan-5-audit-drawer-autoload.md`)
+6. **Ingest UX alignment + E2E verification** (frontend + test) — mode-copy
+   alignment (wiki curated+audited vs static/dynamic verbatim), end-to-end
+   pipeline smoke test + manual checklist. (`...-plan-6-ingest-alignment.md`)
+
+> Much of the on-demand audit UI and the IngestModal mode picker already exist;
+> these plans are deliberately scoped to the **deltas** that realize the new
+> staged + auto-audited model.
 
 Each plan is independently mergeable and TDD-structured.
 
