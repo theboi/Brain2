@@ -23,7 +23,7 @@ from brain2.auth.authorize import authorize
 from brain2.context import RequestContext
 from brain2.errors import (AggregateOverUnboundedResult, Brain2Error, Conflict,
                            NotFound, PageTooLarge, PermissionDenied, QueryNotAllowed,
-                           RateLimitExceeded, SSRFBlocked)
+                           RateLimitExceeded, SSRFBlocked, UnsafeVaultPath)
 from brain2.operations import dispatch
 from brain2.ratelimit import SlidingWindowLimiter
 
@@ -57,6 +57,7 @@ def _parse_frontmatter_sources(text: str) -> set[str]:
 _STATUS = {
     PermissionDenied: 403, NotFound: 404, Conflict: 409,
     QueryNotAllowed: 400, AggregateOverUnboundedResult: 400, SSRFBlocked: 400,
+    UnsafeVaultPath: 400,
     PageTooLarge: 413, RateLimitExceeded: 429,
 }
 
