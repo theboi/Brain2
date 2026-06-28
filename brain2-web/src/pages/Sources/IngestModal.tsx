@@ -94,12 +94,16 @@ function IngMenu({ trigger, width = 240, align = 'left', full = false, children 
   );
 }
 
-function ProjectPicker({ value, onPick, full, options, loading }: { value: string | null; onPick: (v: string) => void; full?: boolean; options: string[]; loading?: boolean }) {
+function ProjectPicker({ value, onPick, full, options, loading }: {
+  value: string | null; onPick: (projectId: string) => void; full?: boolean;
+  options: { project_id: string; name: string }[]; loading?: boolean;
+}) {
+  const selectedName = options.find((p) => p.project_id === value)?.name ?? '';
   return (
     <IngMenu width={224} full={full} trigger={(open) => (
-      <button style={{ ...ingPill(open, full), color: value ? 'var(--fg)' : 'var(--fg-muted)' }} title={value || 'Choose vault'}>
+      <button style={{ ...ingPill(open, full), color: value ? 'var(--fg)' : 'var(--fg-muted)' }} title={selectedName || 'Choose vault'}>
         <Icon name="folder" size={13} color="var(--fg-muted)" />
-        <span style={{ flex: full ? 1 : 'none', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'left' }}>{value || 'Vault'}</span>
+        <span style={{ flex: full ? 1 : 'none', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'left' }}>{selectedName || 'Vault'}</span>
         <Icon name="chevDown" size={12} color="var(--fg-muted)" />
       </button>
     )}>
@@ -109,10 +113,10 @@ function ProjectPicker({ value, onPick, full, options, loading }: { value: strin
           {loading && <div style={{ padding: '8px 9px', fontSize: 12, color: 'var(--fg-faint)' }}>Loading…</div>}
           {!loading && options.length === 0 && <div style={{ padding: '8px 9px', fontSize: 12, color: 'var(--fg-faint)' }}>No vaults yet</div>}
           {options.map((p) => (
-            <button key={p} onClick={() => { onPick(p); close(); }} style={ingRowBtn()}>
+            <button key={p.project_id} onClick={() => { onPick(p.project_id); close(); }} style={ingRowBtn()}>
               <Icon name="folder" size={13} color="var(--fg-muted)" />
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p}</span>
-              {value === p && <Icon name="check" size={14} color="var(--accent)" />}
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+              {value === p.project_id && <Icon name="check" size={14} color="var(--accent)" />}
             </button>
           ))}
         </div>
