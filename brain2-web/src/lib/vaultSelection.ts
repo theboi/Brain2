@@ -3,6 +3,7 @@
 // `projectId` in sync with the project list of the active workspace.
 
 interface HasProjectId { project_id: string; }
+interface HasIdName { project_id: string; name: string; }
 
 /**
  * Decide which project should be selected given the project list for the
@@ -26,4 +27,11 @@ export function resolveActiveProjectId(
   const valid = current != null && projects.some((p) => p.project_id === current);
   if (valid) return current;
   return projects[0]?.project_id ?? null;
+}
+
+/** Resolve a vault's display name by project_id. Lookup is by id, so duplicate
+ *  vault names never resolve to the wrong vault. */
+export function vaultLabel(projects: HasIdName[], projectId: string | null): string {
+  if (projectId == null) return '';
+  return projects.find((p) => p.project_id === projectId)?.name ?? '';
 }
