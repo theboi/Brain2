@@ -186,6 +186,14 @@ See `python scripts/setup.py --help` for all options.
 
 ### 2. Start the REST API
 
+Start the API and worker together for ingestion and report processing:
+
+```bash
+make dev
+```
+
+Or run the API separately:
+
 ```bash
 .venv/bin/brain2-api          # uvicorn on http://0.0.0.0:8000
 ```

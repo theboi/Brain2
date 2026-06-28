@@ -38,11 +38,13 @@ export interface SourceRow {
   project_id: string;
   kind: 'file' | 'url' | 'text';
   filename: string | null;
+  url?: string | null;
   mime: string | null;
   size_bytes: number;
   topic: string | null;
   folder_id: string | null;
-  status: 'pending' | 'extracting' | 'extracted' | 'failed' | 'deleted';
+  status: 'pending' | 'queued' | 'extracting' | 'processing' | 'extracted' | 'done' | 'failed' | 'deleted';
+  tags?: string[];
   extraction_error: string | null;
   created_at: string;
   updated_at: string;

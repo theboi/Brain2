@@ -4,6 +4,7 @@
  */
 import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
+import { ManageTagsOverlay } from '@/components/overlays/ManageTagsOverlay';
 import { useVaultAccess, useAddGuest, useSetGuestRole, useRemoveGuest } from '@/hooks/access';
 import { useRenameVault, useSetVaultMode, useMoveVault, useArchiveVault } from '@/hooks/useWorkspaces';
 import { useUserDirectory } from '@/hooks/useWorkspaces';
@@ -42,6 +43,7 @@ export function VaultDrawer({ vault, ws, allWorkspaces, onClose }: {
   const [mode, setModeState] = useState<VaultMode>(vault.mode);
   const [moveTo, setMoveTo] = useState(ws.workspace_id);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
 
   const labelStyle: React.CSSProperties = { display: 'block', fontSize: 12, color: 'var(--fg-muted)', marginBottom: 6, fontWeight: 500 };
   const inputStyle: React.CSSProperties = { width: '100%', height: 36, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border)', background: ro ? 'var(--surface-2)' : 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13, outline: 'none' };
@@ -87,6 +89,16 @@ export function VaultDrawer({ vault, ws, allWorkspaces, onClose }: {
           <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', marginTop: 2 }}>How new sources are processed.</div>
         </div>
         <MiniSelect value={mode} disabled={ro} width={236} options={VAULT_MODE_OPTS} onPick={(v) => setModeState(v as VaultMode)} />
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 0', borderTop: '1px solid var(--border)' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>Source tags</div>
+          <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', marginTop: 2 }}>Rename, merge, or remove tags across this vault.</div>
+        </div>
+        <button onClick={() => setTagsOpen(true)} style={sbtn()}>
+          <Icon name="hash" size={14} /> Manage Tags
+        </button>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 0', borderTop: '1px solid var(--border)' }}>
@@ -177,6 +189,13 @@ export function VaultDrawer({ vault, ws, allWorkspaces, onClose }: {
         <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: 'var(--fg-faint)' }}>
           <Icon name="shield" size={13} color="var(--fg-faint)" /> Only the workspace owner can archive this vault.
         </div>
+      )}
+      {tagsOpen && (
+        <ManageTagsOverlay
+          open={tagsOpen}
+          onClose={() => setTagsOpen(false)}
+          projectId={vault.project_id}
+        />
       )}
     </OverlayShell>
   );

@@ -203,6 +203,9 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
     from brain2.stats_ops import register_stats_ops
     register_stats_ops(ops, store)
 
+    from brain2.runtime_ops import register_runtime_ops
+    register_runtime_ops(ops, store)
+
     if secrets is not None:
         from brain2.model_ops import register_model_ops
         register_model_ops(ops, store, secrets)

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from brain2.auth.passwords import PasswordManager
 from brain2.context import RequestContext
 from brain2.notification_ops import create_notification, register_notification_ops
@@ -137,7 +139,13 @@ def test_source_done_creates_notification(store, tmp_path, monkeypatch):
     from brain2.tasks.source_process import make_source_process_handler
 
     source_id = create_source_row(
-        store, tenant_id="t1", project_id="p1", kind="file", mode="static")
+        store,
+        tenant_id="t1",
+        project_id="p1",
+        kind="file",
+        filename="Quarterly Roadmap.pdf",
+        mode="static",
+    )
     with store.transaction() as cx:
         cx.execute(
             "UPDATE sources SET status=?, extracted_md=? WHERE source_id=?",
@@ -166,7 +174,63 @@ def test_source_done_creates_notification(store, tmp_path, monkeypatch):
     notifications = dispatch(store, ops, _ctx("u1"), "notifications:list", {})[
         "notifications"
     ]
-    assert any(n["type"] == "source_done" for n in notifications)
+    assert any(
+        n["type"] == "source_done"
+        and n["body"] == "'Quarterly Roadmap.pdf' has been ingested (static)."
+        for n in notifications
+    )
+
+
+def test_source_failed_notification_uses_url_fallback(store, monkeypatch):
+    _seed_user_project(store)
+    ops = _ops(store)
+    from brain2.source_ops import create_source_row
+    from brain2.tasks.source_process import make_source_process_handler
+
+    source_id = create_source_row(
+        store,
+        tenant_id="t1",
+        project_id="p1",
+        kind="url",
+        url="https://example.com/research-note",
+        mode="static",
+    )
+    with store.transaction() as cx:
+        cx.execute(
+            "UPDATE sources SET status=?, extracted_md=? WHERE source_id=?",
+            ("extracted", "# extracted\n", source_id),
+        )
+
+    def fail_runner(req):
+        raise RuntimeError("runner exploded")
+
+    monkeypatch.setattr(
+        "brain2.tasks.source_process.build_runners",
+        lambda store, gateway: {"static": fail_runner},
+    )
+
+    handler = make_source_process_handler(store, gateway=None, blob_store=None)
+    with pytest.raises(RuntimeError):
+        handler({
+            "task_id": "t1",
+            "tenant_id": "t1",
+            "payload": {
+                "source_id": source_id,
+                "project_id": "p1",
+                "mode": "static",
+                "uploaded_by": "u1",
+            },
+        })
+
+    notifications = dispatch(store, ops, _ctx("u1"), "notifications:list", {})[
+        "notifications"
+    ]
+    assert any(
+        n["type"] == "source_failed"
+        and n["body"]
+        == "'https://example.com/research-note' failed to ingest: runner exploded"
+        for n in notifications
+    )
 
 
 def test_wiki_suggestion_notifies_audit_creator(store):

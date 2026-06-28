@@ -7,7 +7,7 @@ import type { SourceRow, SourceEvent } from '@/lib/types';
 import type { DiffHunk } from '@/lib/wiki';
 
 export interface SourceFilters {
-  status?: string;
+  status?: string | string[];
   tag?: string;
   folder_id?: string;
   q?: string;
@@ -27,6 +27,19 @@ export function useProjectTags(projectId: string | null) {
     queryKey: projectId ? ['source-tags', projectId] : ['source-tags', '_'],
     queryFn: () => ops<{ tags: string[] }>('sources:tags:list',
       { project_id: projectId }).then(r => r.tags),
+    enabled: !!projectId,
+  });
+}
+
+export interface SourceTagCount {
+  tag: string;
+  count: number;
+}
+
+export function useTagCounts(projectId: string | null) {
+  return useQuery({
+    queryKey: projectId ? ['source-tag-counts', projectId] : ['source-tag-counts', '_'],
+    queryFn: () => ops<SourceTagCount[]>('sources:tags:counts', { project_id: projectId }),
     enabled: !!projectId,
   });
 }
@@ -127,6 +140,8 @@ export function usePutExtracted(projectId: string | null) {
     onSuccess: (_, vars) => {
       if (!projectId) return;
       qc.invalidateQueries({ queryKey: qk.source(projectId, vars.source_id) });
+      qc.invalidateQueries({ queryKey: qk.sourceExtracted(projectId, vars.source_id) });
+      qc.invalidateQueries({ queryKey: qk.sourceHistory(projectId, vars.source_id) });
     },
   });
 }
@@ -177,6 +192,8 @@ export function useTagSource(projectId: string | null) {
       ops('sources:tag', { project_id: projectId, ...vars }),
     onSuccess: () => {
       if (projectId) qc.invalidateQueries({ queryKey: ['sources', projectId] });
+      if (projectId) qc.invalidateQueries({ queryKey: ['source-tags', projectId] });
+      if (projectId) qc.invalidateQueries({ queryKey: ['source-tag-counts', projectId] });
     },
   });
 }
@@ -188,26 +205,59 @@ export function useUntagSource(projectId: string | null) {
       ops('sources:untag', { project_id: projectId, ...vars }),
     onSuccess: () => {
       if (projectId) qc.invalidateQueries({ queryKey: ['sources', projectId] });
+      if (projectId) qc.invalidateQueries({ queryKey: ['source-tags', projectId] });
+      if (projectId) qc.invalidateQueries({ queryKey: ['source-tag-counts', projectId] });
     },
   });
 }
 
-export function useSourceEvents(projectId: string | null) {
+export function useRenameTag(projectId: string | null) {
   const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ oldTag, newTag }: { oldTag: string; newTag: string }) =>
+      ops('sources:tags:rename', { project_id: projectId, old_tag: oldTag, new_tag: newTag }),
+    onSuccess: () => {
+      if (!projectId) return;
+      qc.invalidateQueries({ queryKey: ['sources', projectId] });
+      qc.invalidateQueries({ queryKey: ['source-tags', projectId] });
+      qc.invalidateQueries({ queryKey: ['source-tag-counts', projectId] });
+    },
+  });
+}
+
+export function useDeleteTag(projectId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ tag }: { tag: string }) =>
+      ops('sources:tags:delete', { project_id: projectId, tag }),
+    onSuccess: () => {
+      if (!projectId) return;
+      qc.invalidateQueries({ queryKey: ['sources', projectId] });
+      qc.invalidateQueries({ queryKey: ['source-tags', projectId] });
+      qc.invalidateQueries({ queryKey: ['source-tag-counts', projectId] });
+    },
+  });
+}
+
+export function useSourceEvents(projectId: string | string[] | null) {
+  const qc = useQueryClient();
+  const ids = Array.isArray(projectId) ? projectId : projectId ? [projectId] : [];
+  const idsKey = ids.join('|');
   useEffect(() => {
-    if (!projectId) return;
-    const close = sse(
-      `/api/v1/sources/events?project_id=${encodeURIComponent(projectId)}`,
+    if (!ids.length) return;
+    const closers = ids.map((pid) => sse(
+      `/api/v1/sources/events?project_id=${encodeURIComponent(pid)}`,
       (msg) => {
         try {
           const evt = JSON.parse(msg.data) as SourceEvent;
           if (evt.type === 'heartbeat') return;
-          qc.invalidateQueries({ queryKey: ['sources', projectId] });
+          qc.invalidateQueries({ queryKey: ['sources', pid] });
         } catch { /* ignore malformed events */ }
       },
-    );
-    return close;
-  }, [projectId, qc]);
+    ));
+    return () => closers.forEach((close) => close());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey, qc]);
 }
 
 export function useDownloadSource() {

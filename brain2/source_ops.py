@@ -118,17 +118,45 @@ def set_source_status(store, *, tenant_id: str, source_id: str, status: str,
 def make_sources_list(store):
     def handler(ctx, params):
         pid = _project_id(ctx, params)
-        sql = ("SELECT * FROM sources WHERE tenant_id=? AND project_id=? "
-               "AND status != 'deleted'")
+        sql = (
+            "SELECT s.*, GROUP_CONCAT(st.tag) AS tags_csv "
+            "FROM sources s "
+            "LEFT JOIN source_tags st "
+            "ON st.source_id = s.source_id AND st.tenant_id = s.tenant_id "
+            "WHERE s.tenant_id=? AND s.project_id=? "
+            "AND s.status != 'deleted'"
+        )
         args = [ctx.tenant_id, pid]
-        if "status" in params:
-            sql += " AND status=?"; args.append(params["status"])
+        status = params.get("status")
+        if status:
+            if isinstance(status, (list, tuple)):
+                placeholders = ",".join("?" for _ in status)
+                sql += f" AND s.status IN ({placeholders})"
+                args.extend(status)
+            else:
+                sql += " AND s.status=?"; args.append(status)
         if "folder_id" in params:
-            sql += " AND folder_id=?"; args.append(params["folder_id"])
-        sql += " ORDER BY created_at DESC LIMIT ?"
+            sql += " AND s.folder_id=?"; args.append(params["folder_id"])
+        if params.get("tag"):
+            sql += (
+                " AND s.source_id IN ("
+                "SELECT source_id FROM source_tags "
+                "WHERE tenant_id=? AND tag=?"
+                ")"
+            )
+            args.extend([ctx.tenant_id, params["tag"]])
+        sql += " GROUP BY s.source_id ORDER BY s.created_at DESC LIMIT ?"
         args.append(int(params.get("limit", 100)))
         rows = store._conn.execute(sql, tuple(args)).fetchall()
-        return {"sources": [_row_to_dict(r) for r in rows]}
+        sources = []
+        for row in rows:
+            item = _row_to_dict(row)
+            item["tags"] = [
+                tag for tag in (item.pop("tags_csv", "") or "").split(",")
+                if tag
+            ]
+            sources.append(item)
+        return {"sources": sources}
     return handler
 
 
@@ -308,6 +336,81 @@ def make_sources_tags_list(store):
     return handler
 
 
+def make_sources_tags_rename(store):
+    def handler(ctx, params):
+        pid = _project_id(ctx, params)
+        old_tag = params["old_tag"]
+        new_tag = params["new_tag"]
+        if not old_tag or not new_tag:
+            raise ValueError("old_tag and new_tag are required")
+        if old_tag == new_tag:
+            return {"renamed": 0}
+
+        with store.transaction() as cx:
+            count = cx.execute(
+                "SELECT COUNT(*) FROM source_tags t "
+                "JOIN sources s "
+                "ON s.source_id = t.source_id AND s.tenant_id = t.tenant_id "
+                "WHERE t.tenant_id=? AND s.project_id=? AND t.tag=?",
+                (ctx.tenant_id, pid, old_tag),
+            ).fetchone()[0]
+            if not count:
+                return {"renamed": 0}
+            cx.execute(
+                "INSERT OR IGNORE INTO source_tags(tenant_id, source_id, tag, created_at) "
+                "SELECT t.tenant_id, t.source_id, ?, ? "
+                "FROM source_tags t "
+                "JOIN sources s "
+                "ON s.source_id = t.source_id AND s.tenant_id = t.tenant_id "
+                "WHERE t.tenant_id=? AND s.project_id=? AND t.tag=?",
+                (new_tag, _now(), ctx.tenant_id, pid, old_tag),
+            )
+            cx.execute(
+                "DELETE FROM source_tags "
+                "WHERE tenant_id=? AND tag=? AND source_id IN ("
+                "SELECT source_id FROM sources WHERE tenant_id=? AND project_id=?"
+                ")",
+                (ctx.tenant_id, old_tag, ctx.tenant_id, pid),
+            )
+        return {"renamed": count}
+    return handler
+
+
+def make_sources_tags_delete(store):
+    def handler(ctx, params):
+        pid = _project_id(ctx, params)
+        tag = params["tag"]
+        if not tag:
+            raise ValueError("tag is required")
+        with store.transaction() as cx:
+            cx.execute(
+                "DELETE FROM source_tags "
+                "WHERE tenant_id=? AND tag=? AND source_id IN ("
+                "SELECT source_id FROM sources WHERE tenant_id=? AND project_id=?"
+                ")",
+                (ctx.tenant_id, tag, ctx.tenant_id, pid),
+            )
+            count = cx.execute("SELECT changes()").fetchone()[0]
+        return {"deleted": count}
+    return handler
+
+
+def make_sources_tags_counts(store):
+    def handler(ctx, params):
+        pid = _project_id(ctx, params)
+        rows = store._conn.execute(
+            "SELECT st.tag, COUNT(*) AS count "
+            "FROM source_tags st "
+            "JOIN sources s "
+            "ON s.source_id = st.source_id AND s.tenant_id = st.tenant_id "
+            "WHERE st.tenant_id=? AND s.project_id=? AND s.status != 'deleted' "
+            "GROUP BY st.tag ORDER BY st.tag",
+            (ctx.tenant_id, pid),
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+    return handler
+
+
 def make_sources_untag(store):
     def handler(ctx, params):
         if _source_row(store, ctx, params, "source_id") is None:
@@ -364,6 +467,7 @@ def register_source_ops(ops, store, blob_store):
                  params=[{"name": "project_id", "type": "str", "required": True},
                          {"name": "status", "type": "str", "required": False},
                          {"name": "folder_id", "type": "str", "required": False},
+                         {"name": "tag", "type": "str", "required": False},
                          {"name": "limit", "type": "int", "required": False}])
     ops.register("sources:get", action="read_wiki",
                  handler=make_sources_get(store),
@@ -419,6 +523,21 @@ def register_source_ops(ops, store, blob_store):
     ops.register("sources:tags:list", action="read_wiki",
                  handler=make_sources_tags_list(store),
                  summary="List distinct tags used in a project",
+                 params=[{"name": "project_id", "type": "str", "required": True}])
+    ops.register("sources:tags:rename", action="ingest",
+                 handler=make_sources_tags_rename(store),
+                 summary="Rename or merge a tag across sources in a project",
+                 params=[{"name": "project_id", "type": "str", "required": True},
+                         {"name": "old_tag", "type": "str", "required": True},
+                         {"name": "new_tag", "type": "str", "required": True}])
+    ops.register("sources:tags:delete", action="ingest",
+                 handler=make_sources_tags_delete(store),
+                 summary="Delete a tag from sources in a project",
+                 params=[{"name": "project_id", "type": "str", "required": True},
+                         {"name": "tag", "type": "str", "required": True}])
+    ops.register("sources:tags:counts", action="read_wiki",
+                 handler=make_sources_tags_counts(store),
+                 summary="Count source usage for each tag in a project",
                  params=[{"name": "project_id", "type": "str", "required": True}])
     ops.register("sources:untag", action="ingest",
                  handler=make_sources_untag(store),

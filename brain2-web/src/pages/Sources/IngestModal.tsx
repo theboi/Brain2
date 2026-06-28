@@ -5,7 +5,7 @@
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '@/components/ui/Modal';
 import { useProjects, useUserDirectory } from '@/hooks/useWorkspaces';
 import { useProjectTags } from '@/hooks/useSources';
@@ -14,6 +14,7 @@ import { useWorkspaceMembers } from '@/hooks/members';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
+import { ManageTagsOverlay } from '@/components/overlays/ManageTagsOverlay';
 export interface DroppedFile { name: string; type: string; size: string; project: string; tags?: string[]; collision?: boolean; mode: 'wiki' | 'dynamic' | 'static'; }
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useIngestUrl, uploadFileWithProgress } from '@/hooks/useIngest';
@@ -497,6 +498,14 @@ export function IngestModal({ open, onClose, files = [] }: {
   const [rows, setRows] = useState<Row[]>(seedRows);
   const [sel, setSel] = useState<Set<string>>(() => new Set());
   const [draft, setDraft] = useState('');
+  const wikiModeSelected = rows.some((r) => r.mode === 'wiki');
+  const { data: ollamaRuntime } = useQuery({
+    queryKey: ['ollama-runtime'],
+    queryFn: () => ops<{ available?: boolean; ollama_ok?: boolean; models?: string[] }>('agents:local:runtime', {}),
+    staleTime: 30_000,
+    enabled: wikiModeSelected,
+  });
+  const ollamaWarning = wikiModeSelected && ollamaRuntime && !(ollamaRuntime.available ?? ollamaRuntime.ollama_ok);
 
   useEffect(() => {
     if (vaultOptions.length > 0 && (!selectedVaultName || !vaultOptions.includes(selectedVaultName))) {
@@ -739,13 +748,18 @@ export function IngestModal({ open, onClose, files = [] }: {
           <button onClick={() => setUploadErrors([])} style={{ marginTop: 8, border: 'none', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontSize: 12, fontFamily: 'var(--ui-font)', padding: 0 }}>Dismiss</button>
         </div>
       )}
-      {manageTagsOpen && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 400, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 14, padding: 32, width: 400, maxWidth: 'calc(100vw - 32px)', textAlign: 'center', border: '1px solid var(--border)', boxShadow: '0 18px 50px rgba(0,0,0,0.45)' }}>
-            <p style={{ color: 'var(--fg)', fontSize: 14, margin: '0 0 16px' }}>Tag management coming soon (Plan B).</p>
-            <button onClick={() => setManageTagsOpen(false)} style={ingBtnPrimary()}>Close</button>
-          </div>
+      {ollamaWarning && (
+        <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 14px', borderRadius: 10, background: 'var(--warning-soft)', border: '1px solid var(--border)', color: 'var(--warning)', fontSize: 12.5, lineHeight: 1.45 }}>
+          <Icon name="alert" size={14} color="var(--warning)" style={{ marginTop: 1, flexShrink: 0 }} />
+          <span>Ollama is not running. Wiki mode requires a local LLM. Start Ollama with <code style={{ fontFamily: 'var(--mono-font)', color: 'var(--fg)' }}>ollama serve</code> before ingesting.</span>
         </div>
+      )}
+      {manageTagsOpen && (
+        <ManageTagsOverlay
+          open={manageTagsOpen}
+          onClose={() => setManageTagsOpen(false)}
+          projectId={vaultProjectId}
+        />
       )}
     </Modal>
   );

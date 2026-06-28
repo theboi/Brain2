@@ -40,17 +40,24 @@ function toDisplaySource(r: SourceRow): Source {
   const ext = r.filename?.split('.').pop()?.toLowerCase() ?? '';
   const detectedType = typeMap[ext] ?? (r.kind === 'url' ? 'url' : 'pdf');
   const statusMap: Record<string, Source['status']> = {
-    pending: 'pending', extracting: 'running', extracted: 'done', failed: 'failed',
+    pending: 'pending',
+    queued: 'pending',
+    extracting: 'running',
+    processing: 'running',
+    extracted: 'done',
+    done: 'done',
+    failed: 'failed',
+    deleted: 'failed',
   };
   return {
     id: r.source_id,
     project: r.project_id,
-    name: r.filename ?? r.source_id,
+    name: r.filename ?? r.url ?? r.source_id,
     type: detectedType,
     size: r.size_bytes ? `${(r.size_bytes / 1024 / 1024).toFixed(1)} MB` : '—',
     status: statusMap[r.status] ?? 'pending',
     topic: r.topic,
-    tags: [],
+    tags: r.tags ?? [],
     provenance: r.kind === 'url' ? 'URL capture' : 'File upload',
     uploader: '',
     created: new Date(r.created_at).toLocaleDateString(),
@@ -60,18 +67,23 @@ function toDisplaySource(r: SourceRow): Source {
     tokens: 0,
     extracted: '',
     error: r.extraction_error ?? undefined,
-    url: r.kind === 'url' ? (r.filename ?? undefined) : undefined,
+    url: r.kind === 'url' ? (r.url ?? r.filename ?? undefined) : undefined,
   };
 }
 
 // ── Filter chip defs (Tags / Status) — shared by desktop sidebar + mobile list ─
-function sourceChipDefs(f: SourceFilter, setF: (f: SourceFilter) => void, projectNames: string[] = []): ChipDef[] {
+function sourceChipDefs(
+  f: SourceFilter,
+  setF: (f: SourceFilter) => void,
+  projectNames: string[] = [],
+  tagCounts: { label: string; count: number }[] = SOURCE_TREE.tags,
+): ChipDef[] {
   const t = SOURCE_TREE;
   const projOpts = [{ value: 'all', label: 'All projects', icon: 'layers' as const }, ...projectNames.map((p) => ({ value: p, label: p, icon: 'folder' as const }))];
-  const tagOpts = [{ value: 'all', label: 'All tags', icon: 'tag' as const }, ...t.tags.map((x) => ({ value: x.label, label: x.label, icon: 'tag' as const, count: x.count }))];
+  const tagOpts = [{ value: 'all', label: 'All tags', icon: 'tag' as const }, ...tagCounts.map((x) => ({ value: x.label, label: x.label, icon: 'tag' as const, count: x.count }))];
   const statOpts = [{ value: 'all', label: 'All status', icon: 'layers' as const }, ...t.status.map((x) => ({ value: x.id, label: x.label, icon: x.icon, count: x.count, tone: x.tone }))];
   const proj = projectNames.find((p) => p === f.project);
-  const tag = t.tags.find((x) => x.label === f.tag);
+  const tag = tagCounts.find((x) => x.label === f.tag);
   const st = t.status.find((x) => x.id === f.status);
   return [
     { key: 'project', icon: 'folder', label: proj ?? 'All projects', active: f.project !== 'all', title: 'Project', options: projOpts, value: f.project, onPick: (v) => setF({ ...f, project: v }) },
@@ -86,7 +98,12 @@ function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, vaultI
 }) {
   const [q, setQ] = useState('');
   const [openF, setOpenF] = useState<Record<string, boolean>>({ default: true });
-  const defs = sourceChipDefs(f, setF, projectNames).filter((d) => d.key !== 'project'); // project = the folder tree
+  const tagCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    items.forEach((s) => s.tags.forEach((tag) => counts.set(tag, (counts.get(tag) ?? 0) + 1)));
+    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([label, count]) => ({ label, count }));
+  }, [items]);
+  const defs = sourceChipDefs(f, setF, projectNames, tagCounts).filter((d) => d.key !== 'project'); // project = the folder tree
   const filtered = items.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
   // One folder per vault in the workspace — including vaults with no sources yet.
   const projectLabels = vaultIds;
@@ -107,6 +124,7 @@ function SourcesSidebar({ f, setF, selectedId, onSelect, onIngest, items, vaultI
               {rows.map((s) => {
                 const chip = STATUS_CHIP[s.status];
                 return <NestRow key={s.id} icon={TYPE_ICON[s.type] || 'file'} label={s.name} active={s.id === selectedId} onClick={() => onSelect(s.id)}
+                  badge={s.tags[0] ? `#${s.tags[0]}` : null}
                   rightIcon={s.status !== 'done' ? chip.icon : null} rightTone={s.status !== 'done' ? chip.tone : undefined} />;
               })}
               {!rows.length && <div style={{ padding: '4px 10px 8px 27px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No matching sources</div>}
@@ -137,6 +155,13 @@ function SourceRow({ s, selected, onClick, mobile = false }: { s: Source; select
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, paddingLeft: 33, fontSize: 11, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)' }}>
         <span style={{ whiteSpace: 'nowrap' }}>{s.size.trim()} · {s.type}</span>
+        {s.tags.length > 0 && (
+          <span style={{ display: 'inline-flex', gap: 4, minWidth: 0, overflow: 'hidden' }}>
+            {s.tags.slice(0, 2).map((tag) => (
+              <span key={tag} style={{ color: 'var(--accent)', background: 'var(--accent-soft)', borderRadius: 5, padding: '1px 5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 88 }}>#{tag}</span>
+            ))}
+          </span>
+        )}
         {s.topic && <span style={{ marginLeft: 'auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           <Icon name="arrowRight" size={10} color="var(--fg-faint)" /> <span style={{ color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.topic}</span></span>}
       </div>
@@ -466,8 +491,15 @@ export function SourcesPage() {
 
   // Sources for every vault in the workspace — one folder per vault.
   const projectIds = useMemo(() => projects.map((p) => p.project_id), [projects]);
+  const statusFilter = f.status === 'running'
+    ? ['extracting', 'processing']
+    : f.status === 'done'
+      ? ['extracted', 'done']
+      : f.status !== 'all'
+        ? f.status
+        : undefined;
   const sourceResults = useWorkspaceSources(projectIds, {
-    status: f.status !== 'all' ? f.status : undefined,
+    status: statusFilter,
     tag: f.tag !== 'all' ? f.tag : undefined,
   });
   const sourcesLoading = projectIds.length > 0 && sourceResults.some((r) => r.isLoading);
@@ -485,10 +517,8 @@ export function SourcesPage() {
     [allItems, f.project, nameById],
   );
 
-  // Keep status/source events fresh for the vault currently being previewed.
-  const selectedSource = items.find((s) => s.id === selectedId);
-  const activeProjectId = selectedSource?.project ?? projectId;
-  useSourceEvents(activeProjectId);
+  // Keep status/source events fresh for every vault shown in the workspace tree.
+  useSourceEvents(projectIds);
 
   useEffect(() => {
     if (!routeSourceId) return;
@@ -518,7 +548,12 @@ export function SourcesPage() {
   const selected = items.find((s) => s.id === selectedId) ?? (routeSourceId ? null : items[0] ?? null);
   // The selected source dictates which vault the preview pane reads/writes.
   const selectedProjectId = selected?.project ?? projectId;
-  const mobileChips = <FilterChips defs={sourceChipDefs(f, setF, projectNames)} />;
+  const liveTagCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    allItems.forEach((s) => s.tags.forEach((tag) => counts.set(tag, (counts.get(tag) ?? 0) + 1)));
+    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([label, count]) => ({ label, count }));
+  }, [allItems]);
+  const mobileChips = <FilterChips defs={sourceChipDefs(f, setF, projectNames, liveTagCounts)} />;
 
   function selectSource(id: string) {
     setSelectedId(id);

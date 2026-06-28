@@ -85,6 +85,13 @@ def _actor_for_mode(store, tenant_id: str, mode: str, payload: dict) -> str:
     return "wiki-agent"
 
 
+def _source_label(row, source_id: str) -> str:
+    label = (row["filename"] or row["url"] or source_id) if row else source_id
+    if len(label) > 60:
+        return label[:57] + "..."
+    return label
+
+
 def make_source_process_handler(store, gateway, blob_store):
     runners = build_runners(store, gateway)
 
@@ -128,13 +135,14 @@ def make_source_process_handler(store, gateway, blob_store):
             uploaded_by = payload.get("uploaded_by") or ""
             if uploaded_by:
                 try:
+                    label = _source_label(row, source_id)
                     create_notification(
                         store,
                         tenant_id,
                         uploaded_by,
                         type="source_done",
                         title="Source processed",
-                        body=f"Source '{source_id}' has been ingested ({mode}).",
+                        body=f"'{label}' has been ingested ({mode}).",
                         resource_id=source_id,
                         resource_type="source",
                     )
@@ -154,13 +162,14 @@ def make_source_process_handler(store, gateway, blob_store):
             uploaded_by = payload.get("uploaded_by") or ""
             if uploaded_by:
                 try:
+                    label = _source_label(row, source_id)
                     create_notification(
                         store,
                         tenant_id,
                         uploaded_by,
                         type="source_failed",
                         title="Source ingestion failed",
-                        body=f"Source '{source_id}' failed: {str(exc)[:200]}",
+                        body=f"'{label}' failed to ingest: {str(exc)[:120]}",
                         resource_id=source_id,
                         resource_type="source",
                     )
