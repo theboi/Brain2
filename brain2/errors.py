@@ -41,3 +41,6 @@ class AggregateOverUnboundedResult(Brain2Error):
 
 class SSRFBlocked(Brain2Error):
     """URL targets a private/link-local/loopback address — request refused (-> 400)."""
+
+class UnsafeVaultPath(Brain2Error):
+    """A caller-supplied vault-relative path escapes the vault root (-> 400)."""
