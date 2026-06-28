@@ -35,9 +35,9 @@ def run_static(store, gateway, req) -> str | None:
                        message=f"ingest(static): {req.raw_path.name}",
                        agent_id="ingest-static@1", source_file=str(req.raw_path))
 
-    index_file(store, req.project_id, root, dest)
+    index_file(store, req.tenant_id, req.project_id, root, dest)
     if sidecar_text:
-        index_file(store, req.project_id, root, sidecar_path)
+        index_file(store, req.tenant_id, req.project_id, root, sidecar_path)
     return sha
 
 

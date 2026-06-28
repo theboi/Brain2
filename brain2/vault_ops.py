@@ -27,7 +27,7 @@ def _page_rel(store, ctx, params) -> str | None:
         return params["path"]
     topic = params.get("topic")
     if topic:
-        page = store.get_vault_page_by_topic(project_id, topic)
+        page = store.get_vault_page_by_topic(ctx.tenant_id, project_id, topic)
         return page.path if page else None
     return None
 
@@ -46,9 +46,9 @@ def make_read_page(store):
         topic = params.get("topic")
         path = params.get("path")
         if path:
-            page = store.get_vault_page(project_id, path)
+            page = store.get_vault_page(ctx.tenant_id, project_id, path)
         elif topic:
-            page = store.get_vault_page_by_topic(project_id, topic)
+            page = store.get_vault_page_by_topic(ctx.tenant_id, project_id, topic)
         else:
             raise ValueError("must supply topic or path")
         if page is None:
@@ -67,10 +67,10 @@ def make_backlinks(store):
     def handler(ctx, params):
         project_id = params.get("project_id") or ctx.project_id
         topic = params["topic"]
-        links = store.get_backlinks(project_id, topic)
+        links = store.get_backlinks(ctx.tenant_id, project_id, topic)
         out = []
         for l in links:
-            src = store.get_vault_page(project_id, l.source_path)
+            src = store.get_vault_page(ctx.tenant_id, project_id, l.source_path)
             out.append({"source_path": l.source_path,
                         "topic": src.topic if src else None,
                         "tldr": src.tldr if src else None})
@@ -82,10 +82,10 @@ def make_neighbors(store):
     def handler(ctx, params):
         project_id = params.get("project_id") or ctx.project_id
         topic = params["topic"]
-        page = store.get_vault_page_by_topic(project_id, topic)
+        page = store.get_vault_page_by_topic(ctx.tenant_id, project_id, topic)
         if page is None:
             raise NotFound(f"topic {topic!r} not found")
-        links = store.get_outgoing_links(project_id, page.path)
+        links = store.get_outgoing_links(ctx.tenant_id, project_id, page.path)
         return {"neighbors": [{"topic": l.target_topic, "zone": l.target_zone}
                               for l in links]}
     return handler
@@ -94,14 +94,14 @@ def make_neighbors(store):
 def make_graph(store):
     def handler(ctx, params):
         project_id = params.get("project_id") or ctx.project_id
-        pages = [p for p in store.list_vault_pages(project_id)
+        pages = [p for p in store.list_vault_pages(ctx.tenant_id, project_id)
                  if p.zone in ("wiki", "static", "dynamic")]
         nodes = [{"topic": p.topic, "zone": p.zone, "tldr": p.tldr} for p in pages]
         edges = []
         for p in pages:
             if p.zone != "wiki":
                 continue
-            for l in store.get_outgoing_links(project_id, p.path):
+            for l in store.get_outgoing_links(ctx.tenant_id, project_id, p.path):
                 if l.target_zone is None:
                     continue
                 edges.append({"source": p.topic, "target": l.target_topic,
@@ -113,7 +113,7 @@ def make_graph(store):
 def make_orphans(store):
     def handler(ctx, params):
         project_id = params.get("project_id") or ctx.project_id
-        pages = store.list_orphan_pages(project_id)
+        pages = store.list_orphan_pages(ctx.tenant_id, project_id)
         return {"orphans": [{"topic": p.topic, "path": p.path, "tldr": p.tldr}
                             for p in pages]}
     return handler
@@ -122,7 +122,7 @@ def make_orphans(store):
 def make_unresolved(store):
     def handler(ctx, params):
         project_id = params.get("project_id") or ctx.project_id
-        links = store.list_unresolved_links(project_id)
+        links = store.list_unresolved_links(ctx.tenant_id, project_id)
         return {"unresolved": [{"source_path": l.source_path,
                                 "target_topic": l.target_topic}
                                for l in links]}
@@ -161,7 +161,7 @@ def make_revert(store):
             revert_sha = git_revert(store, root, sha,
                                     project_id=project_id, tenant_id=ctx.tenant_id,
                                     agent_id=f"user:{ctx.user_id}")
-            reindex_vault(store, project_id, root)
+            reindex_vault(store, ctx.tenant_id, project_id, root)
             return {"revert_sha": revert_sha}
 
         # Restore the page to its content as of the selected commit, then commit.
@@ -169,7 +169,7 @@ def make_revert(store):
         abs_path = resolve_vault_path(root, rel)
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         write_text_atomic(abs_path, content)
-        reindex_path(store, project_id, root, rel)
+        reindex_path(store, ctx.tenant_id, project_id, root, rel)
 
         batch = CommitBatch(root)
         batch.touched(abs_path)
@@ -188,7 +188,7 @@ def make_reindex(store):
     def handler(ctx, params):
         project_id = params.get("project_id") or ctx.project_id
         root = _vault_root(store, ctx, params)
-        count = reindex_vault(store, project_id, root)
+        count = reindex_vault(store, ctx.tenant_id, project_id, root)
         return {"indexed": count}
     return handler
 
@@ -214,7 +214,7 @@ def make_search(store):
         query = (params.get("query") or "").strip()
         if not query:
             return {"results": []}
-        results = store.search_vault_pages(project_id, query,
+        results = store.search_vault_pages(ctx.tenant_id, project_id, query,
                                            limit=int(params.get("limit", 20)))
         return {"results": results}
     return handler
@@ -229,7 +229,7 @@ def make_write_page(store):
         expect_hash = params.get("expect_content_hash")
 
         root = _vault_root(store, ctx, params)
-        existing = store.get_vault_page_by_topic(project_id, topic)
+        existing = store.get_vault_page_by_topic(ctx.tenant_id, project_id, topic)
         if existing:
             rel = params.get("path") or existing.path
             if expect_hash is not None:
@@ -243,7 +243,7 @@ def make_write_page(store):
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         write_text_atomic(abs_path, content)
 
-        reindex_path(store, project_id, root, rel)
+        reindex_path(store, ctx.tenant_id, project_id, root, rel)
 
         batch = CommitBatch(root)
         batch.touched(abs_path)
@@ -255,7 +255,7 @@ def make_write_page(store):
             source_file=None,
         )
 
-        page = store.get_vault_page_by_topic(project_id, topic)
+        page = store.get_vault_page_by_topic(ctx.tenant_id, project_id, topic)
         new_hash = hashlib.sha256(content.encode()).hexdigest()
         return {
             "page": {"path": page.path, "topic": page.topic,

@@ -97,7 +97,7 @@ class VaultWatcher:
                 if proj is None:
                     continue
                 try:
-                    index_file(self.store, proj.id, Path(proj.vault_path), p)
+                    index_file(self.store, proj.tenant_id, proj.id, Path(proj.vault_path), p)
                 except Exception:
                     logger.exception("index_file failed for %s", p)
 

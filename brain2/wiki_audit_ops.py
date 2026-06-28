@@ -159,7 +159,7 @@ def make_accept_suggestion(store, gateway):
         abs_path = root / rel
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         write_text_atomic(abs_path, content)
-        reindex_path(store, project_id, root, rel)
+        reindex_path(store, ctx.tenant_id, project_id, root, rel)
 
         batch = CommitBatch(root)
         batch.touched(abs_path)

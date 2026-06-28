@@ -65,7 +65,7 @@ def test_e2e_upload_wiki_then_read_page(e2e):
                data={"project_id": "p1", "type": "wiki", "filename": "paper.md"},
                files=files, headers=_h(tok))
     assert r.status_code == 200, r.text
-    assert _wait(lambda: s.get_vault_page_by_topic("p1", "attention") is not None)
+    assert _wait(lambda: s.get_vault_page_by_topic("t1", "p1", "attention") is not None)
     r = c.post("/api/v1/ops/vault:read_page",
                json={"project_id": "p1", "topic": "attention"}, headers=_h(tok))
     assert "[[softmax]]" in r.json()["content"]
@@ -77,7 +77,7 @@ def test_e2e_history_lists_ingest_commit(e2e):
     c.post("/api/v1/raw/upload",
            data={"project_id": "p1", "type": "wiki", "filename": "paper.md"},
            files=files, headers=_h(tok))
-    _wait(lambda: s.get_vault_page_by_topic("p1", "attention") is not None)
+    _wait(lambda: s.get_vault_page_by_topic("t1", "p1", "attention") is not None)
     r = c.post("/api/v1/ops/vault:history", json={"project_id": "p1"}, headers=_h(tok))
     msgs = [c["message"] for c in r.json()["commits"]]
     assert any("ingest(wiki)" in m for m in msgs)

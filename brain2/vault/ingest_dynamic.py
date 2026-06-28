@@ -33,7 +33,7 @@ def run_dynamic(store, gateway, req) -> str | None:
                        message=f"ingest(dynamic): {name}",
                        agent_id="ingest-dynamic@1", source_file=str(req.raw_path))
 
-    index_file(store, req.project_id, root, companion)
+    index_file(store, req.tenant_id, req.project_id, root, companion)
     return sha
 
 

@@ -74,8 +74,8 @@ def migrate(store, *, vault_root: Path, project_ids: list[str] | None = None) ->
                               companion)
 
         store.set_project_vault_path(tenant_id, pid, str(proj_root))
-        reindex_vault(store, pid, proj_root)
-        write_text_atomic(proj_root / "index.md", generate_index_md(store, pid))
+        reindex_vault(store, tenant_id, pid, proj_root)
+        write_text_atomic(proj_root / "index.md", generate_index_md(store, tenant_id, pid))
 
         git_init_vault(proj_root, project_name=project_name,
                        tenant_id=tenant_id, project_id=pid)

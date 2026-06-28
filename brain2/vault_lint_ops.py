@@ -18,8 +18,8 @@ def _vault_root(store, ctx, params) -> Path:
 def make_lint(store):
     def handler(ctx, params):
         project_id = params.get("project_id") or ctx.project_id
-        orphans = store.list_orphan_pages(project_id)
-        unresolved = store.list_unresolved_links(project_id)
+        orphans = store.list_orphan_pages(ctx.tenant_id, project_id)
+        unresolved = store.list_unresolved_links(ctx.tenant_id, project_id)
         return {
             "orphans": [{"topic": p.topic, "path": p.path, "tldr": p.tldr}
                         for p in orphans],
@@ -49,7 +49,7 @@ def make_lint_apply(store):
                            message=message, agent_id=f"user:{ctx.user_id}",
                            source_file=None)
         for edit in edits:
-            index_file(store, project_id, root, root / edit["path"])
+            index_file(store, ctx.tenant_id, project_id, root, root / edit["path"])
         return {"sha": sha, "applied": len(edits)}
     return handler
 

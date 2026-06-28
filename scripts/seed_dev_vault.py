@@ -1514,7 +1514,7 @@ def _seed_vault(actx, vault_def: dict, workspace_ids: dict[str, str]) -> None:
     _ensure_project(s, vault_def["id"], vault_def["name"], wid, vault_path,
                     vault_def["mode"])
     _write_pages(vault_path, vault_def["pages"])
-    reindex_vault(s, vault_def["id"], vault_path)
+    reindex_vault(s, TENANT_ID, vault_def["id"], vault_path)
     _seed_sources(actx, vault_def["id"], vault_def["sources"])
 
 

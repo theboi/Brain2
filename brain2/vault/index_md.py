@@ -8,8 +8,8 @@ _WIKI_CLASSES = [
 ]
 
 
-def generate_index_md(store, project_id: str) -> str:
-    pages = store.list_vault_pages(project_id)
+def generate_index_md(store, tenant_id: str, project_id: str) -> str:
+    pages = store.list_vault_pages(tenant_id, project_id)
     wiki = [p for p in pages if p.zone == "wiki"]
     static = [p for p in pages if p.zone == "static"]
     dynamic = [p for p in pages if p.zone == "dynamic"]

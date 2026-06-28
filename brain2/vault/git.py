@@ -101,7 +101,7 @@ def commit_batch(store, batch: CommitBatch, *, project_id: str, tenant_id: str,
 
     from brain2.models import VaultCommit
     store.record_vault_commit(VaultCommit(
-        project_id=project_id, sha=sha, kind=kind, message=message,
+        tenant_id=tenant_id, project_id=project_id, sha=sha, kind=kind, message=message,
         source_file=source_file, agent_id=agent_id,
         created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     ))
@@ -170,7 +170,7 @@ def git_revert(store, root: Path, sha: str, *, project_id: str, tenant_id: str,
     revert_sha = _rev_parse_head(root)
     from brain2.models import VaultCommit
     store.record_vault_commit(VaultCommit(
-        project_id=project_id, sha=revert_sha, kind="human",
+        tenant_id=tenant_id, project_id=project_id, sha=revert_sha, kind="human",
         message=f"revert: {short_sha}", source_file=None, agent_id=agent_id,
         created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     ))

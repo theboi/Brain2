@@ -34,14 +34,14 @@ def _topic_from_path(path: Path) -> str:
     return canonical_topic(path.stem)
 
 
-def index_file(store, project_id: str, vault_root: Path, abs_path: Path) -> None:
+def index_file(store, tenant_id: str, project_id: str, vault_root: Path, abs_path: Path) -> None:
     """(Re)index a single file. If file is missing, drop its rows."""
     vault_root = Path(vault_root); abs_path = Path(abs_path)
     rel = str(abs_path.relative_to(vault_root))
 
     if not abs_path.exists():
-        store.delete_vault_page(project_id, rel)
-        store.replace_links_for_source(project_id, rel, [])
+        store.delete_vault_page(tenant_id, project_id, rel)
+        store.replace_links_for_source(tenant_id, project_id, rel, [])
         return
 
     zone = derive_zone(rel)
@@ -63,7 +63,7 @@ def index_file(store, project_id: str, vault_root: Path, abs_path: Path) -> None
         tldr = None
 
     page = VaultPage(
-        project_id=project_id, path=rel, zone=zone,
+        tenant_id=tenant_id, project_id=project_id, path=rel, zone=zone,
         topic=_topic_from_path(abs_path),
         tldr=tldr, content_hash=digest,
         mtime=int(abs_path.stat().st_mtime),
@@ -79,35 +79,35 @@ def index_file(store, project_id: str, vault_root: Path, abs_path: Path) -> None
             if zone_hint:
                 target_zone = zone_hint
             else:
-                target_zone = _resolve_target_zone(store, project_id, pl.target)
+                target_zone = _resolve_target_zone(store, tenant_id, project_id, pl.target)
             links.append(VaultLink(
-                project_id=project_id, source_path=rel,
+                tenant_id=tenant_id, project_id=project_id, source_path=rel,
                 target_topic=pl.target, target_zone=target_zone,
             ))
-        store.replace_links_for_source(project_id, rel, links)
+        store.replace_links_for_source(tenant_id, project_id, rel, links)
 
 
-def _resolve_target_zone(store, project_id: str, topic: str) -> str | None:
-    page = store.get_vault_page_by_topic(project_id, topic)
+def _resolve_target_zone(store, tenant_id: str, project_id: str, topic: str) -> str | None:
+    page = store.get_vault_page_by_topic(tenant_id, project_id, topic)
     if page is not None:
         return page.zone
-    for p in store.list_vault_pages(project_id, zone="static"):
+    for p in store.list_vault_pages(tenant_id, project_id, zone="static"):
         if p.topic == topic:
             return "static"
-    for p in store.list_vault_pages(project_id, zone="dynamic"):
+    for p in store.list_vault_pages(tenant_id, project_id, zone="dynamic"):
         if p.topic == topic:
             return "dynamic"
     return None
 
 
-def reindex_vault(store, project_id: str, vault_root: Path) -> int:
+def reindex_vault(store, tenant_id: str, project_id: str, vault_root: Path) -> int:
     """Full rebuild. Returns the number of files indexed."""
     vault_root = Path(vault_root)
     count = 0
     for abs_path in _walk_files(vault_root):
-        index_file(store, project_id, vault_root, abs_path)
+        index_file(store, tenant_id, project_id, vault_root, abs_path)
         count += 1
-    _reresolve_links(store, project_id)
+    _reresolve_links(store, tenant_id, project_id)
     return count
 
 
@@ -124,31 +124,31 @@ def _walk_files(vault_root: Path):
         yield p
 
 
-def reindex_path(store, project_id: str, vault_root: Path, rel_path: str) -> None:
+def reindex_path(store, tenant_id: str, project_id: str, vault_root: Path, rel_path: str) -> None:
     """(Re)index one file by relative path. Missing file = drop its rows.
 
     Used by vault:write_page and the file watcher for single-file events.
     """
     vault_root = Path(vault_root)
     abs_path = vault_root / rel_path
-    index_file(store, project_id, vault_root, abs_path)
+    index_file(store, tenant_id, project_id, vault_root, abs_path)
     # After any wikilink change, re-resolve targets that may now point to
     # (or away from) this page.
-    _reresolve_links(store, project_id)
+    _reresolve_links(store, tenant_id, project_id)
 
 
-def _reresolve_links(store, project_id: str) -> None:
-    unresolved = store.list_unresolved_links(project_id)
+def _reresolve_links(store, tenant_id: str, project_id: str) -> None:
+    unresolved = store.list_unresolved_links(tenant_id, project_id)
     by_source: dict[str, list] = {}
     for l in unresolved:
         by_source.setdefault(l.source_path, []).append(l)
     for source_path, links in by_source.items():
-        existing = store.get_outgoing_links(project_id, source_path)
+        existing = store.get_outgoing_links(tenant_id, project_id, source_path)
         merged = []
         for l in existing:
             if l.target_zone is None:
-                l = VaultLink(project_id=project_id, source_path=source_path,
+                l = VaultLink(tenant_id=tenant_id, project_id=project_id, source_path=source_path,
                               target_topic=l.target_topic,
-                              target_zone=_resolve_target_zone(store, project_id, l.target_topic))
+                              target_zone=_resolve_target_zone(store, tenant_id, project_id, l.target_topic))
             merged.append(l)
-        store.replace_links_for_source(project_id, source_path, merged)
+        store.replace_links_for_source(tenant_id, project_id, source_path, merged)

@@ -63,8 +63,8 @@ def run_wiki(store, gateway, req) -> str | None:
 
     # Index pages into cache BEFORE generating index.md
     for p in touched_paths:
-        index_file(store, req.project_id, root, p)
-    new_index = generate_index_md(store, req.project_id)
+        index_file(store, req.tenant_id, req.project_id, root, p)
+    new_index = generate_index_md(store, req.tenant_id, req.project_id)
     write_text_atomic(root / "index.md", new_index)
     batch.touched(root / "index.md")
 
@@ -77,8 +77,8 @@ def run_wiki(store, gateway, req) -> str | None:
                        message=f"ingest(wiki): {raw_path.name}",
                        agent_id="ingest-wiki@1", source_file=str(raw_path))
 
-    index_file(store, req.project_id, root, root / "index.md")
-    index_file(store, req.project_id, root, root / "log.md")
+    index_file(store, req.tenant_id, req.project_id, root, root / "index.md")
+    index_file(store, req.tenant_id, req.project_id, root, root / "log.md")
     return sha
 
 
