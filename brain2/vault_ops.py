@@ -6,6 +6,7 @@ from pathlib import Path
 from brain2.errors import Conflict, NotFound
 from brain2.vault.fs import write_text_atomic
 from brain2.vault.indexer import reindex_vault, reindex_path
+from brain2.vault.safe_path import resolve_vault_path
 from brain2.vault.git import (
     git_log, git_show, git_revert, git_file_at, commit_batch, CommitBatch,
 )
@@ -165,7 +166,7 @@ def make_revert(store):
 
         # Restore the page to its content as of the selected commit, then commit.
         content = git_file_at(root, sha, rel)
-        abs_path = root / rel
+        abs_path = resolve_vault_path(root, rel)
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         write_text_atomic(abs_path, content)
         reindex_path(store, project_id, root, rel)
@@ -238,7 +239,7 @@ def make_write_page(store):
         else:
             rel = params.get("path") or _unique_path(root, _slugify_topic(topic))
 
-        abs_path = root / rel
+        abs_path = resolve_vault_path(root, rel)
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         write_text_atomic(abs_path, content)
 
