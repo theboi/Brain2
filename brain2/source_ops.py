@@ -44,6 +44,15 @@ def _source_row(store, ctx, params, columns: str = "*"):
     ).fetchone()
 
 
+def _source_tags(store, tenant_id: str, source_id: str) -> list[str]:
+    rows = store._conn.execute(
+        "SELECT tag FROM source_tags WHERE tenant_id=? AND source_id=? "
+        "ORDER BY tag COLLATE NOCASE",
+        (tenant_id, source_id),
+    ).fetchall()
+    return [row["tag"] for row in rows]
+
+
 def create_source_row(store, *, tenant_id: str, project_id: str, kind: str,
                       filename: str | None = None, mime: str | None = None,
                       size_bytes: int = 0, blob_hash: str | None = None,
@@ -165,7 +174,9 @@ def make_sources_get(store):
         row = _source_row(store, ctx, params)
         if row is None:
             raise NotFound(f"source {params['source_id']!r} not found")
-        return _row_to_dict(row)
+        item = _row_to_dict(row)
+        item["tags"] = _source_tags(store, ctx.tenant_id, params["source_id"])
+        return item
     return handler
 
 

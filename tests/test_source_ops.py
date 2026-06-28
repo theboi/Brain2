@@ -78,6 +78,30 @@ def test_sources_list_returns_tags_and_filters_by_tag(store):
     assert [source["source_id"] for source in filtered["sources"]] == [first_id]
 
 
+def test_sources_get_returns_tags(store):
+    reg = _seed_ops(store)
+    source_id = create_source_row(
+        store, tenant_id="t1", project_id="p1", kind="text", filename="first.md"
+    )
+    dispatch(
+        store,
+        reg,
+        _ctx(),
+        "sources:tag",
+        {"project_id": "p1", "source_id": source_id, "tag": "alpha"},
+    )
+
+    out = dispatch(
+        store,
+        reg,
+        _ctx(),
+        "sources:get",
+        {"project_id": "p1", "source_id": source_id},
+    )
+
+    assert out["tags"] == ["alpha"]
+
+
 def test_sources_tag_management_counts_rename_merge_and_delete(store):
     reg = _seed_ops(store)
     first_id = create_source_row(store, tenant_id="t1", project_id="p1", kind="text")

@@ -44,7 +44,7 @@ export interface SourceRow {
   topic: string | null;
   folder_id: string | null;
   status: 'pending' | 'queued' | 'extracting' | 'processing' | 'extracted' | 'done' | 'failed' | 'deleted';
-  tags?: string[];
+  tags: string[];
   extraction_error: string | null;
   created_at: string;
   updated_at: string;
