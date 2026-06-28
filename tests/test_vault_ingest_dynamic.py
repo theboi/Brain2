@@ -45,7 +45,7 @@ def test_dynamic_runner_indexes_destination(tmp_path):
     raw = root / "raw" / "dynamic" / "prod-db.yaml"
     write_text_atomic(raw, _yaml())
     run_dynamic(s, None, IngestRequest("p1", "t1", "dynamic", raw, "u1"))
-    p = s.get_vault_page("p1", "dynamic/connectors/prod-db.md")
+    p = s.get_vault_page("t1", "p1", "dynamic/connectors/prod-db.md")
     assert p is not None
     assert p.source_type == "dynamic"
     assert p.topic == "prod-db"

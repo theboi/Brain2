@@ -23,8 +23,8 @@ def lint_client(tmp_path):
     s.set_project_vault_path("t1", "p1", str(root))
     write_text_atomic(root / "wiki" / "concepts" / "orphan.md", "alone")
     write_text_atomic(root / "wiki" / "concepts" / "linker.md", "see [[ghost]]")
-    index_file(s, "p1", root, root / "wiki" / "concepts" / "orphan.md")
-    index_file(s, "p1", root, root / "wiki" / "concepts" / "linker.md")
+    index_file(s, "t1", "p1", root, root / "wiki" / "concepts" / "orphan.md")
+    index_file(s, "t1", "p1", root, root / "wiki" / "concepts" / "linker.md")
     actx = build_app_context(store=s, gateway=object())
     actx.passwords.set_password("t1", "u1", "pw")
     c = TestClient(create_app(actx))
@@ -62,7 +62,7 @@ def test_vault_lint_apply_commits_as_lint(lint_client):
     after = subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=str(root),
                             capture_output=True, text=True, check=True).stdout.strip()
     assert int(after) - int(before) == 1
-    rows = s.list_vault_commits("p1")
+    rows = s.list_vault_commits("t1", "p1")
     assert any(row.kind == "lint" for row in rows)
 
 

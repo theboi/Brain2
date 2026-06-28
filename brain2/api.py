@@ -385,7 +385,7 @@ def create_app(actx: AppContext) -> FastAPI:
         _authz(actx.store, ctx, "read_wiki", project_id)
 
         from brain2.vault.parser import canonical_topic as _ct
-        vault_page = actx.store.get_vault_page_by_topic(project_id, _ct(topic))
+        vault_page = actx.store.get_vault_page_by_topic(ctx.tenant_id, project_id, _ct(topic))
         proj = actx.store.get_project(ctx.tenant_id, project_id)
         page_content = ""
         if vault_page is not None and proj and proj.vault_path:
@@ -512,7 +512,7 @@ def create_app(actx: AppContext) -> FastAPI:
             return StreamingResponse(_replay(), media_type="text/event-stream")
 
         from brain2.vault.parser import canonical_topic as _ct2
-        _vault_page = actx.store.get_vault_page_by_topic(row["project_id"], _ct2(row["topic"]))
+        _vault_page = actx.store.get_vault_page_by_topic(ctx.tenant_id, row["project_id"], _ct2(row["topic"]))
         _proj = actx.store.get_project(ctx.tenant_id, row["project_id"])
         _page_content = ""
         if _vault_page is not None and _proj and _proj.vault_path:
@@ -825,7 +825,7 @@ def create_app(actx: AppContext) -> FastAPI:
 
         # 2) Frontmatter-declared source ids on the vault page.
         from brain2.vault.parser import canonical_topic as _canonical_topic
-        page = actx.store.get_vault_page_by_topic(project_id, _canonical_topic(topic))
+        page = actx.store.get_vault_page_by_topic(ctx.tenant_id, project_id, _canonical_topic(topic))
         if page is not None:
             proj = actx.store.get_project(ctx.tenant_id, project_id)
             if proj and proj.vault_path:

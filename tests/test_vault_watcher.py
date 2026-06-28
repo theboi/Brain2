@@ -18,7 +18,7 @@ def _setup(tmp_path):
 def _wait_indexed(store, project_id, path_str, timeout_s=8.0):
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        if store.get_vault_page(project_id, path_str) is not None:
+        if store.get_vault_page("t1", project_id, path_str) is not None:
             return True
         time.sleep(0.05)
     return False
@@ -47,10 +47,10 @@ def test_watcher_drops_row_when_file_deleted(tmp_path):
         (root / "wiki" / "concepts" / "a.md").unlink()
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
-            if s.get_vault_page("p1", "wiki/concepts/a.md") is None:
+            if s.get_vault_page("t1", "p1", "wiki/concepts/a.md") is None:
                 break
             time.sleep(0.05)
-        assert s.get_vault_page("p1", "wiki/concepts/a.md") is None
+        assert s.get_vault_page("t1", "p1", "wiki/concepts/a.md") is None
     finally:
         w.stop()
 
@@ -63,6 +63,6 @@ def test_watcher_ignores_git_internal_changes(tmp_path):
     try:
         (root / ".git" / "internal").write_text("x")
         time.sleep(0.5)
-        assert s.get_vault_page("p1", ".git/internal") is None
+        assert s.get_vault_page("t1", "p1", ".git/internal") is None
     finally:
         w.stop()

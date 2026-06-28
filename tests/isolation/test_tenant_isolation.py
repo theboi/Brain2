@@ -17,11 +17,11 @@ def test_same_project_name_isolated(two_tenants):
 def test_vault_page_same_topic_isolated(two_tenants):
     from brain2.models import VaultPage
     s = two_tenants
-    s.upsert_vault_page(VaultPage(project_id="p1", path="wiki/concepts/shared.md",
+    s.upsert_vault_page(VaultPage(tenant_id="t1", project_id="p1", path="wiki/concepts/shared.md",
                                   zone="wiki", topic="shared-topic",
                                   tldr="t1", content_hash="aaa", mtime=1, source_type="wiki"))
-    # t2's p1 gets the same path — isolated by project_id which is tenant-scoped
-    p = s.get_vault_page("p1", "wiki/concepts/shared.md")
+    # t2's p1 gets the same path — isolated by tenant_id + project_id.
+    p = s.get_vault_page("t1", "p1", "wiki/concepts/shared.md")
     assert p is not None and p.tldr == "t1"
 
 

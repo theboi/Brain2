@@ -47,7 +47,7 @@ def test_wiki_sources_unions_topic_match_and_frontmatter(tmp_path):
     write_text_atomic(root / "wiki" / "Cell theory.md",
                       "---\ntopic: Cell theory\n"
                       f"sources:\n  - {sid_fm}\n---\n# Cell theory\n")
-    reindex_vault(s, "p1", root)
+    reindex_vault(s, "t1", "p1", root)
 
     r = c.get(f"/api/v1/wiki/Cell theory/sources?project_id=p1",
               headers={"Authorization": f"Bearer {tok}"})
@@ -59,7 +59,7 @@ def test_wiki_sources_unions_topic_match_and_frontmatter(tmp_path):
 def test_wiki_sources_empty_when_no_match(tmp_path):
     c, tok, s, root = _client_with_vault(tmp_path)
     write_text_atomic(root / "wiki" / "Lonely.md", "# Lonely\n")
-    reindex_vault(s, "p1", root)
+    reindex_vault(s, "t1", "p1", root)
     r = c.get("/api/v1/wiki/Lonely/sources?project_id=p1",
               headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200

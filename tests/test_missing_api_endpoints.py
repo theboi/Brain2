@@ -115,7 +115,7 @@ def test_split_wiki_audit_and_wiki_sources(tmp_path, monkeypatch):
     tok = _login(client)
     from brain2.models import VaultPage
     store.upsert_vault_page(VaultPage(
-        project_id="p1", path="wiki/topic-a.md", zone="wiki",
+        tenant_id="t1", project_id="p1", path="wiki/topic-a.md", zone="wiki",
         topic="topic-a", content_hash="abc123", mtime=0))
     with store.transaction() as cx:
         cx.execute(

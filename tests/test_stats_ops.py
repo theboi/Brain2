@@ -98,9 +98,9 @@ def _client_two_vaults():
         )
     for i in range(3):
         s._conn.execute(
-            "INSERT INTO vault_pages(project_id,path,zone,topic,content_hash,mtime)"
-            " VALUES (?,?,?,?,?,?)",
-            ("fin-vault", f"/p{i}", "wiki", f"Page {i}", "", 0),
+            "INSERT INTO vault_pages(tenant_id,project_id,path,zone,topic,content_hash,mtime)"
+            " VALUES (?,?,?,?,?,?,?)",
+            ("t1", "fin-vault", f"/p{i}", "wiki", f"Page {i}", "", 0),
         )
     for project_id in ("eng-vault", "fin-vault"):
         s._conn.execute(

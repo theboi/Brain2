@@ -52,7 +52,7 @@ def test_commit_batch_records_vault_commit_row(tmp_path):
                        kind="ingest", message="ingest(wiki): x.md",
                        agent_id="a", source_file="raw/wiki/x.md")
 
-    rows = s.list_vault_commits("p1")
+    rows = s.list_vault_commits("t1", "p1")
     sha_set = {r.sha for r in rows}
     assert sha in sha_set
     row = next(r for r in rows if r.sha == sha)

@@ -58,6 +58,6 @@ def test_static_runner_indexes_destination(tmp_path):
     raw = root / "raw" / "static" / "policy.pdf"
     write_bytes_atomic(raw, b"%PDF-1.4 fake")
     run_static(s, StubLLM(), IngestRequest("p1", "t1", "static", raw, "u1"))
-    p = s.get_vault_page("p1", "static/policy.pdf")
+    p = s.get_vault_page("t1", "p1", "static/policy.pdf")
     assert p is not None
     assert p.source_type == "static"

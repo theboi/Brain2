@@ -19,7 +19,7 @@ def _vault_root(store, ctx, params) -> Path:
 def make_static_list(store):
     def handler(ctx, params):
         project_id = params.get("project_id") or ctx.project_id
-        pages = store.list_vault_pages(project_id, zone="static")
+        pages = store.list_vault_pages(ctx.tenant_id, project_id, zone="static")
         return {"docs": [{"name": p.topic, "path": p.path, "tldr": p.tldr}
                          for p in pages]}
     return handler
@@ -30,7 +30,7 @@ def make_static_read(store):
         root = _vault_root(store, ctx, params)
         project_id = params.get("project_id") or ctx.project_id
         name = params["name"]
-        for p in store.list_vault_pages(project_id, zone="static"):
+        for p in store.list_vault_pages(ctx.tenant_id, project_id, zone="static"):
             if p.topic == name:
                 abs_path = root / p.path
                 if abs_path.suffix in _BINARY_SUFFIXES:
@@ -48,7 +48,7 @@ def make_static_read(store):
 def make_dynamic_list(store):
     def handler(ctx, params):
         project_id = params.get("project_id") or ctx.project_id
-        pages = store.list_vault_pages(project_id, zone="dynamic")
+        pages = store.list_vault_pages(ctx.tenant_id, project_id, zone="dynamic")
         return {"sources": [{"name": p.topic, "path": p.path, "tldr": p.tldr}
                             for p in pages]}
     return handler

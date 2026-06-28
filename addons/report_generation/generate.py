@@ -126,4 +126,4 @@ def _writeback(store, gateway, tenant_id: str, template: ReportTemplate,
                  message=f"ingest(report): {template.name}",
                  agent_id=template.exec_identity_id,
                  source_file=None)
-    index_file(store, template.project_id, root, abs_path)
+    index_file(store, tenant_id, template.project_id, root, abs_path)

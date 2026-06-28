@@ -77,10 +77,13 @@ def test_e2e_history_lists_ingest_commit(e2e):
     c.post("/api/v1/raw/upload",
            data={"project_id": "p1", "type": "wiki", "filename": "paper.md"},
            files=files, headers=_h(tok))
-    _wait(lambda: s.get_vault_page_by_topic("t1", "p1", "attention") is not None)
-    r = c.post("/api/v1/ops/vault:history", json={"project_id": "p1"}, headers=_h(tok))
-    msgs = [c["message"] for c in r.json()["commits"]]
-    assert any("ingest(wiki)" in m for m in msgs)
+    assert _wait(lambda: s.get_vault_page_by_topic("t1", "p1", "attention") is not None)
+
+    def _history_has_ingest():
+        r = c.post("/api/v1/ops/vault:history", json={"project_id": "p1"}, headers=_h(tok))
+        return any("ingest(wiki)" in item["message"] for item in r.json()["commits"])
+
+    assert _wait(_history_has_ingest)
 
 
 def test_e2e_cross_tenant_isolation(e2e):

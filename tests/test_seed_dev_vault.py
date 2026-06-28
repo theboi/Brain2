@@ -38,7 +38,7 @@ def test_seed_idempotent_creates_expected_state(tmp_path, monkeypatch):
     assert by_id["firmware-engineering"].vault_path  # disk root set
 
     # Vault pages indexed.
-    pages = s.list_vault_pages("firmware-engineering")
+    pages = s.list_vault_pages("default", "firmware-engineering")
     topics = {p.topic for p in pages}
     assert {
         "flight-controller-overview",

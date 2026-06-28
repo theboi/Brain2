@@ -42,7 +42,7 @@ def make_org_graph(store: Store):
                 project_id = project["project_id"]
                 visible_vault_ids.add(project_id)
                 meta = store.project_meta(tenant_id, project_id)
-                pages = store.vault_pages_and_links(project_id)
+                pages = store.vault_pages_and_links(tenant_id, project_id)
                 vault_pages[project_id] = pages
                 vault_sources[project_id] = store.vault_sources_with_cites(tenant_id, project_id)
                 vaults.append({
@@ -153,7 +153,7 @@ def make_vault_graph(store: Store):
         project_id = params.get("project_id") or ctx.project_id
         project = store.get_project(ctx.tenant_id, project_id)
         meta = store.project_meta(ctx.tenant_id, project_id)
-        pages = store.vault_pages_and_links(project_id)
+        pages = store.vault_pages_and_links(ctx.tenant_id, project_id)
         return {
             "vault": {
                 "id": project_id,

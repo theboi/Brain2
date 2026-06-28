@@ -150,7 +150,7 @@ def make_accept_suggestion(store, gateway):
             raise NotFound(f"project {project_id!r} has no vault")
         root = Path(proj.vault_path)
         # Canonicalize topic to match vault_pages.topic (lowercase-kebab).
-        page = store.get_vault_page_by_topic(project_id, canonical_topic(topic))
+        page = store.get_vault_page_by_topic(ctx.tenant_id, project_id, canonical_topic(topic))
         if page is None:
             rel = _unique_path(root, _slugify_topic(topic))
         else:

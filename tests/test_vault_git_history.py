@@ -80,7 +80,7 @@ def test_git_revert_undoes_a_commit(tmp_path):
     revert_sha = git_revert(s, root, sha, project_id="p1", tenant_id="t1",
                             agent_id="user@u1")
     assert not (root / "wiki" / "concepts" / "a.md").exists()
-    rows = s.list_vault_commits("p1")
+    rows = s.list_vault_commits("t1", "p1")
     revert_row = next(r for r in rows if r.sha == revert_sha)
     assert revert_row.kind == "human"
     assert revert_row.message.startswith("revert:")

@@ -63,9 +63,9 @@ def test_raw_wiki_drop_triggers_wiki_runner(tmp_path):
         write_text_atomic(root / "raw" / "wiki" / "src.md", "hello")
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
-            if s.get_vault_page("p1", "wiki/concepts/a.md") is not None:
+            if s.get_vault_page("t1", "p1", "wiki/concepts/a.md") is not None:
                 break
             time.sleep(0.15)
-        assert s.get_vault_page("p1", "wiki/concepts/a.md") is not None
+        assert s.get_vault_page("t1", "p1", "wiki/concepts/a.md") is not None
     finally:
         w.stop()

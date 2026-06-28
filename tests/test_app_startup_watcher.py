@@ -33,10 +33,10 @@ def test_watcher_started_for_existing_vaults(tmp_path):
         write_text_atomic(root / "raw" / "wiki" / "src.md", "hello")
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
-            if s.get_vault_page("p1", "wiki/concepts/a.md") is not None:
+            if s.get_vault_page("t1", "p1", "wiki/concepts/a.md") is not None:
                 break
             time.sleep(0.1)
-        assert s.get_vault_page("p1", "wiki/concepts/a.md") is not None
+        assert s.get_vault_page("t1", "p1", "wiki/concepts/a.md") is not None
     finally:
         if actx.vault_watcher:
             actx.vault_watcher.stop()

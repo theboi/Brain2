@@ -24,8 +24,8 @@ def vault_client(tmp_path):
     write_text_atomic(root / "wiki" / "concepts" / "softmax.md", "softmax page")
     write_text_atomic(root / "wiki" / "concepts" / "attention.md",
                       "# attention\n\nUses [[softmax]]. Also [[ghost]].\n")
-    index_file(s, "p1", root, root / "wiki" / "concepts" / "softmax.md")
-    index_file(s, "p1", root, root / "wiki" / "concepts" / "attention.md")
+    index_file(s, "t1", "p1", root, root / "wiki" / "concepts" / "softmax.md")
+    index_file(s, "t1", "p1", root, root / "wiki" / "concepts" / "attention.md")
 
     actx = build_app_context(store=s, gateway=object())
     actx.passwords.set_password("t1", "u1", "pw")
@@ -121,7 +121,7 @@ def test_vault_write_page_creates_new_topic(vault_client):
     # File on disk.
     assert (root / body["page"]["path"]).exists()
     # Indexed.
-    assert s.get_vault_page_by_topic("p1", "new-topic") is not None
+    assert s.get_vault_page_by_topic("t1", "p1", "new-topic") is not None
 
 
 def test_vault_write_page_updates_existing(vault_client):

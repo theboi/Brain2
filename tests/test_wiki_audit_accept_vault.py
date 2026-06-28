@@ -21,7 +21,7 @@ def _setup(tmp_path):
     git_init_vault(root, project_name="AI", tenant_id="t1", project_id="p1")
     s.set_project_vault_path("t1", "p1", str(root))
     write_text_atomic(root / "wiki" / "Cell theory.md", "# Cell theory\n\nold body\n")
-    reindex_vault(s, "p1", root)
+    reindex_vault(s, "t1", "p1", root)
 
     audit_id = "audit_x"
     suggestion_id = "sugg_y"
