@@ -174,6 +174,7 @@ export function VaultDrawer({ vault, ws, allWorkspaces, onClose }: {
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--destructive)' }}>Delete vault</div>
               <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', marginTop: 2 }}>Vault deletion is not yet available. Archive instead.</div>
             </div>
+            {/* Permanent vault deletion is intentionally unavailable until product semantics for delete_project are settled. */}
             {confirmDel
               ? (
                 <div style={{ display: 'flex', gap: 6 }}>

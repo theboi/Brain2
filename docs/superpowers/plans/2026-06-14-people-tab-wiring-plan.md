@@ -1182,3 +1182,9 @@ Expected: all PASS.
 - [ ] No placeholders: every code step has complete code.
 - [ ] Type consistency: `TenantUser.last_seen_at`/`status`/`invited` used identically in store dict, op output, and frontend type; `users:invite` param names (`email`/`display_name`/`workspace_id`/`workspace_role`) match between op, hook, and UI.
 - [ ] Migration number `0032` is the next free number after the committed tree (confirm `0029_remove_default_workspace.sql` is committed first; if a higher number already exists, bump to the next free one consistently across the migration filename + test).
+
+## 2026-06-28 mock-surface quarantine note
+
+- Inbox content stays backed by live notifications (`src/lib/inbox.ts`) after the refactor in commit `9cbe9fb`; do not restore `BRIEFING` sample rows unless they are visibly labeled sample data.
+- Dashboard quick-action plugin tiles stay disabled with a coming-soon tooltip until real action runner ops are specified.
+- Vault deletion in `VaultDrawer` remains explicitly unavailable; archive is the live operation until product semantics for permanent `delete_project` are decided.

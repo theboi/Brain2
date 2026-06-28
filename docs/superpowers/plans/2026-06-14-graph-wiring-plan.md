@@ -761,3 +761,7 @@ git commit -m "chore(web): remove org graph mock data"
 - [ ] Type consistency: `OrgGraphResponse` keys (`vault_pages`/`vault_sources`/`members`/`groups`/`guests`) match `graph:org` output; `buildOrgDataset` produces the exact `OrgDataset` shape `OrgGraphView` consumes; role/level casing is Title-cased once in `graphDataset.ts`.
 - [ ] Visibility parity: `graph:org` hides non-member workspaces for non-owners, matching `workspaces:overview` (tested).
 - [ ] `OrgGraphView` no longer imports any data from `mockData.ts` (only types + `makeOrgHelpers` + `ORG_SRC_GLYPH`).
+
+## 2026-06-28 mock-surface quarantine note
+
+- Dashboard wiki-health remains hidden via `WIKI_HEALTH = null` until a live wiki/graph health op exists. Do not reintroduce sample health rows that look live.

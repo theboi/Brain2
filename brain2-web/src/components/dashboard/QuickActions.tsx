@@ -18,12 +18,12 @@ const TONE_SOFT: Record<string, string> = {
 
 interface ActionTileProps {
   action: QuickAction;
-  onRun: (a: QuickAction) => void;
 }
 
-function ActionTile({ action: a, onRun }: ActionTileProps) {
+function ActionTile({ action: a }: ActionTileProps) {
   const [hov, setHov] = useState(false);
-  const available = a.available;
+  const available = false;
+  const unavailableReason = a.unavailableReason ?? 'Plugin actions are coming soon.';
   const color = TONE_COLOR[a.tone] ?? 'var(--accent)';
   const soft = TONE_SOFT[a.tone] ?? 'var(--accent-soft)';
 
@@ -31,10 +31,9 @@ function ActionTile({ action: a, onRun }: ActionTileProps) {
     <button
       disabled={!available}
       aria-disabled={!available}
-      title={available ? undefined : a.unavailableReason ?? 'Unavailable'}
+      title={unavailableReason}
       onMouseEnter={() => available && setHov(true)}
       onMouseLeave={() => setHov(false)}
-      onClick={() => available && onRun(a)}
       style={{
         display: 'flex', flexDirection: 'column', gap: 12, textAlign: 'left',
         padding: 15, borderRadius: 12, border: `1px solid ${hov && available ? color : 'var(--border)'}`,
@@ -110,14 +109,13 @@ interface QuickActionsProps {
 
 export function QuickActions({ actions, isMobile = false }: QuickActionsProps) {
   const navigate = useNavigate();
-  const runAction = (_a: QuickAction) => { /* TODO: launch plugin job */ };
   const openAgents = () => navigate('/agents');
 
   if (actions.length === 0) return null;
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', gap: isMobile ? 10 : 14 }}>
-      {actions.map((a) => <ActionTile key={a.id} action={a} onRun={runAction} />)}
+      {actions.map((a) => <ActionTile key={a.id} action={a} />)}
       <AgentsTile onRun={openAgents} />
     </div>
   );
