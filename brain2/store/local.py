@@ -29,17 +29,78 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class _LockingCursor:
+    """Serializes fetches on a shared sqlite3 cursor under the store lock."""
+
+    def __init__(self, cursor, lock):
+        self._cursor = cursor
+        self._lock = lock
+
+    def fetchone(self):
+        with self._lock:
+            return self._cursor.fetchone()
+
+    def fetchall(self):
+        with self._lock:
+            return self._cursor.fetchall()
+
+    def fetchmany(self, size=None):
+        with self._lock:
+            return self._cursor.fetchmany(size) if size is not None else self._cursor.fetchmany()
+
+    def __iter__(self):
+        with self._lock:
+            return iter(self._cursor.fetchall())
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class _LockingConnection:
+    """Serialize access to a shared sqlite3 connection with check_same_thread=False."""
+
+    def __init__(self, conn, lock):
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_lock", lock)
+
+    def execute(self, *args, **kwargs):
+        with self._lock:
+            return _LockingCursor(self._conn.execute(*args, **kwargs), self._lock)
+
+    def executemany(self, *args, **kwargs):
+        with self._lock:
+            return _LockingCursor(self._conn.executemany(*args, **kwargs), self._lock)
+
+    def executescript(self, *args, **kwargs):
+        with self._lock:
+            return self._conn.executescript(*args, **kwargs)
+
+    def commit(self):
+        with self._lock:
+            return self._conn.commit()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        if name in {"_conn", "_lock"}:
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._conn, name, value)
+
+
 class LocalStore:
     def __init__(self, db_path: str = ":memory:"):
         # check_same_thread=False: the in-process worker (P05) shares the conn.
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys = ON")
+        raw = sqlite3.connect(db_path, check_same_thread=False)
+        raw.row_factory = sqlite3.Row
+        raw.execute("PRAGMA foreign_keys = ON")
         # WAL: durable crash-recovery + concurrent readers (no-op for :memory:).
-        self._conn.execute("PRAGMA journal_mode = WAL")
+        raw.execute("PRAGMA journal_mode = WAL")
         # Wait up to 5s for a lock instead of erroring immediately under contention.
-        self._conn.execute("PRAGMA busy_timeout = 5000")
+        raw.execute("PRAGMA busy_timeout = 5000")
         self._lock = threading.RLock()
+        self._conn = _LockingConnection(raw, self._lock)
         self.in_transaction = False  # connection-discipline guard (Phase 5 §1)
 
     # --- lifecycle ---
