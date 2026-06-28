@@ -228,6 +228,28 @@ class LocalStore:
         return [{"user_id": r["user_id"], "email": r["email"],
                  "display_name": r["display_name"]} for r in rows]
 
+    def list_workspace_user_directory(self, tenant_id: str, workspace_id: str) -> list[dict]:
+        """Users related to one workspace: its members + user-principal guests
+        on any project in that workspace. Used for workspace member/guest pickers
+        so admins cannot enumerate unrelated tenant users."""
+        rows = self._conn.execute(
+            """
+            SELECT u.user_id, u.email, u.display_name
+            FROM users u
+            WHERE u.tenant_id=? AND u.user_id IN (
+                SELECT wm.user_id FROM workspace_members wm
+                WHERE wm.tenant_id=? AND wm.workspace_id=?
+                UNION
+                SELECT ag.principal_id FROM access_grants ag
+                JOIN projects p ON p.tenant_id=ag.tenant_id AND p.project_id=ag.project_id
+                WHERE ag.tenant_id=? AND ag.principal_type='user' AND p.workspace_id=?
+            )
+            ORDER BY u.email
+            """,
+            (tenant_id, tenant_id, workspace_id, tenant_id, workspace_id)).fetchall()
+        return [{"user_id": r["user_id"], "email": r["email"],
+                 "display_name": r["display_name"]} for r in rows]
+
     # --- groups ---
     def create_group(self, tenant_id: str, group_id: str, name: str) -> None:
         with self.transaction() as cx:
