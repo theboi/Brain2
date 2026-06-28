@@ -105,11 +105,15 @@ const WS_LABELS: Record<string, string> = {
   engineering:  'engineering',
   personal:     'personal',
 };
-const WS_LIST = Object.keys(WS_LABELS);
 
 const VAULT_LIST = ['Cell biology', 'Microscopy', 'Q3 research', 'Engineering docs'];
 
 const ROLE_RANK: Record<TopRole, number> = { Owner: 3, Admin: 2, Member: 1 };
+
+const mutationErrorMessage = (error: unknown): string | null => {
+  if (!error) return null;
+  return error instanceof Error ? error.message : String(error);
+};
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
@@ -413,7 +417,6 @@ function EmailSuggest({ value, onChange, candidates, onEnter, placeholder = 'Ent
 
 // ─── WsRoleEditor — per-workspace role list (shared by people + groups) ───────
 
-const WS_OPTS: SelectOption[] = WS_LIST.map((w) => ({ id: w, label: WS_LABELS[w] ?? w, icon: 'layers' as IconName }));
 const WS_ROLE_LEVEL_OPTS: SelectOption[] = [
   { id: 'Admin',  label: 'Admin',  icon: 'shield' },
   { id: 'Member', label: 'Member', icon: 'user'   },
@@ -458,9 +461,10 @@ function AddScopeRow({ label, taken, allOpts, levelOpts, defaultLevel, onAdd }: 
   );
 }
 
-function WsRoleEditor({ ws, inherited = [], setRole, removeWs, addWs, emptyText = 'Not in any workspace yet.' }: {
+function WsRoleEditor({ ws, inherited = [], workspaceOptions, setRole, removeWs, addWs, emptyText = 'Not in any workspace yet.' }: {
   ws: WsAccess[];
   inherited?: Array<{ w: string; role: WsRole; via: string }>;
+  workspaceOptions: SelectOption[];
   setRole: (w: string, role: WsRole) => void;
   removeWs: (w: string) => void;
   addWs?: (w: string, role: WsRole) => void;
@@ -509,7 +513,7 @@ function WsRoleEditor({ ws, inherited = [], setRole, removeWs, addWs, emptyText 
         <AddScopeRow
           label="Add to workspace"
           taken={ws.map((x) => x.w)}
-          allOpts={WS_OPTS}
+          allOpts={workspaceOptions}
           levelOpts={WS_ROLE_LEVEL_OPTS}
           defaultLevel="Member"
           onAdd={(w, role) => addWs(w, role as WsRole)}
@@ -551,9 +555,10 @@ function ConfirmDialog({ title, body, confirmLabel = 'Confirm', danger, onConfir
 
 // ─── GroupsPanel ──────────────────────────────────────────────────────────────
 
-function GroupsPanel({ groups, members, setDialog, onCreateGroup, onSetWsRole, onRemoveWs, onAddWs, onAddMember, onRemoveMember, onRemoveGroup }: {
+function GroupsPanel({ groups, members, workspaceOptions, setDialog, onCreateGroup, onSetWsRole, onRemoveWs, onAddWs, onAddMember, onRemoveMember, onRemoveGroup }: {
   groups: Group[];
   members: OrgMember[];
+  workspaceOptions: SelectOption[];
   setDialog: (d: DialogState) => void;
   onCreateGroup: (name: string) => void;
   onSetWsRole: (id: string, w: string, role: WsRole) => void;
@@ -649,6 +654,7 @@ function GroupsPanel({ groups, members, setDialog, onCreateGroup, onSetWsRole, o
                 <div style={{ padding: '4px 0 16px 60px' }}>
                   <WsRoleEditor
                     ws={g.ws}
+                    workspaceOptions={workspaceOptions}
                     setRole={(w, v) => onSetWsRole(g.id, w, v)}
                     removeWs={(w) => onRemoveWs(g.id, w)}
                     addWs={(w, role) => onAddWs(g.id, w, role)}
@@ -876,7 +882,6 @@ export function OrgPeopleSection() {
   const effectiveInviteWs = inviteWs || workspaceRows[0]?.workspace_id || '';
 
   workspaceRows.forEach((ws) => { WS_LABELS[ws.workspace_id] = ws.name; });
-  WS_LIST.splice(0, WS_LIST.length, ...workspaceRows.map((ws) => ws.workspace_id));
   VAULT_LIST.splice(0, VAULT_LIST.length, ...vaultRows.map((v) => v.name));
 
   const accessQueries = useQueries({
@@ -990,6 +995,7 @@ export function OrgPeopleSection() {
   const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
   const exists = members.some((m) => (dir(m.u).email ?? '').toLowerCase() === email.trim().toLowerCase());
   const inviteCandidates = EXTRA_CANDIDATES.filter((c) => !members.some((m) => (dir(m.u).email ?? '').toLowerCase() === c.email.toLowerCase()));
+  const peopleActionError = mutationErrorMessage(inviteUser.error ?? addMember.error ?? setMemberRole.error ?? removeMember.error);
 
   const invite = () => {
     if (!validEmail || exists) return;
@@ -1003,7 +1009,10 @@ export function OrgPeopleSection() {
     setEmail(''); setInviteWs(workspaceRows[0]?.workspace_id ?? ''); setInviteRole('Member');
   };
 
-  const wsOpts: SelectOption[] = WS_LIST.map((w) => ({ id: w, label: WS_LABELS[w] ?? w, icon: 'layers' as IconName }));
+  const wsOpts = useMemo<SelectOption[]>(
+    () => workspaceRows.map((w) => ({ id: w.workspace_id, label: w.name, icon: 'layers' as IconName })),
+    [workspaceRows],
+  );
   const wsRoleOpts: SelectOption[] = [
     { id: 'Admin',  label: 'Admin',  icon: 'shield', desc: 'Manage members and every vault in this workspace.' },
     { id: 'Member', label: 'Member', icon: 'user',   desc: 'Read and write all vaults in this workspace.' },
@@ -1048,6 +1057,7 @@ export function OrgPeopleSection() {
         <GroupsPanel
           groups={groups}
           members={members}
+          workspaceOptions={wsOpts}
           setDialog={setDialog}
           onCreateGroup={(name) => createGroup.mutate({ name })}
           onSetWsRole={(id, w, role) => setGroupWs.mutate({ group_id: id, workspace_id: w, role: fromWsRole(role) })}
@@ -1106,6 +1116,7 @@ export function OrgPeopleSection() {
             </div>
             {email.trim() && !validEmail && <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8 }}>Enter a valid email address.</div>}
             {exists && <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8 }}>That person is already in your organization.</div>}
+            {peopleActionError && <div role="alert" style={{ fontSize: 11.5, color: 'var(--destructive)', marginTop: 8 }}>{peopleActionError}</div>}
           </div>
 
           {/* search + filter */}
@@ -1198,6 +1209,7 @@ export function OrgPeopleSection() {
                         <WsRoleEditor
                           ws={m.ws}
                           inherited={inheritedWs(m.u)}
+                          workspaceOptions={wsOpts}
                           setRole={(w, v) => setWsRole(m.u, w, v)}
                           removeWs={(w) => removeWs(m.u, w)}
                           addWs={(w, role) => addWs(m.u, w, role)}
