@@ -24,6 +24,7 @@ def test_migration_0043_accepts_and_preserves_openrouter_model():
         "fallback_model": "fallback", "secret_key": "secret-ref",
         "ollama_base_url": None, "status": "ready", "created_by": "u1",
         "created_at": "created", "updated_at": "updated", "param_count": None,
+        "max_concurrency": 1,
     }
 
 
