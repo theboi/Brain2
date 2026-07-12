@@ -1,4 +1,5 @@
 """models:* ops (ported from agents:*)."""
+import sqlite3
 import uuid
 from brain2.context import RequestContext
 from brain2.model_ops import (
@@ -105,6 +106,17 @@ def test_ollama_create_normalizes_endpoint_and_capacity():
     assert created["ollama_base_url"] == "http://box:11434"
     assert created["max_concurrency"] == 3
     assert "secret_key" not in created and "api_key" not in created
+
+
+@pytest.mark.parametrize("endpoint", [
+    "ftp://box:11434", "box:11434", "http:///missing-host", "://broken",
+])
+def test_ollama_rejects_invalid_url(endpoint):
+    s, sm = _store_secrets()
+    with pytest.raises(Conflict, match="ollama_base_url"):
+        make_models_create(s, sm)(
+            _ctx(), {"name": "Local", "provider": "ollama", "model": "x",
+                     "ollama_base_url": endpoint})
 
 
 def test_max_concurrency_defaults_to_one():
@@ -256,3 +268,70 @@ def test_registration_exposes_capacity_and_update_key_parameters():
     update_names = {p["name"] for p in ops.get("models:update").params}
     assert "max_concurrency" in create_names
     assert {"max_concurrency", "api_key", "ollama_base_url"} <= update_names
+
+
+def test_public_registration_exposes_only_runtime_providers():
+    s, sm = _store_secrets()
+    ops = OperationRegistry()
+    register_model_ops(ops, s, sm)
+    provider = next(
+        p for p in ops.get("models:create").params if p["name"] == "provider"
+    )
+    assert provider["choices"] == ["anthropic", "ollama", "openrouter"]
+
+
+@pytest.mark.parametrize("provider", ["gemini", "openai"])
+def test_create_rejects_legacy_provider(provider):
+    s, sm = _store_secrets()
+    with pytest.raises(Conflict, match="provider"):
+        make_models_create(s, sm)(
+            _ctx(), {"name": "Legacy", "provider": provider, "model": "x"})
+
+
+@pytest.mark.parametrize("provider,extra", [
+    ("stub", {}),
+    ("ollama", {"ollama_base_url": "http://box:11434"}),
+])
+def test_non_keyed_provider_rejects_api_key_on_create_and_update(provider, extra):
+    s, sm = _store_secrets()
+    params = {"name": "Model", "provider": provider, "model": "x", **extra}
+    with pytest.raises(Conflict, match="api_key"):
+        make_models_create(s, sm)(_ctx(), {**params, "api_key": "forbidden"})
+    created = make_models_create(s, sm)(_ctx(), params)
+    with pytest.raises(Conflict, match="api_key"):
+        make_models_update(s, sm)(
+            _ctx(), {"model_id": created["model_id"], "api_key": "forbidden"})
+    assert s._conn.execute("SELECT COUNT(*) AS n FROM secrets").fetchone()["n"] == 0
+
+
+def test_failed_create_rolls_back_stored_secret():
+    s, sm = _store_secrets()
+    with s.transaction() as cx:
+        cx.execute(
+            "CREATE TRIGGER fail_model_insert BEFORE INSERT ON models "
+            "BEGIN SELECT RAISE(FAIL, 'forced model insert failure'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="forced model insert failure"):
+        make_models_create(s, sm)(
+            _ctx(), {"name": "Cloud", "provider": "anthropic", "model": "x",
+                     "api_key": "must-rollback"})
+    assert s._conn.execute("SELECT COUNT(*) AS n FROM secrets").fetchone()["n"] == 0
+
+
+def test_failed_update_rolls_back_rotated_secret():
+    s, sm = _store_secrets()
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": "Cloud", "provider": "openrouter", "model": "x",
+                 "api_key": "old-key"})
+    row = s._conn.execute(
+        "SELECT secret_key FROM models WHERE model_id=?", (created["model_id"],)
+    ).fetchone()
+    with s.transaction() as cx:
+        cx.execute(
+            "CREATE TRIGGER fail_model_update BEFORE UPDATE ON models "
+            "BEGIN SELECT RAISE(FAIL, 'forced model update failure'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="forced model update failure"):
+        make_models_update(s, sm)(
+            _ctx(), {"model_id": created["model_id"], "api_key": "new-key"})
+    assert sm.retrieve("t1", row["secret_key"], accessed_by="u1") == b"old-key"

@@ -54,13 +54,6 @@ def test_builds_cloud_providers_from_encrypted_secret(provider, class_name):
     cls.assert_called_once_with(api_key="key", model="provider/model")
 
 
-def test_builds_openrouter_from_encrypted_secret():
-    row, secrets = _row()
-    with patch("brain2.chat_providers.OpenRouterProvider") as cls:
-        build_provider("t1", row, secrets, accessed_by="u1")
-    cls.assert_called_once_with(api_key="key", model="provider/model")
-
-
 def test_unsupported_provider_is_rejected():
     row = {"provider": "unknown", "model": "x"}
     with pytest.raises(LLMError, match="unsupported provider"):
