@@ -49,6 +49,7 @@ coverage.xml
 .DS_Store
 Thumbs.db
 .superpowers/
+.worktrees/
 
 # brain2-web
 brain2-web/node_modules/
