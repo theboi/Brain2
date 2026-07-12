@@ -161,6 +161,46 @@ def test_update_rejects_invalid_fields(params):
         make_models_update(s, sm)(_ctx(), {"model_id": created["model_id"], **params})
 
 
+def _insert_legacy_invalid_model(s, provider):
+    now = "2026-01-01T00:00:00+00:00"
+    model_id = str(uuid.uuid4())
+    with s.transaction() as cx:
+        cx.execute(
+            "INSERT INTO models(model_id,tenant_id,name,provider,model,created_at,"
+            "updated_at) VALUES (?,?,?,?,?,?,?)",
+            (model_id, "t1", "Legacy", provider, "old-model", now, now),
+        )
+    return model_id
+
+
+def test_update_requires_effective_ollama_endpoint_for_legacy_row():
+    s, sm = _store_secrets()
+    model_id = _insert_legacy_invalid_model(s, "ollama")
+    with pytest.raises(Conflict, match="ollama_base_url"):
+        make_models_update(s, sm)(
+            _ctx(), {"model_id": model_id, "name": "Renamed"})
+    updated = make_models_update(s, sm)(
+        _ctx(), {"model_id": model_id, "name": "Renamed",
+                 "ollama_base_url": " http://legacy:11434/ "})
+    assert updated["ollama_base_url"] == "http://legacy:11434"
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openrouter"])
+def test_update_requires_effective_cloud_key_for_legacy_row(provider):
+    s, sm = _store_secrets()
+    model_id = _insert_legacy_invalid_model(s, provider)
+    with pytest.raises(Conflict, match="api_key is required"):
+        make_models_update(s, sm)(
+            _ctx(), {"model_id": model_id, "name": "Renamed"})
+    updated = make_models_update(s, sm)(
+        _ctx(), {"model_id": model_id, "api_key": " replacement "})
+    assert "secret_key" not in updated and "api_key" not in updated
+    row = s._conn.execute(
+        "SELECT secret_key FROM models WHERE model_id=?", (model_id,)
+    ).fetchone()
+    assert sm.retrieve("t1", row["secret_key"], accessed_by="u1") == b"replacement"
+
+
 def _reference_model(s, model_id, *, deleted_at=None):
     now = "2026-01-01T00:00:00+00:00"
     with s.transaction() as cx:

@@ -159,9 +159,10 @@ def make_models_update(store, secrets=None):
                 values[field] = str(values[field] or "").strip()
                 if not values[field]:
                     raise Conflict(f"{field} is required")
-        if "ollama_base_url" in values:
+        if row["provider"] == "ollama":
             values["ollama_base_url"] = _local_endpoint(
-                row["provider"], values["ollama_base_url"]
+                row["provider"],
+                values.get("ollama_base_url", row["ollama_base_url"]),
             )
         if "max_concurrency" in values:
             values["max_concurrency"] = _max_concurrency(
@@ -174,6 +175,12 @@ def make_models_update(store, secrets=None):
                 raise Conflict("api_key must not be blank")
             if secrets is None:
                 raise Conflict("api_key updates require secret storage")
+        if (
+            row["provider"] in _KEYED_PROVIDERS
+            and not row["secret_key"]
+            and api_key is None
+        ):
+            raise Conflict(f"api_key is required for {row['provider']}")
 
         fields = {
             "name",
