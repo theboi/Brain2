@@ -1256,14 +1256,16 @@ class LocalStore:
 
     @staticmethod
     def _agent_name(value) -> str:
-        name = str(value or "").strip()
+        if type(value) is not str:
+            raise Conflict("agent name must be a string")
+        name = value.strip()
         if not name:
             raise Conflict("agent name is required")
         return name
 
     @classmethod
     def _agent_complexity(cls, value) -> str:
-        if value not in cls._AGENT_COMPLEXITIES:
+        if type(value) is not str or value not in cls._AGENT_COMPLEXITIES:
             raise Conflict(
                 "complexity must be one of simple, medium, hard, complex"
             )
@@ -1277,12 +1279,40 @@ class LocalStore:
 
     @staticmethod
     def _agent_model_id(value) -> str:
-        model_id = str(value or "").strip()
+        if type(value) is not str:
+            raise Conflict("model_id must be a string")
+        model_id = value.strip()
         if not model_id:
             raise Conflict(
                 "model_id must identify a tenant-scoped ready runtime model"
             )
         return model_id
+
+    @staticmethod
+    def _agent_id(value) -> str:
+        if type(value) is not str:
+            raise Conflict("agent_id must be a string")
+        agent_id = value.strip()
+        if not agent_id:
+            raise Conflict("agent_id is required")
+        return agent_id
+
+    @staticmethod
+    def _raise_agent_integrity(exc: sqlite3.IntegrityError, name=None):
+        if "UNIQUE constraint failed: agents.tenant_id, agents.name" in str(exc):
+            raise Conflict(f"agent name {name!r} already exists") from exc
+        raise Conflict("agent constraint violation") from exc
+
+    def _select_agent(self, cx, tenant_id: str, agent_id: str, *,
+                      include_deleted: bool = False):
+        deleted_clause = "" if include_deleted else " AND a.deleted_at IS NULL"
+        return cx.execute(
+            "SELECT a.*, m.name AS model_name, m.provider AS model_provider, "
+            "m.status AS model_status FROM agents a "
+            "LEFT JOIN models m ON m.tenant_id=a.tenant_id AND m.model_id=a.model_id "
+            f"WHERE a.tenant_id=? AND a.agent_id=?{deleted_clause}",
+            (tenant_id, agent_id),
+        ).fetchone()
 
     def _ready_runtime_model(self, cx, tenant_id: str, model_id: str):
         model = cx.execute(
@@ -1314,20 +1344,17 @@ class LocalStore:
                     (agent_id, tenant_id, name, now, now, model_id, complexity,
                      1),
                 )
+                response = self._select_agent(cx, tenant_id, agent_id)
         except sqlite3.IntegrityError as exc:
-            raise Conflict(f"agent name {name!r} already exists") from exc
-        return self.get_agent(tenant_id, agent_id)
+            self._raise_agent_integrity(exc, name)
+        return self._agent_dict(response)
 
     def get_agent(self, tenant_id: str, agent_id: str, *,
                   include_deleted: bool = False) -> dict | None:
-        deleted_clause = "" if include_deleted else " AND a.deleted_at IS NULL"
-        row = self._conn.execute(
-            "SELECT a.*, m.name AS model_name, m.provider AS model_provider, "
-            "m.status AS model_status FROM agents a "
-            "LEFT JOIN models m ON m.tenant_id=a.tenant_id AND m.model_id=a.model_id "
-            f"WHERE a.tenant_id=? AND a.agent_id=?{deleted_clause}",
-            (tenant_id, agent_id),
-        ).fetchone()
+        agent_id = self._agent_id(agent_id)
+        row = self._select_agent(
+            self._conn, tenant_id, agent_id, include_deleted=include_deleted
+        )
         return self._agent_dict(row)
 
     def list_agents(self, tenant_id: str) -> list[dict]:
@@ -1341,6 +1368,7 @@ class LocalStore:
         return [self._agent_dict(row) for row in rows]
 
     def update_agent(self, tenant_id: str, agent_id: str, **changes) -> dict:
+        agent_id = self._agent_id(agent_id)
         allowed = {"name", "model_id", "complexity", "enabled"}
         unknown = set(changes) - allowed
         if unknown:
@@ -1402,13 +1430,13 @@ class LocalStore:
                         "WHERE tenant_id=? AND agent_id=? AND deleted_at IS NULL",
                         tuple(args),
                     )
+                response = self._select_agent(cx, tenant_id, agent_id)
         except sqlite3.IntegrityError as exc:
-            raise Conflict(
-                f"agent name {normalized.get('name')!r} already exists"
-            ) from exc
-        return self.get_agent(tenant_id, agent_id)
+            self._raise_agent_integrity(exc, normalized.get("name"))
+        return self._agent_dict(response)
 
     def delete_agent(self, tenant_id: str, agent_id: str) -> dict:
+        agent_id = self._agent_id(agent_id)
         now = _now_iso()
         with self.transaction() as cx:
             row = cx.execute(
@@ -1452,8 +1480,14 @@ class LocalStore:
                 )
 
     def list_workers(self, tenant_id: str) -> list[dict]:
-        """Temporary compatibility alias for pre-configured runtime callers."""
-        return self.list_agents(tenant_id)
+        """Temporary legacy roster, including inert soft-deleted name rows."""
+        rows = self._conn.execute(
+            "SELECT a.*, m.name AS model_name, m.provider AS model_provider, "
+            "m.status AS model_status FROM agents a "
+            "LEFT JOIN models m ON m.tenant_id=a.tenant_id AND m.model_id=a.model_id "
+            "WHERE a.tenant_id=? ORDER BY a.name", (tenant_id,)
+        ).fetchall()
+        return [self._agent_dict(row) for row in rows]
 
     def worker_heartbeat(self, tenant_id: str, agent_id: str, now_iso: str,
                          status: str | None = None,
@@ -1470,7 +1504,8 @@ class LocalStore:
         with self.transaction() as cx:
             cx.execute(
                 f"UPDATE agents SET {', '.join(sets)} "
-                "WHERE tenant_id=? AND agent_id=?",
+                "WHERE tenant_id=? AND agent_id=? AND deleted_at IS NULL "
+                "AND enabled=1",
                 tuple(args),
             )
 
@@ -1578,8 +1613,16 @@ class LocalStore:
 
     def claim_todo_for_agent(self, tenant_id: str, agent_id: str) -> dict | None:
         """Atomically claim the top eligible queued todo for an idle agent."""
+        agent_id = self._agent_id(agent_id)
         now = _now_iso()
         with self.transaction() as cx:
+            agent = cx.execute(
+                "SELECT agent_id FROM agents WHERE tenant_id=? AND agent_id=? "
+                "AND status='idle' AND enabled=1 AND deleted_at IS NULL",
+                (tenant_id, agent_id),
+            ).fetchone()
+            if agent is None:
+                return None
             row = cx.execute(
                 "SELECT todo_id FROM todos WHERE tenant_id=? AND status='queued' "
                 "AND (preferred_agent_id IS NULL OR preferred_agent_id=?) "
@@ -1589,18 +1632,21 @@ class LocalStore:
             if not row:
                 return None
             todo_id = row["todo_id"]
-            updated = cx.execute(
+            agent_updated = cx.execute(
+                "UPDATE agents SET status='busy', current_todo_id=?, updated_at=? "
+                "WHERE tenant_id=? AND agent_id=? AND status='idle' "
+                "AND enabled=1 AND deleted_at IS NULL",
+                (todo_id, now, tenant_id, agent_id),
+            ).rowcount
+            if agent_updated != 1:
+                return None
+            todo_updated = cx.execute(
                 "UPDATE todos SET status='running', assigned_agent_id=?, started_at=? "
                 "WHERE tenant_id=? AND todo_id=? AND status='queued'",
                 (agent_id, now, tenant_id, todo_id),
             ).rowcount
-            if not updated:
-                return None
-            cx.execute(
-                "UPDATE agents SET status='busy', current_todo_id=?, updated_at=? "
-                "WHERE tenant_id=? AND agent_id=?",
-                (todo_id, now, tenant_id, agent_id),
-            )
+            if todo_updated != 1:
+                raise Conflict("todo claim constraint violation")
             claimed = cx.execute(
                 "SELECT * FROM todos WHERE tenant_id=? AND todo_id=?",
                 (tenant_id, todo_id),

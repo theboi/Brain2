@@ -7,6 +7,31 @@ from brain2.errors import Conflict
 COMPLEXITIES = ("simple", "medium", "hard", "complex")
 
 
+def _mutation_params(params, *, allowed, required=(), strings=(), booleans=()):
+    if not isinstance(params, dict):
+        raise Conflict("operation parameters must be an object")
+    unknown = set(params) - set(allowed)
+    if unknown:
+        raise Conflict(f"unsupported parameters: {sorted(unknown)}")
+    for field in required:
+        if field not in params:
+            raise Conflict(f"{field} is required")
+    normalized = dict(params)
+    for field in strings:
+        if field not in normalized:
+            continue
+        if type(normalized[field]) is not str:
+            raise Conflict(f"{field} must be a string")
+        if field in {"name", "model_id", "agent_id"}:
+            normalized[field] = normalized[field].strip()
+            if not normalized[field]:
+                raise Conflict(f"{field} is required")
+    for field in booleans:
+        if field in normalized and type(normalized[field]) is not bool:
+            raise Conflict(f"{field} must be a boolean")
+    return normalized
+
+
 def _roster_card(store, ctx, agent: dict) -> dict:
     card = {
         "agent_id": agent["agent_id"],
@@ -49,8 +74,12 @@ def make_agents_list(store):
 
 def make_agents_create(store):
     def handler(ctx, params):
-        if "enabled" in params:
-            raise Conflict("enabled is not supported when creating an agent")
+        params = _mutation_params(
+            params,
+            allowed={"name", "model_id", "complexity"},
+            required={"name", "model_id", "complexity"},
+            strings={"name", "model_id", "complexity"},
+        )
         agent = store.create_agent(
             ctx.tenant_id,
             params.get("name"),
@@ -64,6 +93,13 @@ def make_agents_create(store):
 
 def make_agents_update(store):
     def handler(ctx, params):
+        params = _mutation_params(
+            params,
+            allowed={"agent_id", "name", "model_id", "complexity", "enabled"},
+            required={"agent_id"},
+            strings={"agent_id", "name", "model_id", "complexity"},
+            booleans={"enabled"},
+        )
         changes = {
             field: params[field]
             for field in ("name", "model_id", "complexity", "enabled")
@@ -79,6 +115,12 @@ def make_agents_update(store):
 
 def make_agents_delete(store):
     def handler(ctx, params):
+        params = _mutation_params(
+            params,
+            allowed={"agent_id"},
+            required={"agent_id"},
+            strings={"agent_id"},
+        )
         return store.delete_agent(ctx.tenant_id, params["agent_id"])
 
     return handler

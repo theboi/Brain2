@@ -312,3 +312,87 @@ def test_public_create_rejects_enabled_and_always_creates_enabled():
                  "complexity": "medium"}
     )
     assert created["enabled"] is True and created["status"] == "offline"
+
+
+@pytest.mark.parametrize("operation,params,match", [
+    ("agents:create", {"name": "Terra", "model_id": "x",
+                       "complexity": "medium", "extra": 1}, "unsupported"),
+    ("agents:create", {"name": "Terra", "model_id": "x"}, "complexity"),
+    ("agents:create", {"name": ["Terra"], "model_id": "x",
+                       "complexity": "medium"}, "name"),
+    ("agents:create", {"name": "Terra", "model_id": {"id": "x"},
+                       "complexity": "medium"}, "model_id"),
+    ("agents:create", {"name": "Terra", "model_id": "x",
+                       "complexity": ["medium"]}, "complexity"),
+    ("agents:update", {"agent_id": "x", "extra": 1}, "unsupported"),
+    ("agents:update", {"name": "Terra"}, "agent_id"),
+    ("agents:update", {"agent_id": False}, "agent_id"),
+    ("agents:update", {"agent_id": "x", "enabled": "yes"}, "enabled"),
+    ("agents:delete", {"extra": 1}, "unsupported"),
+    ("agents:delete", {}, "agent_id"),
+    ("agents:delete", {"agent_id": ["x"]}, "agent_id"),
+])
+def test_public_mutations_reject_unknown_missing_and_wrong_types(
+        operation, params, match):
+    store, _ = _setup()
+    ops = OperationRegistry()
+    register_agent_ops(ops, store)
+    with pytest.raises((Conflict, NotFound), match=match):
+        ops.get(operation).handler(_ctx(), params)
+
+
+def test_create_and_update_return_transaction_snapshots_without_get_agent():
+    store, secrets = _setup()
+    model = _model(store, secrets)
+    original_get = store.get_agent
+    store.get_agent = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("response performed a post-transaction get")
+    )
+    created = store.create_agent("t1", "Terra", model["model_id"], "medium")
+    updated = store.update_agent(
+        "t1", created["agent_id"], name="Atlas"
+    )
+    store.get_agent = original_get
+    assert created["model_name"] == "Runtime"
+    assert updated["name"] == "Atlas"
+
+
+@pytest.mark.parametrize("lifecycle", ["deleted", "disabled"])
+def test_revoked_agent_ignores_stale_heartbeat_and_cannot_claim(lifecycle):
+    store, secrets = _setup()
+    store.create_workspace("t1", "Eng", workspace_id="ws1")
+    model = _model(store, secrets)
+    agent = store.create_agent("t1", "Terra", model["model_id"], "medium")
+    store.worker_heartbeat("t1", agent["agent_id"], "2026-07-01T00:00:00Z",
+                           status="idle")
+    store.create_todo("t1", "ws1", "u1", todo_id="queued", title="work")
+    if lifecycle == "deleted":
+        store.delete_agent("t1", agent["agent_id"])
+    else:
+        store.update_agent("t1", agent["agent_id"], enabled=False)
+    store.worker_heartbeat(
+        "t1", agent["agent_id"], "2026-07-01T00:01:00Z", status="idle"
+    )
+    assert store.claim_todo_for_agent("t1", agent["agent_id"]) is None
+    row = store.get_agent("t1", agent["agent_id"], include_deleted=True)
+    assert row["status"] == "offline"
+    assert row["enabled"] is False
+    assert bool(row["deleted_at"]) is (lifecycle == "deleted")
+    assert store.get_todo("t1", "queued")["status"] == "queued"
+
+
+def test_list_workers_includes_deleted_row_for_transitional_runtime_lookup():
+    store, secrets = _setup()
+    model = _model(store, secrets)
+    agent = store.create_agent("t1", "Terra", model["model_id"], "medium")
+    store.delete_agent("t1", agent["agent_id"])
+    worker = next(w for w in store.list_workers("t1") if w["name"] == "Terra")
+    assert worker["deleted_at"] is not None
+    assert worker["status"] == "offline" and worker["enabled"] is False
+
+
+def test_non_unique_agent_integrity_error_is_not_reported_as_duplicate_name():
+    store, _ = _setup()
+    store._ready_runtime_model = lambda *args: None
+    with pytest.raises(Conflict, match="agent constraint violation"):
+        store.create_agent("t1", "Terra", "missing-model", "medium")

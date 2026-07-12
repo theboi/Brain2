@@ -58,6 +58,7 @@ def test_preferred_agent_pins_claim():
     )
     s.create_todo("t1", "ws1", "mem1", todo_id="td1", title="x", preferred_agent_id=steve)
     assert s.claim_todo_for_agent("t1", jarvis) is None
+    s.worker_heartbeat("t1", steve, "2026-06-15T10:00:00Z", status="idle")
     assert s.claim_todo_for_agent("t1", steve)["todo_id"] == "td1"
 
 
