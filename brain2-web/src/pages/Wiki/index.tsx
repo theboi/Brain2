@@ -40,7 +40,7 @@ function wikiChipDefs(wf: WikiFilter, setWf: (f: WikiFilter) => void, _pages: Li
   const filterOpts = [
     { value: 'all', label: 'All pages', icon: 'layers' as const },
     { value: 'recent', label: 'Edited last 7d', icon: 'clock' as const },
-    { value: 'audit', label: 'Has open audit', icon: 'alert' as const, tone: 'warning' },
+    { value: 'audit', label: 'Has open audit', icon: 'alert' as const, tone: 'warning' as const },
   ];
   const fil = filterOpts.find((o) => o.value === wf.filter);
   return [
@@ -54,7 +54,7 @@ function wikiPageMatches(topic: string, wf: WikiFilter, q: string, auditCount = 
 }
 
 // ── Desktop sidebar ────────────────────────────────────────────────────────────
-function WikiSidebar({ wf, setWf, selectedTopic, selectedProject, onSelect, vaults, width = 264 }: {
+function WikiSidebar({ wf, setWf, selectedTopic, selectedProject, onSelect, vaults, auditCounts, width = 264 }: {
   wf: WikiFilter; setWf: (f: WikiFilter) => void;
   selectedTopic: string; selectedProject: string | null;
   onSelect: (projectId: string, topic: string) => void;

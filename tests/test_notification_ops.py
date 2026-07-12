@@ -134,6 +134,7 @@ def test_report_done_creates_notification(store):
 
 def test_source_done_creates_notification(store, tmp_path, monkeypatch):
     _seed_user_project(store)
+    store.set_project_vault_path("t1", "p1", str(tmp_path / "vault"))
     ops = _ops(store)
     from brain2.source_ops import create_source_row
     from brain2.tasks.source_process import make_source_process_handler
@@ -181,8 +182,9 @@ def test_source_done_creates_notification(store, tmp_path, monkeypatch):
     )
 
 
-def test_source_failed_notification_uses_url_fallback(store, monkeypatch):
+def test_source_failed_notification_uses_url_fallback(store, tmp_path, monkeypatch):
     _seed_user_project(store)
+    store.set_project_vault_path("t1", "p1", str(tmp_path / "vault"))
     ops = _ops(store)
     from brain2.source_ops import create_source_row
     from brain2.tasks.source_process import make_source_process_handler
