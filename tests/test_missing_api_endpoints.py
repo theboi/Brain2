@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 from brain2.api import create_app
 from brain2.app_context import build_app_context
+from brain2.context import RequestContext
+from brain2.model_ops import make_models_create
 from brain2.store.local import LocalStore
 
 
@@ -27,11 +29,18 @@ def _make_client(tmp_path, monkeypatch):
     store.grant_access("t1", "p1", "user", "u1", "admin")
     actx = build_app_context(store=store, gateway=object())
     actx.passwords.set_password("t1", "u1", "pw")
-    return TestClient(create_app(actx)), store
+    return TestClient(create_app(actx)), store, actx.secrets
+
+
+def _make_stub(store, secrets, name):
+    return make_models_create(store, secrets)(
+        RequestContext("t1", "u1", "owner"),
+        {"name": name, "provider": "stub", "model": "stub-1"},
+    )
 
 
 def test_me_patch_password_and_workspace(tmp_path, monkeypatch):
-    client, _ = _make_client(tmp_path, monkeypatch)
+    client, _, _ = _make_client(tmp_path, monkeypatch)
     tok = _login(client)
 
     me = client.get("/api/v1/me", headers=_hdr(tok))
@@ -58,7 +67,7 @@ def test_me_patch_password_and_workspace(tmp_path, monkeypatch):
 
 
 def test_provider_ops_roundtrip(tmp_path, monkeypatch):
-    client, _ = _make_client(tmp_path, monkeypatch)
+    client, _, _ = _make_client(tmp_path, monkeypatch)
     tok = _login(client)
     monkeypatch.setattr("brain2.provider_ops._probe_provider",
                         lambda provider, api_key, model=None: {"ok": True, "provider": provider})
@@ -83,11 +92,9 @@ def test_provider_ops_roundtrip(tmp_path, monkeypatch):
 
 
 def test_split_chat_message_create_stream_and_replay(tmp_path, monkeypatch):
-    client, _ = _make_client(tmp_path, monkeypatch)
+    client, store, secrets = _make_client(tmp_path, monkeypatch)
     tok = _login(client)
-    agent = client.post("/api/v1/ops/models:create",
-                        json={"name": "Test", "provider": "stub", "model": "stub-1"},
-                        headers=_hdr(tok)).json()
+    agent = _make_stub(store, secrets, "Test")
     convo = client.post("/api/v1/ops/conversations:create",
                         json={"agent_id": agent["model_id"]},
                         headers=_hdr(tok)).json()
@@ -111,7 +118,7 @@ def test_split_chat_message_create_stream_and_replay(tmp_path, monkeypatch):
 
 
 def test_split_wiki_audit_and_wiki_sources(tmp_path, monkeypatch):
-    client, store = _make_client(tmp_path, monkeypatch)
+    client, store, secrets = _make_client(tmp_path, monkeypatch)
     tok = _login(client)
     from brain2.models import VaultPage
     store.upsert_vault_page(VaultPage(
@@ -135,9 +142,7 @@ def test_split_wiki_audit_and_wiki_sources(tmp_path, monkeypatch):
         'SUGGESTION: {"section":"Intro","proposed_content":"Better text",'
         '"rationale":"Why","sources_cited":["src-topic"]}\nDONE',
     )
-    agent = client.post("/api/v1/ops/models:create",
-                        json={"name": "Auditor", "provider": "stub", "model": "stub-1"},
-                        headers=_hdr(tok)).json()
+    agent = _make_stub(store, secrets, "Auditor")
 
     kickoff = client.post("/api/v1/wiki/topic-a/audit?project_id=p1",
                           json={"agent_id": agent["model_id"], "instructions": "Improve"},

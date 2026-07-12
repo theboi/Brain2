@@ -38,7 +38,18 @@ def _local_endpoint(provider: str, value):
     if not endpoint:
         raise Conflict("ollama_base_url is required for ollama")
     parsed = urlparse(endpoint)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise Conflict(
+            "ollama_base_url must be a valid http or https URL"
+        ) from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
         raise Conflict("ollama_base_url must be a valid http or https URL")
     return endpoint
 

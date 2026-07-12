@@ -110,6 +110,8 @@ def test_ollama_create_normalizes_endpoint_and_capacity():
 
 @pytest.mark.parametrize("endpoint", [
     "ftp://box:11434", "box:11434", "http:///missing-host", "://broken",
+    "http://user:password@box:11434", "http://box:not-a-port",
+    "http://box:70000",
 ])
 def test_ollama_rejects_invalid_url(endpoint):
     s, sm = _store_secrets()

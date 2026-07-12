@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 
 from brain2.api import create_app
 from brain2.app_context import build_app_context
+from brain2.context import RequestContext
+from brain2.model_ops import make_models_create
 from brain2.store.local import LocalStore
 
 
@@ -20,22 +22,24 @@ def owner_client(tmp_path, monkeypatch):
     tok = c.post("/api/v1/auth/tokens",
                  json={"tenant_id": "t1", "email": "u1@t1.com",
                        "password": "pw"}).json()["token"]
-    return c, tok
+    return c, tok, s, actx.secrets
 
 
 def _hdr(tok): return {"Authorization": f"Bearer {tok}"}
 
 
-def _make_agent(c, tok, **overrides):
+def _make_agent(store, secrets, **overrides):
     body = {"name": "Test", "provider": "stub", "model": "stub-1",
             "system_prompt": "be brief", "tool_allowlist": []}
     body.update(overrides)
-    return c.post("/api/v1/ops/models:create", json=body, headers=_hdr(tok)).json()
+    return make_models_create(store, secrets)(
+        RequestContext("t1", "u1", "owner"), body
+    )
 
 
 def test_conversation_create_list_messages(owner_client):
-    c, tok = owner_client
-    aid = _make_agent(c, tok)["model_id"]
+    c, tok, store, secrets = owner_client
+    aid = _make_agent(store, secrets)["model_id"]
     cid = c.post("/api/v1/ops/conversations:create",
                  json={"agent_id": aid, "title": "Hi"},
                  headers=_hdr(tok)).json()["conversation_id"]
@@ -48,8 +52,8 @@ def test_conversation_create_list_messages(owner_client):
 
 
 def test_chat_stream_persists_messages(owner_client):
-    c, tok = owner_client
-    aid = _make_agent(c, tok)["model_id"]
+    c, tok, store, secrets = owner_client
+    aid = _make_agent(store, secrets)["model_id"]
     cid = c.post("/api/v1/ops/conversations:create",
                  json={"agent_id": aid}, headers=_hdr(tok)).json()["conversation_id"]
 
@@ -73,8 +77,8 @@ def test_chat_stream_persists_messages(owner_client):
 
 
 def test_conversation_rename_and_pin(owner_client):
-    c, tok = owner_client
-    aid = _make_agent(c, tok)["model_id"]
+    c, tok, store, secrets = owner_client
+    aid = _make_agent(store, secrets)["model_id"]
     cid = c.post("/api/v1/ops/conversations:create",
                  json={"agent_id": aid}, headers=_hdr(tok)).json()["conversation_id"]
     r = c.post("/api/v1/ops/conversations:rename",
@@ -86,8 +90,8 @@ def test_conversation_rename_and_pin(owner_client):
 
 
 def test_conversation_export_markdown(owner_client):
-    c, tok = owner_client
-    aid = _make_agent(c, tok)["model_id"]
+    c, tok, store, secrets = owner_client
+    aid = _make_agent(store, secrets)["model_id"]
     cid = c.post("/api/v1/ops/conversations:create",
                  json={"agent_id": aid}, headers=_hdr(tok)).json()["conversation_id"]
     # send a message so the export has content
