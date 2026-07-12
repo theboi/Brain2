@@ -1244,6 +1244,194 @@ class LocalStore:
         return row["n"] if row else 0
 
     # --- workers (agents) ---
+    _AGENT_COMPLEXITIES = {"simple", "medium", "hard", "complex"}
+    @staticmethod
+    def _agent_dict(row) -> dict | None:
+        if row is None:
+            return None
+        result = dict(row)
+        if "enabled" in result:
+            result["enabled"] = bool(result["enabled"])
+        return result
+
+    @staticmethod
+    def _agent_name(value) -> str:
+        name = str(value or "").strip()
+        if not name:
+            raise Conflict("agent name is required")
+        return name
+
+    @classmethod
+    def _agent_complexity(cls, value) -> str:
+        if value not in cls._AGENT_COMPLEXITIES:
+            raise Conflict(
+                "complexity must be one of simple, medium, hard, complex"
+            )
+        return value
+
+    @staticmethod
+    def _agent_enabled(value) -> bool:
+        if not isinstance(value, bool):
+            raise Conflict("enabled must be a boolean")
+        return value
+
+    @staticmethod
+    def _agent_model_id(value) -> str:
+        model_id = str(value or "").strip()
+        if not model_id:
+            raise Conflict(
+                "model_id must identify a tenant-scoped ready runtime model"
+            )
+        return model_id
+
+    def _ready_runtime_model(self, cx, tenant_id: str, model_id: str):
+        model = cx.execute(
+            "SELECT model_id FROM models WHERE tenant_id=? AND model_id=? "
+            "AND status='ready' AND provider IN ('ollama','anthropic','openrouter')",
+            (tenant_id, model_id),
+        ).fetchone()
+        if model is None:
+            raise Conflict(
+                "model_id must identify a tenant-scoped ready runtime model"
+            )
+        return model
+
+    def create_agent(self, tenant_id: str, name, model_id: str,
+                     complexity, enabled: bool = True) -> dict:
+        name = self._agent_name(name)
+        model_id = self._agent_model_id(model_id)
+        complexity = self._agent_complexity(complexity)
+        enabled = self._agent_enabled(enabled)
+        agent_id = uuid.uuid4().hex
+        now = _now_iso()
+        try:
+            with self.transaction() as cx:
+                self._ready_runtime_model(cx, tenant_id, model_id)
+                cx.execute(
+                    "INSERT INTO agents(agent_id, tenant_id, name, status, "
+                    "current_todo_id, last_heartbeat, created_at, updated_at, "
+                    "model_id, complexity, enabled, deleted_at) "
+                    "VALUES (?,?,?,'offline',NULL,NULL,?,?,?,?,?,NULL)",
+                    (agent_id, tenant_id, name, now, now, model_id, complexity,
+                     int(enabled)),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise Conflict(f"agent name {name!r} already exists") from exc
+        return self.get_agent(tenant_id, agent_id)
+
+    def get_agent(self, tenant_id: str, agent_id: str, *,
+                  include_deleted: bool = False) -> dict | None:
+        deleted_clause = "" if include_deleted else " AND a.deleted_at IS NULL"
+        row = self._conn.execute(
+            "SELECT a.*, m.name AS model_name, m.provider AS model_provider, "
+            "m.status AS model_status FROM agents a "
+            "LEFT JOIN models m ON m.tenant_id=a.tenant_id AND m.model_id=a.model_id "
+            f"WHERE a.tenant_id=? AND a.agent_id=?{deleted_clause}",
+            (tenant_id, agent_id),
+        ).fetchone()
+        return self._agent_dict(row)
+
+    def list_agents(self, tenant_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT a.*, m.name AS model_name, m.provider AS model_provider, "
+            "m.status AS model_status FROM agents a "
+            "LEFT JOIN models m ON m.tenant_id=a.tenant_id AND m.model_id=a.model_id "
+            "WHERE a.tenant_id=? AND a.deleted_at IS NULL ORDER BY a.name",
+            (tenant_id,),
+        ).fetchall()
+        return [self._agent_dict(row) for row in rows]
+
+    def update_agent(self, tenant_id: str, agent_id: str, **changes) -> dict:
+        allowed = {"name", "model_id", "complexity", "enabled"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise Conflict(f"unsupported agent fields: {sorted(unknown)}")
+        normalized = dict(changes)
+        if "name" in normalized:
+            normalized["name"] = self._agent_name(normalized["name"])
+        if "complexity" in normalized:
+            normalized["complexity"] = self._agent_complexity(
+                normalized["complexity"]
+            )
+        if "model_id" in normalized:
+            normalized["model_id"] = self._agent_model_id(
+                normalized["model_id"]
+            )
+        if "enabled" in normalized:
+            normalized["enabled"] = self._agent_enabled(normalized["enabled"])
+        try:
+            with self.transaction() as cx:
+                row = cx.execute(
+                    "SELECT * FROM agents WHERE tenant_id=? AND agent_id=? "
+                    "AND deleted_at IS NULL",
+                    (tenant_id, agent_id),
+                ).fetchone()
+                if row is None:
+                    raise NotFound(f"agent {agent_id!r} not found")
+                if "model_id" in normalized:
+                    self._ready_runtime_model(
+                        cx, tenant_id, normalized["model_id"]
+                    )
+                actual = {
+                    field: value
+                    for field, value in normalized.items()
+                    if value != (
+                        bool(row[field]) if field == "enabled" else row[field]
+                    )
+                }
+                protected = ("model_id", "complexity", "enabled")
+                changed_protected = any(field in actual for field in protected)
+                if row["status"] == "busy" and changed_protected:
+                    raise Conflict(
+                        "busy agents cannot change model, complexity, or enabled"
+                    )
+                sets, args = [], []
+                if actual:
+                    for field in ("name", "model_id", "complexity", "enabled"):
+                        if field in actual:
+                            sets.append(f"{field}=?")
+                            value = actual[field]
+                            args.append(
+                                int(value) if field == "enabled" else value
+                            )
+                    if "enabled" in actual:
+                        sets.extend(["status='offline'", "current_todo_id=NULL"])
+                    sets.append("updated_at=?")
+                    args.extend([_now_iso(), tenant_id, agent_id])
+                    cx.execute(
+                        f"UPDATE agents SET {', '.join(sets)} "
+                        "WHERE tenant_id=? AND agent_id=? AND deleted_at IS NULL",
+                        tuple(args),
+                    )
+        except sqlite3.IntegrityError as exc:
+            raise Conflict(
+                f"agent name {normalized.get('name')!r} already exists"
+            ) from exc
+        return self.get_agent(tenant_id, agent_id)
+
+    def delete_agent(self, tenant_id: str, agent_id: str) -> dict:
+        now = _now_iso()
+        with self.transaction() as cx:
+            row = cx.execute(
+                "SELECT status FROM agents WHERE tenant_id=? AND agent_id=? "
+                "AND deleted_at IS NULL",
+                (tenant_id, agent_id),
+            ).fetchone()
+            if row is None:
+                raise NotFound(f"agent {agent_id!r} not found")
+            if row["status"] == "busy":
+                raise Conflict("busy agents cannot be deleted")
+            cx.execute(
+                "UPDATE agents SET enabled=0, status='offline', model_id=NULL, "
+                "current_todo_id=NULL, deleted_at=?, updated_at=? "
+                "WHERE tenant_id=? AND agent_id=? AND status != 'busy' "
+                "AND deleted_at IS NULL",
+                (now, now, tenant_id, agent_id),
+            )
+            if cx.execute("SELECT changes() AS n").fetchone()["n"] != 1:
+                raise Conflict("busy agents cannot be deleted")
+        return {"agent_id": agent_id, "deleted": True}
+
     def ensure_workers(self, tenant_id: str, names: list[str]) -> None:
         """Idempotently create worker rows (by name) for a tenant."""
         now = _now_iso()
@@ -1265,10 +1453,8 @@ class LocalStore:
                 )
 
     def list_workers(self, tenant_id: str) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT * FROM agents WHERE tenant_id=? ORDER BY name", (tenant_id,)
-        ).fetchall()
-        return [dict(r) for r in rows]
+        """Temporary compatibility alias for pre-configured runtime callers."""
+        return self.list_agents(tenant_id)
 
     def worker_heartbeat(self, tenant_id: str, agent_id: str, now_iso: str,
                          status: str | None = None,

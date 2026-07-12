@@ -190,8 +190,8 @@ def _register_core_operations(ops: OperationRegistry, store, passwords, connecto
     from brain2.invite_ops import register_invite_ops
     register_invite_ops(ops, store)
 
-    from brain2.worker_ops import register_worker_ops
-    register_worker_ops(ops, store)
+    from brain2.agent_ops import register_agent_ops
+    register_agent_ops(ops, store)
     from brain2.todo_ops import register_todo_ops
     register_todo_ops(ops, store)
 

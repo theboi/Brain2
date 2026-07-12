@@ -11,7 +11,9 @@ from brain2.todo_ops import (
     make_todos_list,
     make_todos_set_priority,
 )
-from brain2.worker_ops import make_agents_list
+from brain2.agent_ops import make_agents_list
+from brain2.model_ops import make_models_create
+from brain2.secrets import SecretManager
 
 
 def _store():
@@ -23,7 +25,12 @@ def _store():
     s.create_user("t1", "mem2", "m2@t1.com", "member", "M2")
     s.create_workspace("t1", "Eng", workspace_id="ws1")
     s.add_workspace_member("t1", "ws1", "mem2", "admin")
-    s.ensure_workers("t1", ["Jarvis"])
+    model = make_models_create(s, SecretManager(s, b"0" * 32))(
+        _ctx("owner1", "owner"),
+        {"name": "Runtime", "provider": "ollama", "model": "llama3",
+         "ollama_base_url": "http://localhost:11434"},
+    )
+    s.create_agent("t1", "Jarvis", model["model_id"], "medium")
     return s
 
 
