@@ -377,9 +377,7 @@ def create_app(actx: AppContext) -> FastAPI:
     @app.post("/api/v1/wiki/{topic}/audit/stream")
     def wiki_audit_stream(topic: str, body: dict,
                            ctx: RequestContext = Depends(_auth)):
-        from brain2.wiki_audit_ops import (create_audit_row, insert_suggestion,
-                                            set_audit_status)
-        from brain2.chat_providers import build_provider, complete_once
+        from brain2.wiki_audit_runner import run_wiki_audit_once
         from brain2.auth.authorize import authorize as _authz
         project_id = body["project_id"]
         _authz(actx.store, ctx, "read_wiki", project_id)
@@ -400,59 +398,31 @@ def create_app(actx: AppContext) -> FastAPI:
         if agent_row is None:
             raise HTTPException(status_code=404, detail="agent not found")
 
-        audit_id = create_audit_row(
-            actx.store, tenant_id=ctx.tenant_id, project_id=project_id,
-            topic=topic, agent_id=body["agent_id"],
-            instructions=body.get("instructions", ""),
-            scope=body.get("scope", "page"),
-            selection=body.get("selection"),
-            citation_policy=body.get("citation_policy", "must_cite"),
-            created_by=ctx.user_id)
-
-        # System prompt: tell the model to emit JSON suggestions.
-        system = ("You are a wiki auditor. Given a wiki page and instructions, "
-                  "emit one or more suggestions. Each suggestion is a JSON object on "
-                  "its own line of the form: "
-                  "SUGGESTION: {\"section\": \"...\", \"proposed_content\": \"...\", "
-                  "\"rationale\": \"...\", \"sources_cited\": [\"src1\"]}. "
-                  "End with 'DONE'.")
-        prompt = (f"Page topic: {topic}\nPage content:\n{page_content}\n\n"
-                  f"Instructions: {body.get('instructions','')}\n")
-
         def _events():
             import json
-            import re
             try:
-                provider = build_provider(ctx.tenant_id, agent_row, actx.secrets)
-                resp = complete_once(provider, prompt, system=system)
-                text = resp.text
-                pattern = re.compile(r"^SUGGESTION:\s+(\{.*\})\s*$", re.MULTILINE)
-                count = 0
-                for m in pattern.finditer(text):
-                    try:
-                        obj = json.loads(m.group(1))
-                    except Exception:
-                        continue
-                    sid = insert_suggestion(
-                        actx.store, tenant_id=ctx.tenant_id, audit_id=audit_id,
-                        section=obj.get("section"),
-                        proposed_content=obj.get("proposed_content", ""),
-                        rationale=obj.get("rationale", ""),
-                        sources_cited=obj.get("sources_cited", []))
-                    count += 1
+                audit_id, suggestions = run_wiki_audit_once(
+                    actx.store,
+                    actx.secrets,
+                    tenant_id=ctx.tenant_id,
+                    project_id=project_id,
+                    topic=topic,
+                    agent_row=agent_row,
+                    instructions=body.get("instructions", ""),
+                    page_content=page_content,
+                    citation_policy=body.get("citation_policy", "must_cite"),
+                    created_by=ctx.user_id,
+                    scope=body.get("scope", "page"),
+                    selection=body.get("selection"),
+                )
+                for suggestion in suggestions:
                     yield "data: " + json.dumps({
-                        "type": "suggestion", "suggestion_id": sid,
-                        "section": obj.get("section"),
-                        "proposed_content": obj.get("proposed_content", ""),
-                        "rationale": obj.get("rationale", ""),
-                        "sources_cited": obj.get("sources_cited", [])}) + "\n\n"
-                set_audit_status(actx.store, tenant_id=ctx.tenant_id,
-                                  audit_id=audit_id, status="done")
+                        "type": "suggestion",
+                        **suggestion,
+                    }) + "\n\n"
                 yield "data: " + json.dumps({"type": "done", "audit_id": audit_id,
-                                              "suggestions_emitted": count}) + "\n\n"
+                                              "suggestions_emitted": len(suggestions)}) + "\n\n"
             except Exception as exc:
-                set_audit_status(actx.store, tenant_id=ctx.tenant_id,
-                                  audit_id=audit_id, status="failed", error=str(exc))
                 yield "data: " + json.dumps({"type": "error", "message": str(exc)}) + "\n\n"
 
         return StreamingResponse(_events(), media_type="text/event-stream")

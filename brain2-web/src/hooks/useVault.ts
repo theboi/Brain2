@@ -92,6 +92,53 @@ export function useWorkspaceVaultPages(projectIds: string[]) {
   });
 }
 
+export function useOpenAuditCounts(projectId: string | null) {
+  return useQuery({
+    queryKey: projectId ? ['wiki-open-audit-counts', projectId] : ['wiki-open-audit-counts', '_'],
+    queryFn: () => ops<{ counts: Record<string, number> }>(
+      'wiki:open_audit_counts',
+      { project_id: projectId! },
+    ),
+    enabled: !!projectId,
+  });
+}
+
+export function useWorkspaceOpenAuditCounts(projectIds: string[]) {
+  return useQueries({
+    queries: projectIds.map((projectId) => ({
+      queryKey: ['wiki-open-audit-counts', projectId],
+      queryFn: () => ops<{ counts: Record<string, number> }>(
+        'wiki:open_audit_counts',
+        { project_id: projectId },
+      ),
+    })),
+  });
+}
+
+export function useLatestAudit(projectId: string | null, topic: string | null) {
+  return useQuery({
+    queryKey: projectId && topic ? ['wiki-latest-audit', projectId, topic]
+                                  : ['wiki-latest-audit', '_', '_'],
+    enabled: !!projectId && !!topic,
+    queryFn: async () => {
+      const { audits } = await ops<{ audits: any[] }>(
+        'wiki:list_audits',
+        { project_id: projectId!, topic: topic! },
+      );
+      const latest = audits?.[0] ?? null;
+      if (!latest) return { audit: null, suggestions: [] };
+      const { suggestions } = await ops<{ suggestions: any[] }>(
+        'wiki:list_suggestions',
+        { audit_id: latest.audit_id, project_id: projectId! },
+      );
+      return {
+        audit: latest,
+        suggestions: (suggestions ?? []).filter((s) => s.status === 'pending'),
+      };
+    },
+  });
+}
+
 export function useWritePage(projectId: string | null) {
   const qc = useQueryClient();
   return useMutation({

@@ -59,8 +59,10 @@ def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext
                               blob_store, secrets)
     _register_addons(addons, tasks, store, gateway, connector_factory, operations)
     from brain2.tasks.run_op import make_run_op_handler
+    from brain2.tasks.audit_run import make_audit_run_handler
     from brain2.tasks.source_process import make_source_process_handler
     tasks.register("run_op", make_run_op_handler(store, operations))
+    tasks.register("audit.run", make_audit_run_handler(store, secrets))
     tasks.register("source.process",
                    make_source_process_handler(store, gateway, blob_store))
     actx = AppContext(store=store, secrets=secrets, tokens=tokens, passwords=passwords,
@@ -93,6 +95,8 @@ def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext
             if idx + 1 >= len(parts):
                 return
             source_type = parts[idx + 1]
+            if source_type not in {"wiki", "static", "dynamic"}:
+                return
             proj = store.get_project_for_watch(project_id)
             if proj is None:
                 return

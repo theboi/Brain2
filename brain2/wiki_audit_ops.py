@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 
 from brain2.errors import Conflict, NotFound
@@ -23,6 +24,13 @@ def _now():
 
 def _row(r) -> dict:
     return {k: r[k] for k in r.keys()}
+
+
+def _canonical_topic(raw: str) -> str:
+    value = raw.strip().lower()
+    value = re.sub(r"[\s_]+", "-", value)
+    value = re.sub(r"[^a-z0-9\-]", "", value)
+    return re.sub(r"-+", "-", value).strip("-")
 
 
 def create_audit_row(store, *, tenant_id: str, project_id: str, topic: str,
@@ -54,7 +62,8 @@ def set_audit_status(store, *, tenant_id: str, audit_id: str, status: str,
 
 def insert_suggestion(store, *, tenant_id: str, audit_id: str, section: str | None,
                       proposed_content: str, rationale: str,
-                      sources_cited: list[str], diff_text: str = "") -> str:
+                      sources_cited: list[str], diff_text: str = "",
+                      auto: bool = False) -> str:
     sid = str(uuid.uuid4())
     with store.transaction() as cx:
         cx.execute(
@@ -67,7 +76,7 @@ def insert_suggestion(store, *, tenant_id: str, audit_id: str, section: str | No
         "SELECT topic, created_by FROM wiki_audits WHERE tenant_id=? AND audit_id=?",
         (tenant_id, audit_id),
     ).fetchone()
-    if audit is not None and audit["created_by"]:
+    if not auto and audit is not None and audit["created_by"]:
         try:
             create_notification(
                 store,
@@ -104,6 +113,8 @@ def make_list_audits(store):
 
 def make_list_suggestions(store):
     def handler(ctx, params):
+        from brain2.wiki_audit_runner import derive_cited
+
         rows = store._conn.execute(
             "SELECT * FROM wiki_audit_suggestions WHERE tenant_id=? AND audit_id=? "
             "ORDER BY created_at",
@@ -115,71 +126,85 @@ def make_list_suggestions(store):
                 d["sources_cited"] = json.loads(d.get("sources_cited") or "[]")
             except Exception:
                 d["sources_cited"] = []
+            d["cited"] = derive_cited(d["sources_cited"])
             out.append(d)
         return {"suggestions": out}
     return handler
 
 
-def make_accept_suggestion(store, gateway):
+def apply_suggestion(store, gateway, *, tenant_id: str, user_id: str,
+                     suggestion_id: str, edit: str | None = None) -> dict:
     from brain2.vault.fs import write_text_atomic
     from brain2.vault.indexer import reindex_path
     from brain2.vault.git import commit_batch, CommitBatch
     from brain2.vault_ops import _slugify_topic, _unique_path
-    from brain2.vault.parser import canonical_topic
     from pathlib import Path
 
+    row = store._conn.execute(
+        "SELECT s.*, a.project_id, a.topic, a.audit_id "
+        "FROM wiki_audit_suggestions s "
+        "JOIN wiki_audits a ON a.audit_id = s.audit_id "
+        "WHERE s.tenant_id=? AND s.suggestion_id=?",
+        (tenant_id, suggestion_id)).fetchone()
+    if row is None:
+        raise NotFound("suggestion not found")
+    if row["status"] != "pending":
+        raise Conflict(f"suggestion already {row['status']}")
+
+    content = edit if edit is not None else row["proposed_content"]
+    project_id = row["project_id"]
+    topic = row["topic"]
+    audit_id = row["audit_id"]
+
+    proj = store.get_project(tenant_id, project_id)
+    if proj is None or not proj.vault_path:
+        raise NotFound(f"project {project_id!r} has no vault")
+    root = Path(proj.vault_path)
+    page = store.get_vault_page_by_topic(tenant_id, project_id, _canonical_topic(topic))
+    if page is None:
+        page = store.get_vault_page_by_topic(tenant_id, project_id, topic)
+    if page is None:
+        rel = _unique_path(root, _slugify_topic(topic))
+    else:
+        rel = page.path
+
+    abs_path = root / rel
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(abs_path, content)
+    reindex_path(store, tenant_id, project_id, root, rel)
+
+    batch = CommitBatch(root)
+    batch.touched(abs_path)
+    is_auto = user_id == "auditor"
+    commit_sha = commit_batch(
+        store, batch,
+        project_id=project_id, tenant_id=tenant_id,
+        kind="llm_audit" if is_auto else "human",
+        message=f"audit:{audit_id}: accept {suggestion_id}",
+        agent_id="llm_audit:auditor" if is_auto else f"user:{user_id}",
+        source_file=None,
+    )
+
+    status = "edited_accepted" if edit is not None else "accepted"
+    with store.transaction() as cx:
+        cx.execute(
+            "UPDATE wiki_audit_suggestions SET status=?, decided_by=?, "
+            "decided_at=? WHERE tenant_id=? AND suggestion_id=?",
+            (status, user_id, _now(), tenant_id, suggestion_id))
+    return {"suggestion_id": suggestion_id, "status": status,
+            "commit_sha": commit_sha}
+
+
+def make_accept_suggestion(store, gateway):
     def handler(ctx, params):
-        row = store._conn.execute(
-            "SELECT s.*, a.project_id, a.topic, a.audit_id "
-            "FROM wiki_audit_suggestions s "
-            "JOIN wiki_audits a ON a.audit_id = s.audit_id "
-            "WHERE s.tenant_id=? AND s.suggestion_id=?",
-            (ctx.tenant_id, params["suggestion_id"])).fetchone()
-        if row is None:
-            raise NotFound("suggestion not found")
-        if row["status"] != "pending":
-            raise Conflict(f"suggestion already {row['status']}")
-
-        content = params.get("edit") or row["proposed_content"]
-        project_id = row["project_id"]
-        topic = row["topic"]
-        audit_id = row["audit_id"]
-
-        proj = store.get_project(ctx.tenant_id, project_id)
-        if proj is None or not proj.vault_path:
-            raise NotFound(f"project {project_id!r} has no vault")
-        root = Path(proj.vault_path)
-        # Canonicalize topic to match vault_pages.topic (lowercase-kebab).
-        page = store.get_vault_page_by_topic(ctx.tenant_id, project_id, canonical_topic(topic))
-        if page is None:
-            rel = _unique_path(root, _slugify_topic(topic))
-        else:
-            rel = page.path
-
-        abs_path = root / rel
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
-        write_text_atomic(abs_path, content)
-        reindex_path(store, ctx.tenant_id, project_id, root, rel)
-
-        batch = CommitBatch(root)
-        batch.touched(abs_path)
-        commit_sha = commit_batch(
-            store, batch,
-            project_id=project_id, tenant_id=ctx.tenant_id,
-            kind="human",
-            message=f"audit:{audit_id}: accept {params['suggestion_id']}",
-            agent_id=f"user:{ctx.user_id}",
-            source_file=None,
+        return apply_suggestion(
+            store,
+            gateway,
+            tenant_id=ctx.tenant_id,
+            user_id=ctx.user_id,
+            suggestion_id=params["suggestion_id"],
+            edit=params.get("edit"),
         )
-
-        status = "edited_accepted" if "edit" in params else "accepted"
-        with store.transaction() as cx:
-            cx.execute(
-                "UPDATE wiki_audit_suggestions SET status=?, decided_by=?, "
-                "decided_at=? WHERE tenant_id=? AND suggestion_id=?",
-                (status, ctx.user_id, _now(), ctx.tenant_id, params["suggestion_id"]))
-        return {"suggestion_id": params["suggestion_id"], "status": status,
-                "commit_sha": commit_sha}
     return handler
 
 
@@ -194,6 +219,19 @@ def make_dismiss_suggestion(store):
     return handler
 
 
+def make_open_audit_counts(store):
+    def handler(ctx, params):
+        rows = store._conn.execute(
+            "SELECT a.topic AS topic, COUNT(*) AS n "
+            "FROM wiki_audit_suggestions s "
+            "JOIN wiki_audits a ON a.audit_id=s.audit_id AND a.tenant_id=s.tenant_id "
+            "WHERE s.tenant_id=? AND a.project_id=? AND s.status='pending' "
+            "GROUP BY a.topic",
+            (ctx.tenant_id, params["project_id"])).fetchall()
+        return {"counts": {r["topic"]: r["n"] for r in rows}}
+    return handler
+
+
 def register_wiki_audit_ops(ops, store, gateway):
     ops.register("wiki:list_audits", action="read_wiki",
                  handler=make_list_audits(store),
@@ -205,6 +243,10 @@ def register_wiki_audit_ops(ops, store, gateway):
                  summary="List suggestions emitted by an audit",
                  params=[{"name": "audit_id", "type": "str", "required": True},
                          {"name": "project_id", "type": "str", "required": True}])
+    ops.register("wiki:open_audit_counts", action="read_wiki",
+                 handler=make_open_audit_counts(store),
+                 summary="Pending audit suggestion counts per topic",
+                 params=[{"name": "project_id", "type": "str", "required": True}])
     ops.register("wiki:accept_suggestion", action="use_agents",
                  handler=make_accept_suggestion(store, gateway),
                  summary="Apply an audit suggestion as a new wiki revision",

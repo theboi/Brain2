@@ -12,7 +12,7 @@ import { btnGhost, btnPrimary } from '@/components/browse/Browse';
 import { DiffView } from '@/components/browse/DiffView';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import {
-  useStartAudit, subscribeAuditStream,
+  useStartAudit, subscribeAuditStream, useLatestAudit,
   useAcceptSuggestion, useDismissSuggestion,
 } from '@/hooks/useVault';
 import type { DiffHunk } from '@/lib/wiki';
@@ -27,6 +27,19 @@ interface LiveSuggestion {
 }
 type SgState = 'pending' | 'accepted' | 'dismissed';
 interface SgWithState extends LiveSuggestion { state: SgState; }
+
+function suggestionFromWire(raw: any): SgWithState {
+  const sourcesCited = raw.sourcesCited ?? raw.sources_cited ?? [];
+  return {
+    id: raw.id ?? raw.suggestion_id,
+    section: raw.section ?? 'Page',
+    cited: raw.cited ?? sourcesCited.length > 0,
+    sourcesCited,
+    diff: raw.diff ?? [],
+    why: raw.why ?? raw.rationale ?? '',
+    state: 'pending',
+  };
+}
 
 function Radio({ checked, label, onClick }: { checked: boolean; label: string; onClick: () => void }) {
   return (
@@ -84,6 +97,7 @@ export function AuditDrawer({ open, onClose, topic }: { open: boolean; onClose: 
   const [citationRequired, setCitationRequired] = useState(true);
   const unsubRef = useRef<(() => void) | null>(null);
 
+  const { data: latest } = useLatestAudit(projectId, topic || null);
   const startAudit = useStartAudit(projectId, topic);
   const acceptSuggestion = useAcceptSuggestion();
   const dismissSuggestion = useDismissSuggestion();
@@ -100,6 +114,11 @@ export function AuditDrawer({ open, onClose, topic }: { open: boolean; onClose: 
     if (!open && unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
   }, [open]);
 
+  useEffect(() => {
+    if (!open || running || !latest) return;
+    setSugs((latest.suggestions ?? []).map(suggestionFromWire));
+  }, [open, running, latest]);
+
   const handleRunAudit = () => {
     if (!projectId || !topic || running) return;
     setSugs([]);
@@ -112,7 +131,7 @@ export function AuditDrawer({ open, onClose, topic }: { open: boolean; onClose: 
           setAuditStatus('Running…');
           const unsub = subscribeAuditStream(res.audit_id, (event) => {
             if (event.type === 'suggestion') {
-              setSugs((xs) => [...xs, { ...event.suggestion, state: 'pending' as SgState }]);
+              setSugs((xs) => [...xs, suggestionFromWire(event.suggestion ?? event)]);
             } else if (event.type === 'done') {
               setRunning(false); setAuditStatus('Done');
               unsub(); unsubRef.current = null;
@@ -134,6 +153,13 @@ export function AuditDrawer({ open, onClose, topic }: { open: boolean; onClose: 
   if (!open) return null;
 
   const pending = sugs.filter((s) => s.state !== 'dismissed');
+  const unresolved = pending.filter((s) => s.state === 'pending');
+  const verdict = (() => {
+    if (unresolved.some((s) => !s.cited)) return { label: 'needs review', color: 'var(--warning)' };
+    if (unresolved.length) return { label: 'warn', color: 'var(--warning)' };
+    if (latest?.audit) return { label: 'pass', color: 'var(--success)' };
+    return null;
+  })();
   const setLocalState = (id: string, state: SgState) =>
     setSugs((xs) => xs.map((s) => s.id === id ? { ...s, state } : s));
 
@@ -157,6 +183,7 @@ export function AuditDrawer({ open, onClose, topic }: { open: boolean; onClose: 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '15px 18px', borderBottom: '1px solid var(--border)' }}>
           <Icon name="sparkles" size={17} color="var(--accent)" />
           <span style={{ fontFamily: 'var(--display-font)', fontSize: 15.5, fontWeight: 600, color: 'var(--fg)' }}>Audit: {topic}</span>
+          {verdict && <span style={{ fontSize: 11, fontWeight: 700, color: verdict.color, background: 'var(--surface-2)', borderRadius: 6, padding: '2px 8px' }}>{verdict.label}</span>}
           <button onClick={onClose} style={{ marginLeft: 'auto', ...btnGhost(), width: 30, padding: 0, justifyContent: 'center' }}><Icon name="x" size={15} /></button>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
@@ -203,7 +230,7 @@ export function AuditDrawer({ open, onClose, topic }: { open: boolean; onClose: 
             ))}
             {!pending.length && !running && (
               <div style={{ textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13, padding: 20 }}>
-                {sugs.length > 0 ? 'All suggestions resolved.' : 'Run an audit to see suggestions.'}
+                {sugs.length > 0 || latest?.audit ? 'All suggestions resolved.' : 'Run an audit to see suggestions.'}
               </div>
             )}
           </div>

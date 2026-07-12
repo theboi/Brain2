@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 from brain2.audit import record_best_effort_audit
 from brain2.notification_ops import create_notification
 from brain2.source_ops import set_source_extracted, set_source_failed, set_source_status
 from brain2.vault.ingest import IngestRequest, dispatch_ingest
-from brain2.vault.runners import build_runners
+from brain2.vault.raw_store import materialize_raw
+
+
+def build_runners(store, gateway):
+    from brain2.vault.runners import build_runners as _build_runners
+
+    return _build_runners(store, gateway)
 
 logger = logging.getLogger(__name__)
 
@@ -56,21 +61,24 @@ def _extract_if_needed(
     return md
 
 
-def _raw_path_for_runner(tmpdir: Path, row, mode: str, raw_path: str | None, extracted_md: str) -> Path:
+def _runner_raw_path(store, project_id: str, row, mode: str, raw_path: str | None,
+                     extracted_md: str) -> Path:
+    project = store.get_project_for_watch(project_id)
+    if project is None or not project.vault_path:
+        raise RuntimeError(f"project {project_id!r} has no vault")
+    source_id = row["source_id"] if row is not None else "source"
     if raw_path and mode != "wiki":
         path = Path(raw_path)
         if path.exists():
-            return path
-    if raw_path and mode == "wiki" and not extracted_md:
-        path = Path(raw_path)
-        if path.exists():
-            return path
-    name = "source.md"
-    if row is not None:
-        name = f"{row['source_id']}.md"
-    materialized = tmpdir / name
-    materialized.write_text(extracted_md or "", encoding="utf-8")
-    return materialized
+            name = (row["filename"] if row is not None and row["filename"] else None) or path.name
+            return materialize_raw(Path(project.vault_path), source_id, name, path.read_bytes())
+    name = f"{source_id}.md" if source_id else "source.md"
+    return materialize_raw(
+        Path(project.vault_path),
+        source_id,
+        name,
+        (extracted_md or "").encode("utf-8"),
+    )
 
 
 def _actor_for_mode(store, tenant_id: str, mode: str, payload: dict) -> str:
@@ -117,21 +125,37 @@ def make_source_process_handler(store, gateway, blob_store):
                 {"mode": mode, "project_id": payload["project_id"]},
             )
 
-            with TemporaryDirectory(prefix="brain2-source-") as tmp:
-                runner_path = _raw_path_for_runner(
-                    Path(tmp), row, mode, raw_path, extracted_md
-                )
-                req = IngestRequest(
-                    project_id=payload["project_id"],
-                    tenant_id=tenant_id,
-                    source_type=mode,
-                    raw_path=runner_path,
-                    uploaded_by=payload.get("uploaded_by"),
-                )
-                dispatch_ingest(req, runners)
+            runner_path = _runner_raw_path(
+                store, payload["project_id"], row, mode, raw_path, extracted_md
+            )
+            req = IngestRequest(
+                project_id=payload["project_id"],
+                tenant_id=tenant_id,
+                source_type=mode,
+                raw_path=runner_path,
+                uploaded_by=payload.get("uploaded_by"),
+            )
+            dispatch_ingest(req, runners)
 
             set_source_status(store, tenant_id=tenant_id, source_id=source_id,
                               status="done")
+            if mode == "wiki":
+                from brain2.tasks.queue import enqueue
+
+                with store.transaction() as cx:
+                    enqueue(
+                        store,
+                        cx,
+                        tenant_id,
+                        "audit.run",
+                        {
+                            "source_id": source_id,
+                            "project_id": payload["project_id"],
+                            "tenant_id": tenant_id,
+                            "uploaded_by": payload.get("uploaded_by"),
+                            "attempt": 0,
+                        },
+                    )
             uploaded_by = payload.get("uploaded_by") or ""
             if uploaded_by:
                 try:

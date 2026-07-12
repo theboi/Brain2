@@ -23,10 +23,10 @@ import { resolveActiveProjectId, vaultLabel } from '@/lib/vaultSelection';
 
 // ── constants ─────────────────────────────────────────────────────────────────
 const INGEST_TYPE_ICON: Record<string, IconName> = { pdf: 'file', md: 'hash', url: 'globe', txt: 'file', img: 'image', code: 'code', audio: 'sparkles' };
-const INGEST_MODES: { id: string; label: string; icon: IconName; desc: string }[] = [
-  { id: 'wiki', label: 'Wiki', icon: 'wand', desc: 'Summarise with the LLM into a clean wiki page' },
-  { id: 'static', label: 'Static', icon: 'file', desc: 'Store the source as-is, no rewriting' },
-  { id: 'dynamic', label: 'Dynamic', icon: 'layers', desc: 'Link a live database — refreshes on change' },
+export const INGEST_MODES: { id: string; label: string; icon: IconName; desc: string }[] = [
+  { id: 'wiki', label: 'Wiki', icon: 'wand', desc: 'Curate into wiki pages with the LLM, then auto-audit against the source' },
+  { id: 'static', label: 'Static', icon: 'file', desc: 'Store verbatim and link into the wiki; no rewriting, not audited' },
+  { id: 'dynamic', label: 'Dynamic', icon: 'layers', desc: 'Link a live data source into the wiki; refreshes on change, not audited' },
 ];
 type AccessLevelId = 'none' | 'read' | 'write' | 'admin';
 type GuestRole = 'viewer' | 'editor' | 'admin';

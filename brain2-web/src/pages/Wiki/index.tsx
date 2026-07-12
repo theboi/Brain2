@@ -15,6 +15,7 @@ import { resolveActiveProjectId } from '@/lib/vaultSelection';
 import {
   useWorkspaceVaultPages, useVaultPage, useVaultHistory,
   useWritePage, useWikiTopicSources, useRevertCommit, useVaultHistoryDiff,
+  useWorkspaceOpenAuditCounts,
 } from '@/hooks/useVault';
 import { useReingest } from '@/hooks/useSources';
 import type { Project, VaultCommit } from '@/lib/types';
@@ -33,19 +34,22 @@ interface WikiFilter { project: string; filter: string; }
 interface LivePage { topic: string; zone: string; tldr: string | null; }
 // One vault and its wiki pages — the sidebar renders a folder per group.
 interface VaultGroup { project: Project; pages: LivePage[]; }
+type AuditCountMap = Record<string, Record<string, number>>;
 
 function wikiChipDefs(wf: WikiFilter, setWf: (f: WikiFilter) => void, _pages: LivePage[]): ChipDef[] {
   const filterOpts = [
     { value: 'all', label: 'All pages', icon: 'layers' as const },
     { value: 'recent', label: 'Edited last 7d', icon: 'clock' as const },
+    { value: 'audit', label: 'Has open audit', icon: 'alert' as const, tone: 'warning' },
   ];
   const fil = filterOpts.find((o) => o.value === wf.filter);
   return [
     { key: 'filter', icon: 'sliders', label: wf.filter === 'all' ? 'Filters' : (fil ? fil.label : 'Filters'), tone: fil && (fil as any).tone, active: wf.filter !== 'all', title: 'Filter', options: filterOpts, value: wf.filter, onPick: (v) => setWf({ ...wf, filter: v }), menuWidth: 200 },
   ];
 }
-function wikiPageMatches(topic: string, _wf: WikiFilter, q: string): boolean {
+function wikiPageMatches(topic: string, wf: WikiFilter, q: string, auditCount = 0): boolean {
   if (q && !topic.toLowerCase().includes(q.toLowerCase())) return false;
+  if (wf.filter === 'audit' && auditCount <= 0) return false;
   return true;
 }
 
@@ -54,7 +58,7 @@ function WikiSidebar({ wf, setWf, selectedTopic, selectedProject, onSelect, vaul
   wf: WikiFilter; setWf: (f: WikiFilter) => void;
   selectedTopic: string; selectedProject: string | null;
   onSelect: (projectId: string, topic: string) => void;
-  vaults: VaultGroup[]; width?: number;
+  vaults: VaultGroup[]; auditCounts: AuditCountMap; width?: number;
 }) {
   const [q, setQ] = useState('');
   const [openV, setOpenV] = useState<Record<string, boolean>>({});
@@ -67,14 +71,20 @@ function WikiSidebar({ wf, setWf, selectedTopic, selectedProject, onSelect, vaul
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
         {vaults.map(({ project, pages }) => {
-          const rows = pages.filter((p) => wikiPageMatches(p.topic, wf, q));
+          const projectCounts = auditCounts[project.project_id] ?? {};
+          const rows = pages.filter((p) => wikiPageMatches(p.topic, wf, q, projectCounts[p.topic] ?? 0));
           const open = openV[project.project_id] ?? true;
           return (
             <Folder key={project.project_id} label={project.name} count={rows.length} open={open}
               onToggle={() => setOpenV((o) => ({ ...o, [project.project_id]: !(o[project.project_id] ?? true) }))}>
-              {rows.map((p) => <NestRow key={p.topic} icon="wiki" label={p.topic}
+              {rows.map((p) => {
+                const n = projectCounts[p.topic] ?? 0;
+                return <NestRow key={p.topic} icon="wiki" label={p.topic}
                 active={p.topic === selectedTopic && project.project_id === selectedProject}
-                badge={null} onClick={() => onSelect(project.project_id, p.topic)} />)}
+                badge={n ? `${n} audit${n === 1 ? '' : 's'}` : null}
+                rightIcon={n ? 'alert' : null} rightTone="warning"
+                onClick={() => onSelect(project.project_id, p.topic)} />;
+              })}
               {!rows.length && <div style={{ padding: '4px 10px 8px 27px', fontSize: 11.5, color: 'var(--fg-faint)' }}>No matching pages</div>}
             </Folder>
           );
@@ -86,7 +96,7 @@ function WikiSidebar({ wf, setWf, selectedTopic, selectedProject, onSelect, vaul
 }
 
 // ── Mobile picker ────────────────────────────────────────────────────────────
-function WikiPageRow({ topic, tldr, onClick }: { topic: string; tldr: string | null; onClick: () => void }) {
+function WikiPageRow({ topic, tldr, auditCount, onClick }: { topic: string; tldr: string | null; auditCount: number; onClick: () => void }) {
   return (
     <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', textAlign: 'left', border: 'none', borderBottom: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', padding: '11px 16px', fontFamily: 'var(--ui-font)' }}>
       <span style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-2)', color: 'var(--fg-muted)' }}><Icon name="wiki" size={15} /></span>
@@ -95,6 +105,7 @@ function WikiPageRow({ topic, tldr, onClick }: { topic: string; tldr: string | n
           <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{topic}</span>
         </span>
         {tldr && <span style={{ display: 'block', marginTop: 3, fontSize: 11, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{tldr}</span>}
+        {auditCount > 0 && <span style={{ display: 'block', marginTop: 3, fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--mono-font)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{auditCount} audit{auditCount === 1 ? '' : 's'}</span>}
       </span>
       <Icon name="chevRight" size={15} color="var(--fg-faint)" />
     </button>
@@ -109,9 +120,16 @@ function VaultHeader({ name, count }: { name: string; count: number }) {
     </div>
   );
 }
-function WikiPicker({ wf, setWf, vaults, onSelect }: { wf: WikiFilter; setWf: (f: WikiFilter) => void; vaults: VaultGroup[]; onSelect: (projectId: string, topic: string) => void }) {
+function WikiPicker({ wf, setWf, vaults, auditCounts, onSelect }: { wf: WikiFilter; setWf: (f: WikiFilter) => void; vaults: VaultGroup[]; auditCounts: AuditCountMap; onSelect: (projectId: string, topic: string) => void }) {
   const [q, setQ] = useState('');
-  const groups = vaults.map((v) => ({ project: v.project, rows: v.pages.filter((p) => wikiPageMatches(p.topic, wf, q)) }));
+  const groups = vaults.map((v) => {
+    const projectCounts = auditCounts[v.project.project_id] ?? {};
+    return {
+      project: v.project,
+      rows: v.pages.filter((p) => wikiPageMatches(p.topic, wf, q, projectCounts[p.topic] ?? 0)),
+      counts: projectCounts,
+    };
+  });
   const total = groups.reduce((n, g) => n + g.rows.length, 0);
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
@@ -124,10 +142,10 @@ function WikiPicker({ wf, setWf, vaults, onSelect }: { wf: WikiFilter; setWf: (f
         <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{total} pages · {vaults.length} vault{vaults.length !== 1 ? 's' : ''}</div>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 'calc(72px + env(safe-area-inset-bottom, 0px))' }}>
-        {groups.map(({ project, rows }) => (
+        {groups.map(({ project, rows, counts }) => (
           <Fragment key={project.project_id}>
             <VaultHeader name={project.name} count={rows.length} />
-            {rows.map((p) => <WikiPageRow key={`${project.project_id}:${p.topic}`} topic={p.topic} tldr={p.tldr} onClick={() => onSelect(project.project_id, p.topic)} />)}
+            {rows.map((p) => <WikiPageRow key={`${project.project_id}:${p.topic}`} topic={p.topic} tldr={p.tldr} auditCount={counts[p.topic] ?? 0} onClick={() => onSelect(project.project_id, p.topic)} />)}
           </Fragment>
         ))}
         {!total && <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>No pages match these filters.</div>}
@@ -324,6 +342,7 @@ export function WikiPage() {
   // Pages for every vault in the workspace — one folder per vault in the sidebar.
   const projectIds = useMemo(() => projects.map((p) => p.project_id), [projects]);
   const pageResults = useWorkspaceVaultPages(projectIds);
+  const auditCountResults = useWorkspaceOpenAuditCounts(projectIds);
   // Keyed on a single stable-length string (a variable-length deps array makes
   // React skip recomputation when the array grows from empty — see useMemo docs).
   const pagesKey = pageResults.map((r) => r.dataUpdatedAt).join(',');
@@ -332,6 +351,15 @@ export function WikiPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projects, pagesKey],
   );
+  const auditCountsKey = auditCountResults.map((r) => r.dataUpdatedAt).join(',');
+  const auditCounts: AuditCountMap = useMemo(() => {
+    const out: AuditCountMap = {};
+    projects.forEach((project, i) => {
+      out[project.project_id] = auditCountResults[i]?.data?.counts ?? {};
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, auditCountsKey]);
 
   const { data: pageData, isLoading: pageLoading } = useVaultPage(projectId, topic);
   const { data: historyData } = useVaultHistory(projectId, topic);
@@ -433,8 +461,8 @@ export function WikiPage() {
 
   return (
     <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
-      {!isMobile && <WikiSidebar wf={wf} setWf={setWf} selectedTopic={topic ?? ''} selectedProject={projectId} onSelect={openPage} vaults={vaults} />}
-      {isMobile && !mobilePage ? <WikiPicker wf={wf} setWf={setWf} vaults={vaults} onSelect={openPage} /> : pageView}
+      {!isMobile && <WikiSidebar wf={wf} setWf={setWf} selectedTopic={topic ?? ''} selectedProject={projectId} onSelect={openPage} vaults={vaults} auditCounts={auditCounts} />}
+      {isMobile && !mobilePage ? <WikiPicker wf={wf} setWf={setWf} vaults={vaults} auditCounts={auditCounts} onSelect={openPage} /> : pageView}
       <AuditDrawer open={audit} onClose={() => setAudit(false)} topic={topic ?? ''} />
     </div>
   );
