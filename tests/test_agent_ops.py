@@ -381,14 +381,12 @@ def test_revoked_agent_ignores_stale_heartbeat_and_cannot_claim(lifecycle):
     assert store.get_todo("t1", "queued")["status"] == "queued"
 
 
-def test_list_workers_includes_deleted_row_for_transitional_runtime_lookup():
+def test_list_workers_excludes_deleted_rows_from_live_consumers():
     store, secrets = _setup()
     model = _model(store, secrets)
     agent = store.create_agent("t1", "Terra", model["model_id"], "medium")
     store.delete_agent("t1", agent["agent_id"])
-    worker = next(w for w in store.list_workers("t1") if w["name"] == "Terra")
-    assert worker["deleted_at"] is not None
-    assert worker["status"] == "offline" and worker["enabled"] is False
+    assert store.list_workers("t1") == []
 
 
 def test_non_unique_agent_integrity_error_is_not_reported_as_duplicate_name():

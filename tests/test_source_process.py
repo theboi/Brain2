@@ -105,6 +105,37 @@ def test_wiki_mode_assigns_agent_actor(store, tmp_path, monkeypatch):
     assert all(actor not in {"system", "", "wiki-agent"} for actor in actors)
 
 
+def test_wiki_actor_ignores_deleted_agent_when_live_agent_exists(
+        store, tmp_path, monkeypatch):
+    from brain2.tasks.source_process import make_source_process_handler
+
+    source_id, _root = _seed_source(store, tmp_path, mode="wiki")
+    store.ensure_workers("T", ["Ada", "Zed"])
+    workers = {worker["name"]: worker for worker in store.list_workers("T")}
+    store.delete_agent("T", workers["Ada"]["agent_id"])
+    raw_path = tmp_path / "raw.md"
+    raw_path.write_text("# raw\n", encoding="utf-8")
+    actors = []
+    monkeypatch.setattr(
+        "brain2.tasks.source_process.build_runners",
+        lambda store, gateway: {"wiki": lambda req: "ok"},
+    )
+    monkeypatch.setattr(
+        "brain2.tasks.source_process.record_best_effort_audit",
+        lambda store, tenant_id, actor_id, action, resource_id, payload:
+            actors.append(actor_id),
+    )
+    handler = make_source_process_handler(store, gateway=None, blob_store=None)
+    handler({
+        "task_id": "t1", "tenant_id": "T",
+        "payload": {
+            "source_id": source_id, "project_id": "p1", "mode": "wiki",
+            "raw_path": str(raw_path),
+        },
+    })
+    assert actors and set(actors) == {workers["Zed"]["agent_id"]}
+
+
 def test_source_process_materializes_into_raw(store, tmp_path, monkeypatch):
     from brain2.tasks.source_process import make_source_process_handler
 

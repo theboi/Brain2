@@ -1480,14 +1480,8 @@ class LocalStore:
                 )
 
     def list_workers(self, tenant_id: str) -> list[dict]:
-        """Temporary legacy roster, including inert soft-deleted name rows."""
-        rows = self._conn.execute(
-            "SELECT a.*, m.name AS model_name, m.provider AS model_provider, "
-            "m.status AS model_status FROM agents a "
-            "LEFT JOIN models m ON m.tenant_id=a.tenant_id AND m.model_id=a.model_id "
-            "WHERE a.tenant_id=? ORDER BY a.name", (tenant_id,)
-        ).fetchall()
-        return [self._agent_dict(row) for row in rows]
+        """Temporary compatibility alias for live configured agents."""
+        return self.list_agents(tenant_id)
 
     def worker_heartbeat(self, tenant_id: str, agent_id: str, now_iso: str,
                          status: str | None = None,

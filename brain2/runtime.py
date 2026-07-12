@@ -56,8 +56,13 @@ def run_worker(actx: AppContext, *, max_ticks: int | None = None,
     agent_ids: dict[str, str] = {}
     for tenant_id in actx.store.list_tenant_ids():
         actx.store.ensure_workers(tenant_id, [runtime_name])
-        worker = next(w for w in actx.store.list_workers(tenant_id)
-                      if w["name"] == runtime_name)
+        worker = next(
+            (w for w in actx.store.list_workers(tenant_id)
+             if w["name"] == runtime_name),
+            None,
+        )
+        if worker is None:
+            continue
         agent_ids[tenant_id] = worker["agent_id"]
         actx.store.worker_heartbeat(
             tenant_id, worker["agent_id"], now, status="idle",
@@ -74,8 +79,13 @@ def run_worker(actx: AppContext, *, max_ticks: int | None = None,
             if tenant_id in agent_ids:
                 continue
             actx.store.ensure_workers(tenant_id, [runtime_name])
-            worker = next(w for w in actx.store.list_workers(tenant_id)
-                          if w["name"] == runtime_name)
+            worker = next(
+                (w for w in actx.store.list_workers(tenant_id)
+                 if w["name"] == runtime_name),
+                None,
+            )
+            if worker is None:
+                continue
             agent_ids[tenant_id] = worker["agent_id"]
             actx.store.worker_heartbeat(
                 tenant_id, worker["agent_id"], _now_iso(), status="idle",

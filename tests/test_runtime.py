@@ -59,6 +59,18 @@ def test_named_runtimes_remain_distinct():
     assert {worker["name"] for worker in actx.store.list_workers("t1")} == {"Terra", "Atlas"}
 
 
+def test_runtime_skips_deleted_matching_name_without_reactivating_it():
+    actx = _actx()
+    actx.store.ensure_workers("t1", ["Terra"])
+    deleted_id = actx.store.list_workers("t1")[0]["agent_id"]
+    actx.store.delete_agent("t1", deleted_id)
+    run_worker(actx, max_ticks=1, agent_name="Terra")
+    assert actx.store.list_workers("t1") == []
+    deleted = actx.store.get_agent("t1", deleted_id, include_deleted=True)
+    assert deleted["deleted_at"] is not None
+    assert deleted["enabled"] is False and deleted["status"] == "offline"
+
+
 def test_init_tenant_bootstraps_and_token_works():
     store = LocalStore(":memory:")
     store.migrate()
