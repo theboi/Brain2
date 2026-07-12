@@ -25,7 +25,7 @@ def _client(tmp_path, monkeypatch):
             json={"tenant_id": "t1", "email": email, "password": "pw"},
         ).json()["token"]
 
-    tid = s.create_todo("t1", "ws1", "mem1", title="x")
+    tid = s.create_todo("t1", "ws1", "mem1", title="x", complexity="simple")
     return s, c, tid, tok("m1@t1.com"), tok("m3@t1.com")
 
 

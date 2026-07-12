@@ -365,7 +365,8 @@ def test_revoked_agent_ignores_stale_heartbeat_and_cannot_claim(lifecycle):
     agent = store.create_agent("t1", "Terra", model["model_id"], "medium")
     store.worker_heartbeat("t1", agent["agent_id"], "2026-07-01T00:00:00Z",
                            status="idle")
-    store.create_todo("t1", "ws1", "u1", todo_id="queued", title="work")
+    store.create_todo("t1", "ws1", "u1", todo_id="queued", title="work",
+                      complexity="medium")
     if lifecycle == "deleted":
         store.delete_agent("t1", agent["agent_id"])
     else:

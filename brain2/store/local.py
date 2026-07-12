@@ -1531,7 +1531,9 @@ class LocalStore:
                 if r["current_todo_id"]:
                     cx.execute(
                         "UPDATE todos SET status='queued', assigned_agent_id=NULL, "
-                        "started_at=NULL WHERE tenant_id=? AND todo_id=? "
+                        "memory_flushed=0, started_at=NULL, completed_at=NULL, "
+                        "tokens_total=NULL, cost_total=NULL, error=NULL, "
+                        "cancel_requested=0 WHERE tenant_id=? AND todo_id=? "
                         "AND status='running'",
                         (r["tenant_id"], r["current_todo_id"]),
                     )
@@ -1540,24 +1542,37 @@ class LocalStore:
 
     # --- todos ---
     def create_todo(self, tenant_id: str, workspace_id: str, requester_user_id: str,
-                    *, title: str, todo_id: str | None = None,
-                    model_pref: str | None = None,
+                    *, title: str, complexity, todo_id: str | None = None,
                     preferred_agent_id: str | None = None) -> str:
+        complexity = self._agent_complexity(complexity)
+        if type(preferred_agent_id) is not str and preferred_agent_id is not None:
+            raise Conflict("preferred_agent_id must be a string")
         todo_id = todo_id or uuid.uuid4().hex
         now = _now_iso()
         with self.transaction() as cx:
+            if preferred_agent_id is not None:
+                preferred = cx.execute(
+                    "SELECT 1 FROM agents WHERE tenant_id=? AND agent_id=? "
+                    "AND enabled=1 AND deleted_at IS NULL AND complexity=?",
+                    (tenant_id, preferred_agent_id, complexity),
+                ).fetchone()
+                if preferred is None:
+                    raise Conflict(
+                        "preferred_agent_id must identify an enabled, nondeleted "
+                        "tenant agent with the exact todo complexity"
+                    )
             cx.execute(
                 "INSERT INTO todos(todo_id, tenant_id, workspace_id, requester_user_id, "
-                "title, priority, status, model_pref, preferred_agent_id, "
+                "title, complexity, priority, status, preferred_agent_id, "
                 "memory_flushed, created_at) "
-                "VALUES (?,?,?,?,?,0,'queued',?,?,0,?)",
+                "VALUES (?,?,?,?,?,?,0,'queued',?,0,?)",
                 (
                     todo_id,
                     tenant_id,
                     workspace_id,
                     requester_user_id,
                     title,
-                    model_pref,
+                    complexity,
                     preferred_agent_id,
                     now,
                 ),
@@ -1586,24 +1601,25 @@ class LocalStore:
             )
 
     def requeue_todo(self, tenant_id: str, todo_id: str) -> None:
-        """Stop a running todo or continue a done one: queued, agent freed."""
+        """Continue a terminal todo with its complexity and conversation intact."""
         with self.transaction() as cx:
             row = cx.execute(
-                "SELECT assigned_agent_id FROM todos WHERE tenant_id=? AND todo_id=?",
+                "SELECT status FROM todos WHERE tenant_id=? AND todo_id=?",
                 (tenant_id, todo_id),
             ).fetchone()
-            if row and row["assigned_agent_id"]:
-                cx.execute(
-                    "UPDATE agents SET status='idle', current_todo_id=NULL, updated_at=? "
-                    "WHERE tenant_id=? AND agent_id=?",
-                    (_now_iso(), tenant_id, row["assigned_agent_id"]),
-                )
-            cx.execute(
+            if row is None:
+                raise NotFound(f"todo {todo_id!r} not found")
+            if row["status"] not in {"done", "failed"}:
+                raise Conflict("only a done or failed todo can be continued")
+            updated = cx.execute(
                 "UPDATE todos SET status='queued', assigned_agent_id=NULL, "
-                "memory_flushed=0, started_at=NULL, completed_at=NULL "
-                "WHERE tenant_id=? AND todo_id=?",
+                "memory_flushed=0, started_at=NULL, completed_at=NULL, "
+                "tokens_total=NULL, cost_total=NULL, error=NULL, cancel_requested=0 "
+                "WHERE tenant_id=? AND todo_id=? AND status IN ('done','failed')",
                 (tenant_id, todo_id),
-            )
+            ).rowcount
+            if updated != 1:
+                raise Conflict("todo continue constraint violation")
 
     def claim_todo_for_agent(self, tenant_id: str, agent_id: str) -> dict | None:
         """Atomically claim the top eligible queued todo for an idle agent."""
@@ -1611,17 +1627,31 @@ class LocalStore:
         now = _now_iso()
         with self.transaction() as cx:
             agent = cx.execute(
-                "SELECT agent_id FROM agents WHERE tenant_id=? AND agent_id=? "
-                "AND status='idle' AND enabled=1 AND deleted_at IS NULL",
+                "SELECT a.agent_id, a.model_id, a.complexity, m.max_concurrency "
+                "FROM agents a JOIN models m "
+                "ON m.tenant_id=a.tenant_id AND m.model_id=a.model_id "
+                "WHERE a.tenant_id=? AND a.agent_id=? AND a.status='idle' "
+                "AND a.enabled=1 AND a.deleted_at IS NULL AND m.status='ready'",
                 (tenant_id, agent_id),
             ).fetchone()
             if agent is None:
                 return None
+            running = cx.execute(
+                "SELECT COUNT(*) AS n FROM todos t JOIN agents assigned "
+                "ON assigned.tenant_id=t.tenant_id "
+                "AND assigned.agent_id=t.assigned_agent_id "
+                "WHERE t.tenant_id=? AND t.status='running' "
+                "AND assigned.model_id=?",
+                (tenant_id, agent["model_id"]),
+            ).fetchone()["n"]
+            if running >= agent["max_concurrency"]:
+                return None
             row = cx.execute(
                 "SELECT todo_id FROM todos WHERE tenant_id=? AND status='queued' "
+                "AND complexity=? "
                 "AND (preferred_agent_id IS NULL OR preferred_agent_id=?) "
                 "ORDER BY priority DESC, created_at ASC LIMIT 1",
-                (tenant_id, agent_id),
+                (tenant_id, agent["complexity"], agent_id),
             ).fetchone()
             if not row:
                 return None
@@ -1636,8 +1666,10 @@ class LocalStore:
                 return None
             todo_updated = cx.execute(
                 "UPDATE todos SET status='running', assigned_agent_id=?, started_at=? "
-                "WHERE tenant_id=? AND todo_id=? AND status='queued'",
-                (agent_id, now, tenant_id, todo_id),
+                "WHERE tenant_id=? AND todo_id=? AND status='queued' "
+                "AND complexity=? AND (preferred_agent_id IS NULL OR "
+                "preferred_agent_id=?)",
+                (agent_id, now, tenant_id, todo_id, agent["complexity"], agent_id),
             ).rowcount
             if todo_updated != 1:
                 raise Conflict("todo claim constraint violation")
@@ -1647,28 +1679,93 @@ class LocalStore:
             ).fetchone()
         return dict(claimed)
 
+    def finish_todo(self, tenant_id: str, todo_id: str, *, status: str,
+                    conversation_id: str | None, tokens_total: int | None,
+                    cost_total: str | None, error: str | None) -> None:
+        if status not in {"done", "failed"}:
+            raise Conflict("status must be done or failed")
+        now = _now_iso()
+        with self.transaction() as cx:
+            row = cx.execute(
+                "SELECT assigned_agent_id, status FROM todos "
+                "WHERE tenant_id=? AND todo_id=?",
+                (tenant_id, todo_id),
+            ).fetchone()
+            if row is None:
+                raise NotFound(f"todo {todo_id!r} not found")
+            if row["status"] != "running":
+                raise Conflict("only a running todo can be finished")
+            updated = cx.execute(
+                "UPDATE todos SET status=?, completed_at=?, memory_flushed=1, "
+                "conversation_id=COALESCE(?, conversation_id), tokens_total=?, "
+                "cost_total=?, error=?, cancel_requested=0 "
+                "WHERE tenant_id=? AND todo_id=? AND status='running'",
+                (status, now, conversation_id, tokens_total, cost_total,
+                 error if status == "failed" else None, tenant_id, todo_id),
+            ).rowcount
+            if updated != 1:
+                raise Conflict("todo finish constraint violation")
+            if row["assigned_agent_id"]:
+                agent_updated = cx.execute(
+                    "UPDATE agents SET status='idle', current_todo_id=NULL, updated_at=? "
+                    "WHERE tenant_id=? AND agent_id=? AND status='busy' "
+                    "AND current_todo_id=?",
+                    (now, tenant_id, row["assigned_agent_id"], todo_id),
+                ).rowcount
+                if agent_updated != 1:
+                    raise Conflict("todo finish agent release constraint violation")
+
     def complete_todo(self, tenant_id: str, todo_id: str, *,
                       conversation_id: str | None,
                       tokens_total: int | None,
                       cost_total: str | None) -> None:
+        """Compatibility wrapper for runtimes that still report only success."""
+        self.finish_todo(
+            tenant_id, todo_id, status="done", conversation_id=conversation_id,
+            tokens_total=tokens_total, cost_total=cost_total, error=None,
+        )
+
+    def request_todo_stop(self, tenant_id: str, todo_id: str) -> None:
+        with self.transaction() as cx:
+            updated = cx.execute(
+                "UPDATE todos SET cancel_requested=1 WHERE tenant_id=? "
+                "AND todo_id=? AND status='running'",
+                (tenant_id, todo_id),
+            ).rowcount
+            if updated != 1:
+                raise Conflict("only a running todo can be stopped")
+
+    def requeue_cancelled_todo(self, tenant_id: str, todo_id: str) -> None:
         now = _now_iso()
         with self.transaction() as cx:
             row = cx.execute(
-                "SELECT assigned_agent_id FROM todos WHERE tenant_id=? AND todo_id=?",
+                "SELECT assigned_agent_id FROM todos WHERE tenant_id=? "
+                "AND todo_id=? AND status='running' AND cancel_requested=1",
                 (tenant_id, todo_id),
             ).fetchone()
-            cx.execute(
-                "UPDATE todos SET status='done', completed_at=?, memory_flushed=1, "
-                "conversation_id=COALESCE(?, conversation_id), tokens_total=?, "
-                "cost_total=? WHERE tenant_id=? AND todo_id=?",
-                (now, conversation_id, tokens_total, cost_total, tenant_id, todo_id),
-            )
-            if row and row["assigned_agent_id"]:
-                cx.execute(
-                    "UPDATE agents SET status='idle', current_todo_id=NULL, updated_at=? "
-                    "WHERE tenant_id=? AND agent_id=?",
-                    (now, tenant_id, row["assigned_agent_id"]),
-                )
+            if row is None:
+                raise Conflict("todo must be running with cancellation requested")
+            updated = cx.execute(
+                "UPDATE todos SET status='queued', assigned_agent_id=NULL, "
+                "memory_flushed=0, started_at=NULL, completed_at=NULL, "
+                "tokens_total=NULL, cost_total=NULL, error=NULL, cancel_requested=0 "
+                "WHERE tenant_id=? AND todo_id=? AND status='running' "
+                "AND cancel_requested=1",
+                (tenant_id, todo_id),
+            ).rowcount
+            if updated != 1:
+                raise Conflict("cancelled todo requeue constraint violation")
+            if row["assigned_agent_id"]:
+                agent_updated = cx.execute(
+                    "UPDATE agents SET status='idle', current_todo_id=NULL, "
+                    "updated_at=? WHERE tenant_id=? AND agent_id=? "
+                    "AND status='busy' AND current_todo_id=?",
+                    (now, tenant_id, row["assigned_agent_id"], todo_id),
+                ).rowcount
+                if agent_updated != 1:
+                    raise Conflict(
+                        "cancelled todo agent release constraint violation"
+                    )
 
     def set_todo_conversation(self, tenant_id: str, todo_id: str,
                               conversation_id: str) -> None:

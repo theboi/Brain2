@@ -21,20 +21,33 @@ def _actx():
     s.create_user("t1", "mem1", "m1@t1.com", "member", "M1")
     s.create_workspace("t1", "Eng", workspace_id="ws1")
     sm = SecretManager(s, b"0" * 32)
-    make_models_create(s, sm)(
+    model = make_models_create(s, sm)(
         RequestContext(tenant_id="t1", user_id="mem1", tenant_role="member"),
         {"name": "stub", "provider": "stub", "model": "stub"},
     )
     actx = build_app_context(store=s, gateway=object())
-    return actx, s
+    return actx, s, model["model_id"]
+
+
+def _worker(s, model_id, name):
+    now = _now()
+    agent_id = name.lower()
+    s._conn.execute(
+        "INSERT INTO agents(agent_id,tenant_id,name,status,current_todo_id,"
+        "created_at,updated_at,model_id,complexity,enabled) "
+        "VALUES (?, 't1', ?, 'offline', NULL, ?, ?, ?, 'medium', 1)",
+        (agent_id, name, now, now, model_id),
+    )
+    s._conn.commit()
+    return agent_id
 
 
 def test_idle_worker_runs_and_completes_a_todo():
-    actx, s = _actx()
-    s.ensure_workers("t1", ["Jarvis"])
-    wid = s.list_workers("t1")[0]["agent_id"]
+    actx, s, model_id = _actx()
+    wid = _worker(s, model_id, "Jarvis")
     s.worker_heartbeat("t1", wid, _now(), status="idle")
-    tid = s.create_todo("t1", "ws1", "mem1", title="say ok", model_pref="auto")
+    tid = s.create_todo("t1", "ws1", "mem1", title="say ok",
+                        complexity="medium")
     did = todo_tick(actx)
     assert did is True
     done = s.get_todo("t1", tid)
@@ -45,12 +58,14 @@ def test_idle_worker_runs_and_completes_a_todo():
 
 
 def test_tick_only_claims_for_current_runtime():
-    actx, s = _actx()
-    s.ensure_workers("t1", ["Terra", "Atlas"])
+    actx, s, model_id = _actx()
+    _worker(s, model_id, "Terra")
+    _worker(s, model_id, "Atlas")
     workers = {worker["name"]: worker for worker in s.list_workers("t1")}
     for worker in workers.values():
         s.worker_heartbeat("t1", worker["agent_id"], _now(), status="idle")
     todo_id = s.create_todo("t1", "ws1", "mem1", title="terra only",
+                            complexity="medium",
                             preferred_agent_id=workers["Terra"]["agent_id"])
     assert todo_tick(actx, {"t1": workers["Atlas"]["agent_id"]}) is False
     assert s.get_todo("t1", todo_id)["status"] == "queued"
@@ -59,11 +74,12 @@ def test_tick_only_claims_for_current_runtime():
 
 
 def test_provider_failure_is_persisted_in_transcript():
-    actx, s = _actx()
-    s.ensure_workers("t1", ["Terra"])
+    actx, s, model_id = _actx()
+    _worker(s, model_id, "Terra")
     worker = s.list_workers("t1")[0]
     s.worker_heartbeat("t1", worker["agent_id"], _now(), status="idle")
-    todo_id = s.create_todo("t1", "ws1", "mem1", title="fail visibly")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="fail visibly",
+                            complexity="medium")
 
     def failed_turn(*args, **kwargs):
         yield "error", {"message": "provider unavailable"}

@@ -2,7 +2,7 @@
 import pytest
 
 from brain2.context import RequestContext
-from brain2.errors import NotFound
+from brain2.errors import Conflict, NotFound
 from brain2.store.local import LocalStore
 from brain2.todo_ops import (
     make_todos_create,
@@ -10,7 +10,10 @@ from brain2.todo_ops import (
     make_todos_get,
     make_todos_list,
     make_todos_set_priority,
+    make_todos_stop,
+    register_todo_ops,
 )
+from brain2.operations import OperationRegistry
 from brain2.agent_ops import make_agents_list
 from brain2.model_ops import make_models_create
 from brain2.secrets import SecretManager
@@ -38,10 +41,19 @@ def _ctx(uid, role="member"):
     return RequestContext(tenant_id="t1", user_id=uid, tenant_role=role)
 
 
-def test_create_sets_requester_and_lists_own():
+def _create(s, uid="mem1", **overrides):
+    params = {"title": "do x", "workspace_id": "ws1", "complexity": "medium"}
+    params.update(overrides)
+    return make_todos_create(s)(_ctx(uid), params)
+
+
+def test_create_sets_requester_complexity_and_truthful_model_fields():
     s = _store()
-    out = make_todos_create(s)(_ctx("mem1"), {"title": "do x", "workspace_id": "ws1"})
+    out = _create(s)
     assert out["requester_user_id"] == "mem1" and out["status"] == "queued"
+    assert out["complexity"] == "medium" and out["error"] is None
+    assert out["model_id"] is None and out["model_name"] is None
+    assert out["agent_id"] is None and out["agent_name"] is None
     listed = make_todos_list(s)(_ctx("mem1"), {})["todos"]
     assert [t["todo_id"] for t in listed] == [out["todo_id"]]
 
@@ -49,7 +61,7 @@ def test_create_sets_requester_and_lists_own():
 def test_workspace_admin_can_see_workspace_todo_but_stranger_cannot():
     s = _store()
     s.create_user("t1", "mem3", "m3@t1.com", "member", "M3")
-    other = make_todos_create(s)(_ctx("mem1"), {"title": "x", "workspace_id": "ws1"})["todo_id"]
+    other = _create(s, title="x")["todo_id"]
     assert make_todos_list(s)(_ctx("mem3"), {})["todos"] == []
     assert any(t["todo_id"] == other for t in make_todos_list(s)(_ctx("mem2"), {})["todos"])
 
@@ -57,14 +69,14 @@ def test_workspace_admin_can_see_workspace_todo_but_stranger_cannot():
 def test_get_denies_when_not_visible():
     s = _store()
     s.create_user("t1", "mem3", "m3@t1.com", "member", "M3")
-    tid = make_todos_create(s)(_ctx("mem1"), {"title": "x", "workspace_id": "ws1"})["todo_id"]
+    tid = _create(s, title="x")["todo_id"]
     with pytest.raises(NotFound):
         make_todos_get(s)(_ctx("mem3"), {"todo_id": tid})
 
 
 def test_owner_sees_all_and_can_mutate():
     s = _store()
-    tid = make_todos_create(s)(_ctx("mem1"), {"title": "x", "workspace_id": "ws1"})["todo_id"]
+    tid = _create(s, title="x")["todo_id"]
     assert any(
         t["todo_id"] == tid
         for t in make_todos_list(s)(_ctx("owner1", "owner"), {})["todos"]
@@ -76,7 +88,7 @@ def test_owner_sees_all_and_can_mutate():
 def test_member_cannot_mutate_others_todo():
     s = _store()
     s.create_user("t1", "mem3", "m3@t1.com", "member", "M3")
-    tid = make_todos_create(s)(_ctx("mem1"), {"title": "x", "workspace_id": "ws1"})["todo_id"]
+    tid = _create(s, title="x")["todo_id"]
     with pytest.raises(NotFound):
         make_todos_delete(s)(_ctx("mem3"), {"todo_id": tid})
 
@@ -85,7 +97,7 @@ def test_agents_list_hides_todo_summary_when_not_visible():
     s = _store()
     wid = s.list_workers("t1")[0]["agent_id"]
     s.worker_heartbeat("t1", wid, "2026-06-15T10:00:00Z", status="idle")
-    tid = make_todos_create(s)(_ctx("mem1"), {"title": "secret", "workspace_id": "ws1"})["todo_id"]
+    tid = _create(s, title="secret")["todo_id"]
     claimed = s.claim_todo_for_agent("t1", wid)
     assert claimed["todo_id"] == tid
     s.create_user("t1", "mem3", "m3@t1.com", "member", "M3")
@@ -96,3 +108,70 @@ def test_agents_list_hides_todo_summary_when_not_visible():
     roster1 = make_agents_list(s)(_ctx("mem1"), {})["agents"]
     card1 = next(a for a in roster1 if a["agent_id"] == wid)
     assert card1["todo_summary"]["title"] == "secret"
+
+
+@pytest.mark.parametrize("params,match", [
+    ({"title": "x", "workspace_id": "ws1"}, "complexity"),
+    ({"title": "x", "workspace_id": "ws1", "complexity": "medium", "model_pref": "auto"}, "unsupported"),
+    ({"title": "x", "workspace_id": "ws1", "complexity": "medium", "extra": 1}, "unsupported"),
+    ({"title": 1, "workspace_id": "ws1", "complexity": "medium"}, "title"),
+    ({"title": "x", "workspace_id": [], "complexity": "medium"}, "workspace_id"),
+    ({"title": "x", "workspace_id": "ws1", "complexity": True}, "complexity"),
+    ({"title": "x", "workspace_id": "ws1", "complexity": "medium", "preferred_agent_id": 1}, "preferred_agent_id"),
+])
+def test_create_rejects_unknown_missing_and_wrong_typed_parameters(params, match):
+    with pytest.raises(Conflict, match=match):
+        make_todos_create(_store())(_ctx("mem1"), params)
+
+
+def test_create_preferred_agent_must_match_exact_complexity_but_need_not_be_idle():
+    s = _store()
+    agent = s.list_agents("t1")[0]
+    assert agent["status"] == "offline"
+    out = _create(s, preferred_agent_id=agent["agent_id"])
+    assert out["preferred_agent_id"] == agent["agent_id"]
+    with pytest.raises(Conflict, match="preferred_agent_id"):
+        _create(s, complexity="hard", preferred_agent_id=agent["agent_id"])
+
+
+def test_failed_completion_is_visible_with_historical_conversation_model():
+    s = _store()
+    agent = s.list_agents("t1")[0]
+    s.worker_heartbeat("t1", agent["agent_id"], "2026-07-01T00:00:00Z", status="idle")
+    todo = _create(s)
+    s.claim_todo_for_agent("t1", agent["agent_id"])
+    model_id = agent["model_id"]
+    s._conn.execute(
+        "INSERT INTO conversations(conversation_id,tenant_id,agent_id,user_id,title,"
+        "created_at,updated_at,model_id,runtime_agent_id) VALUES "
+        "('conv','t1',?,'mem1','x','now','now',?,?)",
+        (model_id, model_id, agent["agent_id"]),
+    )
+    s._conn.commit()
+    s.finish_todo("t1", todo["todo_id"], status="failed", conversation_id="conv",
+                  tokens_total=3, cost_total=None, error="provider failed")
+    visible = make_todos_get(s)(_ctx("mem1"), {"todo_id": todo["todo_id"]})["todo"]
+    assert visible["status"] == "failed" and visible["error"] == "provider failed"
+    assert visible["agent_id"] == agent["agent_id"] and visible["agent_name"] == "Jarvis"
+    assert visible["model_id"] == model_id and visible["model_name"] == "Runtime"
+
+
+def test_stop_only_requests_cooperative_cancellation():
+    s = _store()
+    agent = s.list_agents("t1")[0]
+    s.worker_heartbeat("t1", agent["agent_id"], "2026-07-01T00:00:00Z", status="idle")
+    todo = _create(s)
+    s.claim_todo_for_agent("t1", agent["agent_id"])
+    stopped = make_todos_stop(s)(_ctx("mem1"), {"todo_id": todo["todo_id"]})
+    assert stopped["status"] == "running" and stopped["cancel_requested"] == 1
+    assert s.get_agent("t1", agent["agent_id"])["status"] == "busy"
+
+
+def test_registration_requires_complexity_and_omits_model_pref():
+    ops = OperationRegistry()
+    register_todo_ops(ops, _store())
+    spec = ops.get("todos:create")
+    assert [p["name"] for p in spec.params] == [
+        "title", "workspace_id", "complexity", "preferred_agent_id"
+    ]
+    assert spec.params[2]["choices"] == ["simple", "medium", "hard", "complex"]

@@ -4,6 +4,33 @@ from __future__ import annotations
 from brain2.errors import Conflict, NotFound
 
 
+COMPLEXITIES = ("simple", "medium", "hard", "complex")
+
+
+def _create_params(params):
+    if not isinstance(params, dict):
+        raise Conflict("operation parameters must be an object")
+    allowed = {"title", "workspace_id", "complexity", "preferred_agent_id"}
+    unknown = set(params) - allowed
+    if unknown:
+        raise Conflict(f"unsupported parameters: {sorted(unknown)}")
+    for field in ("title", "workspace_id", "complexity"):
+        if field not in params:
+            raise Conflict(f"{field} is required")
+    normalized = dict(params)
+    for field in allowed:
+        if field not in normalized:
+            continue
+        if type(normalized[field]) is not str:
+            raise Conflict(f"{field} must be a string")
+        normalized[field] = normalized[field].strip()
+        if not normalized[field]:
+            raise Conflict(f"{field} is required")
+    if normalized["complexity"] not in COMPLEXITIES:
+        raise Conflict("complexity must be one of simple, medium, hard, complex")
+    return normalized
+
+
 def _row(row) -> dict:
     return {k: row[k] for k in row.keys()}
 
@@ -11,15 +38,22 @@ def _row(row) -> dict:
 def _with_model(store, todo: dict) -> dict:
     """Attach truthful resolved/selected model metadata to a todo response."""
     model_id = None
+    agent = None
+    if todo.get("assigned_agent_id"):
+        agent = store._conn.execute(
+            "SELECT agent_id, name, model_id FROM agents "
+            "WHERE tenant_id=? AND agent_id=?",
+            (todo["tenant_id"], todo["assigned_agent_id"]),
+        ).fetchone()
     if todo.get("conversation_id"):
         conversation = store._conn.execute(
-            "SELECT agent_id FROM conversations WHERE tenant_id=? AND conversation_id=?",
+            "SELECT model_id FROM conversations WHERE tenant_id=? AND conversation_id=?",
             (todo["tenant_id"], todo["conversation_id"]),
         ).fetchone()
         if conversation:
-            model_id = conversation["agent_id"]
-    if not model_id and todo.get("model_pref") not in (None, "auto", "cloud", "local"):
-        model_id = todo["model_pref"]
+            model_id = conversation["model_id"]
+    if not model_id and agent:
+        model_id = agent["model_id"]
     model = None
     if model_id:
         model = store._conn.execute(
@@ -27,6 +61,8 @@ def _with_model(store, todo: dict) -> dict:
             (todo["tenant_id"], model_id),
         ).fetchone()
     result = dict(todo)
+    result["agent_id"] = agent["agent_id"] if agent else None
+    result["agent_name"] = agent["name"] if agent else None
     result["model_id"] = model["model_id"] if model else None
     result["model_name"] = model["name"] if model else None
     result["model_provider"] = model["provider"] if model else None
@@ -81,18 +117,13 @@ def make_todos_get(store):
 
 def make_todos_create(store):
     def handler(ctx, params):
-        title = (params.get("title") or "").strip()
-        workspace_id = params.get("workspace_id")
-        if not title:
-            raise Conflict("title is required")
-        if not workspace_id:
-            raise Conflict("workspace_id is required")
+        params = _create_params(params)
         todo_id = store.create_todo(
             ctx.tenant_id,
-            workspace_id,
+            params["workspace_id"],
             ctx.user_id,
-            title=title,
-            model_pref=params.get("model_pref"),
+            title=params["title"],
+            complexity=params["complexity"],
             preferred_agent_id=params.get("preferred_agent_id"),
         )
         return _with_model(store, store.get_todo(ctx.tenant_id, todo_id))
@@ -114,7 +145,7 @@ def make_todos_set_priority(store):
 def make_todos_stop(store):
     def handler(ctx, params):
         _mutable_or_404(store, ctx, params["todo_id"])
-        store.requeue_todo(ctx.tenant_id, params["todo_id"])
+        store.request_todo_stop(ctx.tenant_id, params["todo_id"])
         return store.get_todo(ctx.tenant_id, params["todo_id"])
 
     return handler
@@ -170,7 +201,8 @@ def register_todo_ops(ops, store):
         params=[
             p(name="title", type="str", required=True),
             p(name="workspace_id", type="str", required=True),
-            p(name="model_pref", type="str", required=False),
+            p(name="complexity", type="str", required=True,
+              choices=list(COMPLEXITIES)),
             p(name="preferred_agent_id", type="str", required=False),
         ],
     )
