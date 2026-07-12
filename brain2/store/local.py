@@ -1297,11 +1297,10 @@ class LocalStore:
         return model
 
     def create_agent(self, tenant_id: str, name, model_id: str,
-                     complexity, enabled: bool = True) -> dict:
+                     complexity) -> dict:
         name = self._agent_name(name)
         model_id = self._agent_model_id(model_id)
         complexity = self._agent_complexity(complexity)
-        enabled = self._agent_enabled(enabled)
         agent_id = uuid.uuid4().hex
         now = _now_iso()
         try:
@@ -1313,7 +1312,7 @@ class LocalStore:
                     "model_id, complexity, enabled, deleted_at) "
                     "VALUES (?,?,?,'offline',NULL,NULL,?,?,?,?,?,NULL)",
                     (agent_id, tenant_id, name, now, now, model_id, complexity,
-                     int(enabled)),
+                     1),
                 )
         except sqlite3.IntegrityError as exc:
             raise Conflict(f"agent name {name!r} already exists") from exc
@@ -1368,10 +1367,6 @@ class LocalStore:
                 ).fetchone()
                 if row is None:
                     raise NotFound(f"agent {agent_id!r} not found")
-                if "model_id" in normalized:
-                    self._ready_runtime_model(
-                        cx, tenant_id, normalized["model_id"]
-                    )
                 actual = {
                     field: value
                     for field, value in normalized.items()
@@ -1379,6 +1374,10 @@ class LocalStore:
                         bool(row[field]) if field == "enabled" else row[field]
                     )
                 }
+                if "model_id" in actual:
+                    self._ready_runtime_model(
+                        cx, tenant_id, actual["model_id"]
+                    )
                 protected = ("model_id", "complexity", "enabled")
                 changed_protected = any(field in actual for field in protected)
                 if row["status"] == "busy" and changed_protected:

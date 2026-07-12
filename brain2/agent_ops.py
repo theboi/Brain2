@@ -1,6 +1,8 @@
 """Durable configured-agent CRUD and live tenant roster operations."""
 from __future__ import annotations
 
+from brain2.errors import Conflict
+
 
 COMPLEXITIES = ("simple", "medium", "hard", "complex")
 
@@ -47,12 +49,13 @@ def make_agents_list(store):
 
 def make_agents_create(store):
     def handler(ctx, params):
+        if "enabled" in params:
+            raise Conflict("enabled is not supported when creating an agent")
         agent = store.create_agent(
             ctx.tenant_id,
             params.get("name"),
             params.get("model_id"),
             params.get("complexity"),
-            params.get("enabled", True),
         )
         return _roster_card(store, ctx, agent)
 
@@ -100,7 +103,6 @@ def register_agent_ops(ops, store):
                 "name": "complexity", "type": "str", "required": True,
                 "choices": list(COMPLEXITIES),
             },
-            {"name": "enabled", "type": "bool", "required": False},
         ],
     )
     ops.register(

@@ -143,7 +143,7 @@ def test_list_returns_model_and_live_runtime_fields_and_omits_deleted():
     model = _model(store, secrets)
     created = make_agents_create(store)(
         _ctx(), {"name": "Terra", "model_id": model["model_id"],
-                 "complexity": "hard", "enabled": False}
+                 "complexity": "hard"}
     )
     rows = make_agents_list(store)(_ctx(), {})["agents"]
     assert rows == [{
@@ -211,6 +211,24 @@ def test_busy_noop_update_preserves_live_state_and_returns_metadata():
     assert unchanged["model_name"] == "Runtime"
 
 
+def test_busy_same_model_noop_survives_model_becoming_paused():
+    store, secrets = _setup()
+    model = _model(store, secrets)
+    agent = store.create_agent("t1", "Terra", model["model_id"], "medium")
+    store.worker_heartbeat("t1", agent["agent_id"], "2026-07-01T00:00:00Z",
+                           status="busy")
+    store._conn.execute(
+        "UPDATE models SET status='paused' WHERE tenant_id='t1' AND model_id=?",
+        (model["model_id"],),
+    )
+    store._conn.commit()
+    unchanged = make_agents_update(store)(_ctx(), {
+        "agent_id": agent["agent_id"], "model_id": model["model_id"],
+    })
+    assert unchanged["status"] == "busy"
+    assert unchanged["model_status"] == "paused"
+
+
 def test_update_validates_model_complexity_name_and_duplicates():
     store, secrets = _setup()
     ready = _model(store, secrets, name="Ready")
@@ -267,7 +285,7 @@ def test_registration_has_exact_actions_and_parameters():
     register_agent_ops(ops, store)
     assert ops.get("agents:list").action == "use_agents"
     expected = {
-        "agents:create": ["name", "model_id", "complexity", "enabled"],
+        "agents:create": ["name", "model_id", "complexity"],
         "agents:update": ["agent_id", "name", "model_id", "complexity", "enabled"],
         "agents:delete": ["agent_id"],
     }
@@ -280,3 +298,17 @@ def test_registration_has_exact_actions_and_parameters():
             p for p in ops.get(operation).params if p["name"] == "complexity"
         )
         assert complexity["choices"] == list(COMPLEXITIES)
+
+
+def test_public_create_rejects_enabled_and_always_creates_enabled():
+    store, secrets = _setup()
+    model = _model(store, secrets)
+    create = make_agents_create(store)
+    with pytest.raises(Conflict, match="enabled"):
+        create(_ctx(), {"name": "Terra", "model_id": model["model_id"],
+                        "complexity": "medium", "enabled": False})
+    created = create(
+        _ctx(), {"name": "Terra", "model_id": model["model_id"],
+                 "complexity": "medium"}
+    )
+    assert created["enabled"] is True and created["status"] == "offline"
