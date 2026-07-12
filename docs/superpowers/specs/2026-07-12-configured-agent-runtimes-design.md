@@ -76,6 +76,7 @@ Each row contains:
 - required `model_id` referencing `models`;
 - required `complexity` constrained to `simple|medium|hard|complex`;
 - `enabled` boolean;
+- nullable `deleted_at` for soft deletion that preserves historical identity;
 - runtime `status` constrained to `idle|busy|offline`;
 - nullable `current_todo_id`;
 - nullable `last_heartbeat`;
@@ -84,9 +85,10 @@ Each row contains:
 `agents:create`, `agents:update`, and `agents:delete` are owner/admin management
 operations. Creation requires a ready registered model. Updating an agent's
 model or complexity is rejected while it is busy. Disabling an idle agent makes
-it offline and ineligible. Deleting a busy agent is rejected; deletion of an
-idle agent preserves historical todo and conversation attribution by retaining
-their stored IDs/names in completed records rather than cascading history.
+it offline and ineligible. Deleting a busy agent is rejected. Deleting an idle
+agent soft-deletes the row, clears its model reference, and preserves its ID and
+name for historical todo and conversation attribution. Deleted rows are omitted
+from the live roster and runtime supervision.
 
 `agents:list` is a live roster operation available to authorized users. It
 returns the agent's model display name/provider, complexity, enabled state,
@@ -100,7 +102,8 @@ values. Existing rows migrate to `medium`, preserving data while making the
 new invariant total.
 
 Todos retain requester, workspace, priority, status, conversation, timing,
-token, and cost fields. Status becomes `queued|running|done|failed` so provider
+token, cost, and cancellation fields. Status becomes
+`queued|running|done|failed` so provider
 or runtime errors are never represented as successful completion. A failed todo
 keeps a user-visible error message in its transcript and releases all capacity.
 
@@ -114,8 +117,10 @@ Conversations gain explicit runtime attribution where necessary so `agent_id`
 means the configured agent and `model_id` means the selected registered model.
 Existing schema fields that currently overload `conversation.agent_id` as a
 model identifier are migrated without losing history. Continuing a todo reuses
-its durable conversation. It returns to the queue at the same complexity and
-may be claimed by another eligible agent unless explicitly pinned.
+its durable conversation and rebuilds model context from persisted message
+history; it never repeats the original title as a new user turn. It returns to
+the queue at the same complexity and may be claimed by another eligible agent
+unless explicitly pinned.
 
 ## Runtime supervision and claiming
 
@@ -148,6 +153,12 @@ for agent and model capacity. On shutdown or crash, stale-heartbeat recovery
 requeues orphaned running todos, clears their agent assignment, and makes the
 agent eligible after the runtime returns. Recovery never loses the transcript
 already persisted.
+
+Stop is cooperative. `todos:stop` records a durable cancellation request while
+the todo remains running and continues consuming its agent/model capacity. The
+runtime observes the request between provider/tool steps, then requeues the todo
+and releases the agent. A todo must never become claimable while its previous
+execution future can still persist output.
 
 No-ready-model work cannot be silently marked done. The normal UI cannot create
 an agent against an unavailable model, and the claim guard will leave work
@@ -194,7 +205,7 @@ stored key exists. Tests use the configured provider and endpoint.
   `preferred_agent_id` must be eligible for that exact complexity.
 - `todos:list/get` return complexity, assigned agent, resolved model metadata,
   status, timing, usage, and visible transcript data.
-- Priority, stop/requeue, delete, continue, and SSE behavior remain live and
+- Priority, cooperative stop/requeue, delete, continue, and SSE behavior remain live and
   visibility checked. Continue preserves complexity.
 - Todo creation is allowed when no matching agent is currently idle because the
   queue is durable. The UI clearly reports whether matching agents exist; work
@@ -288,4 +299,3 @@ tests remain mandatory.
 - Provider-side autoscaling or rate-limit prediction.
 - More than one complexity per agent.
 - Cross-agent delegation or subtasks.
-
