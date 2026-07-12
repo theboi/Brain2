@@ -15,6 +15,29 @@ _PROVIDERS = {"anthropic", "gemini", "ollama", "openai", "openrouter", "stub"}
 _KEYED_PROVIDERS = {"anthropic", "openrouter"}
 
 
+def _max_concurrency(value) -> int:
+    if isinstance(value, bool) or isinstance(value, float):
+        raise Conflict("max_concurrency must be a positive integer")
+    if isinstance(value, int):
+        result = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        result = int(value.strip())
+    else:
+        raise Conflict("max_concurrency must be a positive integer")
+    if result < 1:
+        raise Conflict("max_concurrency must be a positive integer")
+    return result
+
+
+def _local_endpoint(provider: str, value):
+    if provider != "ollama":
+        return value
+    endpoint = str(value or "").strip().rstrip("/")
+    if not endpoint:
+        raise Conflict("ollama_base_url is required for ollama")
+    return endpoint
+
+
 def _now():
     from datetime import datetime, timezone
 
@@ -57,6 +80,12 @@ def make_models_create(store, secrets):
             raise Conflict("model is required")
         if provider in _KEYED_PROVIDERS and not api_key:
             raise Conflict(f"api_key is required for {provider}")
+        ollama_base_url = _local_endpoint(
+            provider, params.get("ollama_base_url")
+        )
+        max_concurrency = _max_concurrency(
+            params.get("max_concurrency", 1)
+        )
         model_id = str(uuid.uuid4())
         secret_key = None
         if api_key:
@@ -73,8 +102,8 @@ def make_models_create(store, secrets):
             cx.execute(
                 "INSERT INTO models(model_id, tenant_id, name, provider, model, "
                 "system_prompt, tool_allowlist, fallback_model, secret_key, "
-                "ollama_base_url, param_count, status, created_by, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "ollama_base_url, param_count, max_concurrency, status, created_by, "
+                "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     model_id,
                     ctx.tenant_id,
@@ -85,8 +114,9 @@ def make_models_create(store, secrets):
                     tool_allowlist,
                     params.get("fallback_model"),
                     secret_key,
-                    params.get("ollama_base_url"),
+                    ollama_base_url,
                     params.get("param_count"),
+                    max_concurrency,
                     "ready",
                     ctx.user_id,
                     now,
@@ -115,7 +145,7 @@ def make_models_get(store):
     return handler
 
 
-def make_models_update(store):
+def make_models_update(store, secrets=None):
     def handler(ctx, params):
         row = store._conn.execute(
             "SELECT * FROM models WHERE tenant_id=? AND model_id=?",
@@ -123,6 +153,28 @@ def make_models_update(store):
         ).fetchone()
         if row is None:
             raise NotFound(f"model {params['model_id']!r} not found")
+        values = dict(params)
+        for field in ("name", "model"):
+            if field in values:
+                values[field] = str(values[field] or "").strip()
+                if not values[field]:
+                    raise Conflict(f"{field} is required")
+        if "ollama_base_url" in values:
+            values["ollama_base_url"] = _local_endpoint(
+                row["provider"], values["ollama_base_url"]
+            )
+        if "max_concurrency" in values:
+            values["max_concurrency"] = _max_concurrency(
+                values["max_concurrency"]
+            )
+        api_key = None
+        if "api_key" in values:
+            api_key = str(values["api_key"] or "").strip()
+            if not api_key:
+                raise Conflict("api_key must not be blank")
+            if secrets is None:
+                raise Conflict("api_key updates require secret storage")
+
         fields = {
             "name",
             "model",
@@ -130,16 +182,31 @@ def make_models_update(store):
             "fallback_model",
             "ollama_base_url",
             "param_count",
+            "max_concurrency",
         }
         sets, args = [], []
         for k in fields:
             if k in params:
                 sets.append(f"{k}=?")
-                args.append(params[k])
+                args.append(values[k])
         if "tool_allowlist" in params:
             sets.append("tool_allowlist=?")
-            args.append(json.dumps(params["tool_allowlist"]))
-        if not sets:
+            args.append(json.dumps(values["tool_allowlist"]))
+        if api_key is not None:
+            secret_key = row["secret_key"] or f"model:{row['model_id']}:api_key"
+            if row["secret_key"]:
+                secrets.rotate(
+                    ctx.tenant_id, secret_key, api_key.encode(),
+                    accessed_by=ctx.user_id,
+                )
+            else:
+                secrets.store(
+                    ctx.tenant_id, secret_key, api_key.encode(),
+                    accessed_by=ctx.user_id,
+                )
+                sets.append("secret_key=?")
+                args.append(secret_key)
+        if not sets and api_key is None:
             return _row_to_dict(row)
         sets.append("updated_at=?")
         args.append(_now())
@@ -161,6 +228,13 @@ def make_models_update(store):
 
 def make_models_delete(store):
     def handler(ctx, params):
+        row = store._conn.execute(
+            "SELECT model_id FROM models WHERE tenant_id=? AND model_id=?",
+            (ctx.tenant_id, params["model_id"]),
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"model {params['model_id']!r} not found")
+        _guard_model_reference(store, ctx.tenant_id, params["model_id"])
         with store.transaction() as cx:
             cx.execute(
                 "UPDATE models SET status='disabled', updated_at=? "
@@ -174,6 +248,14 @@ def make_models_delete(store):
 
 def make_models_set_status(store, target_status: str):
     def handler(ctx, params):
+        row = store._conn.execute(
+            "SELECT model_id FROM models WHERE tenant_id=? AND model_id=?",
+            (ctx.tenant_id, params["model_id"]),
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"model {params['model_id']!r} not found")
+        if target_status == "disabled":
+            _guard_model_reference(store, ctx.tenant_id, params["model_id"])
         with store.transaction() as cx:
             cx.execute(
                 "UPDATE models SET status=?, updated_at=? "
@@ -183,6 +265,18 @@ def make_models_set_status(store, target_status: str):
         return {"model_id": params["model_id"], "status": target_status}
 
     return handler
+
+
+def _guard_model_reference(store, tenant_id: str, model_id: str) -> None:
+    referenced = store._conn.execute(
+        "SELECT 1 FROM agents WHERE tenant_id=? AND model_id=? "
+        "AND deleted_at IS NULL LIMIT 1",
+        (tenant_id, model_id),
+    ).fetchone()
+    if referenced is not None:
+        raise Conflict(
+            "model is referenced by an agent; rebind or delete the agent first"
+        )
 
 
 def make_models_test(store, secrets):
@@ -246,6 +340,7 @@ def register_model_ops(ops, store, secrets):
             {"name": "tool_allowlist", "type": "list", "required": False},
             {"name": "fallback_model", "type": "str", "required": False},
             {"name": "ollama_base_url", "type": "str", "required": False},
+            {"name": "max_concurrency", "type": "int", "required": False},
             {"name": "api_key", "type": "str", "required": False},
         ],
     )
@@ -259,9 +354,20 @@ def register_model_ops(ops, store, secrets):
     ops.register(
         "models:update",
         action="manage_agents",
-        handler=make_models_update(store),
+        handler=make_models_update(store, secrets),
         summary="Update a model config",
-        params=[{"name": "model_id", "type": "str", "required": True}],
+        params=[
+            {"name": "model_id", "type": "str", "required": True},
+            {"name": "name", "type": "str", "required": False},
+            {"name": "model", "type": "str", "required": False},
+            {"name": "param_count", "type": "str", "required": False},
+            {"name": "system_prompt", "type": "str", "required": False},
+            {"name": "tool_allowlist", "type": "list", "required": False},
+            {"name": "fallback_model", "type": "str", "required": False},
+            {"name": "ollama_base_url", "type": "str", "required": False},
+            {"name": "max_concurrency", "type": "int", "required": False},
+            {"name": "api_key", "type": "str", "required": False},
+        ],
     )
     ops.register(
         "models:delete",

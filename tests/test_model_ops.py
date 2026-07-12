@@ -1,13 +1,17 @@
 """models:* ops (ported from agents:*)."""
+import uuid
 from brain2.context import RequestContext
 from brain2.model_ops import (
     make_models_create,
     make_models_delete,
     make_models_get,
     make_models_list,
+    make_models_set_status,
     make_models_update,
+    register_model_ops,
 )
-from brain2.errors import Conflict
+from brain2.errors import Conflict, NotFound
+from brain2.operations import OperationRegistry
 import pytest
 from brain2.secrets import SecretManager
 from brain2.store.local import LocalStore
@@ -48,7 +52,8 @@ def test_create_and_list_model():
 def test_update_param_count_and_get():
     s, sm = _store_secrets()
     mid = make_models_create(s, sm)(
-        _ctx(), {"name": "m", "provider": "ollama", "model": "x"}
+        _ctx(), {"name": "m", "provider": "ollama", "model": "x",
+                 "ollama_base_url": "http://localhost:11434"}
     )["model_id"]
     make_models_update(s)(_ctx(), {"model_id": mid, "param_count": "8B"})
     got = make_models_get(s)(_ctx(), {"model_id": mid})
@@ -78,3 +83,136 @@ def test_cloud_model_requires_key_and_strips_fields(provider):
     row = s._conn.execute("SELECT secret_key FROM models WHERE model_id=?", (created["model_id"],)).fetchone()
     assert sm.retrieve("t1", row["secret_key"], accessed_by="u1") == b"secret"
     assert "secret" not in str(make_models_list(s)(_ctx(), {}))
+
+
+@pytest.mark.parametrize("endpoint", [None, "", "   "])
+def test_ollama_create_requires_nonblank_endpoint(endpoint):
+    s, sm = _store_secrets()
+    with pytest.raises(Conflict, match="ollama_base_url"):
+        make_models_create(s, sm)(
+            _ctx(), {"name": "Local", "provider": "ollama", "model": "llama3",
+                     "ollama_base_url": endpoint})
+
+
+def test_ollama_create_normalizes_endpoint_and_capacity():
+    s, sm = _store_secrets()
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": " Local ", "provider": "ollama", "model": " llama3 ",
+                 "ollama_base_url": " http://box:11434/// ",
+                 "max_concurrency": "3"})
+    assert created["name"] == "Local"
+    assert created["model"] == "llama3"
+    assert created["ollama_base_url"] == "http://box:11434"
+    assert created["max_concurrency"] == 3
+    assert "secret_key" not in created and "api_key" not in created
+
+
+def test_max_concurrency_defaults_to_one():
+    s, sm = _store_secrets()
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": "Stub", "provider": "stub", "model": "x"})
+    assert created["max_concurrency"] == 1
+
+
+@pytest.mark.parametrize("value", [0, -1, True, False, "nope", "1.5", 1.5])
+def test_create_rejects_invalid_max_concurrency(value):
+    s, sm = _store_secrets()
+    with pytest.raises(Conflict, match="max_concurrency"):
+        make_models_create(s, sm)(
+            _ctx(), {"name": "Stub", "provider": "stub", "model": "x",
+                     "max_concurrency": value})
+
+
+def test_update_normalizes_and_persists_fields_and_replaces_cloud_key():
+    s, sm = _store_secrets()
+    local = make_models_create(s, sm)(
+        _ctx(), {"name": "Local", "provider": "ollama", "model": "old",
+                 "ollama_base_url": "http://old:11434"})
+    updated = make_models_update(s, sm)(
+        _ctx(), {"model_id": local["model_id"], "name": " New ",
+                 "model": " llama3 ", "ollama_base_url": " http://new:11434/ ",
+                 "max_concurrency": 4})
+    assert (updated["name"], updated["model"]) == ("New", "llama3")
+    assert updated["ollama_base_url"] == "http://new:11434"
+    assert updated["max_concurrency"] == 4
+
+    cloud = make_models_create(s, sm)(
+        _ctx(), {"name": "Cloud", "provider": "anthropic", "model": "claude",
+                 "api_key": "old-key"})
+    replaced = make_models_update(s, sm)(
+        _ctx(), {"model_id": cloud["model_id"], "api_key": "new-key"})
+    row = s._conn.execute(
+        "SELECT secret_key FROM models WHERE model_id=?", (cloud["model_id"],)
+    ).fetchone()
+    assert sm.retrieve("t1", row["secret_key"], accessed_by="u1") == b"new-key"
+    assert "secret_key" not in replaced and "api_key" not in replaced
+
+
+@pytest.mark.parametrize("params", [
+    {"name": "  "}, {"model": ""}, {"max_concurrency": 0},
+    {"max_concurrency": 2.5}, {"ollama_base_url": "   "},
+])
+def test_update_rejects_invalid_fields(params):
+    s, sm = _store_secrets()
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": "Local", "provider": "ollama", "model": "x",
+                 "ollama_base_url": "http://box:11434"})
+    with pytest.raises(Conflict):
+        make_models_update(s, sm)(_ctx(), {"model_id": created["model_id"], **params})
+
+
+def _reference_model(s, model_id, *, deleted_at=None):
+    now = "2026-01-01T00:00:00+00:00"
+    with s.transaction() as cx:
+        cx.execute(
+            "INSERT INTO agents(agent_id,tenant_id,name,status,created_at,updated_at,"
+            "model_id,complexity,enabled,deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (str(uuid.uuid4()), "t1", str(uuid.uuid4()), "offline", now, now,
+             model_id, "medium", 1, deleted_at),
+        )
+
+
+def test_referenced_model_cannot_be_disabled_or_deleted_but_can_be_paused():
+    s, sm = _store_secrets()
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": "Stub", "provider": "stub", "model": "x"})
+    _reference_model(s, created["model_id"])
+    message = "model is referenced by an agent; rebind or delete the agent first"
+    with pytest.raises(Conflict, match=message):
+        make_models_delete(s)(_ctx(), {"model_id": created["model_id"]})
+    with pytest.raises(Conflict, match=message):
+        make_models_set_status(s, "disabled")(
+            _ctx(), {"model_id": created["model_id"]})
+    assert make_models_set_status(s, "paused")(
+        _ctx(), {"model_id": created["model_id"]})["status"] == "paused"
+
+
+def test_deleted_agent_does_not_block_model_disable():
+    s, sm = _store_secrets()
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": "Stub", "provider": "stub", "model": "x"})
+    _reference_model(s, created["model_id"], deleted_at="2026-01-02")
+    assert make_models_delete(s)(
+        _ctx(), {"model_id": created["model_id"]})["deleted"] is True
+
+
+@pytest.mark.parametrize("operation", ["update", "delete", "disable"])
+def test_missing_model_mutations_raise_not_found(operation):
+    s, sm = _store_secrets()
+    with pytest.raises(NotFound):
+        if operation == "update":
+            make_models_update(s, sm)(_ctx(), {"model_id": "missing", "name": "x"})
+        elif operation == "delete":
+            make_models_delete(s)(_ctx(), {"model_id": "missing"})
+        else:
+            make_models_set_status(s, "disabled")(_ctx(), {"model_id": "missing"})
+
+
+def test_registration_exposes_capacity_and_update_key_parameters():
+    s, sm = _store_secrets()
+    ops = OperationRegistry()
+    register_model_ops(ops, s, sm)
+    create_names = {p["name"] for p in ops.get("models:create").params}
+    update_names = {p["name"] for p in ops.get("models:update").params}
+    assert "max_concurrency" in create_names
+    assert {"max_concurrency", "api_key", "ollama_base_url"} <= update_names

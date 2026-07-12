@@ -24,6 +24,36 @@ def _row(provider="openrouter"):
     return row, secrets
 
 
+def test_builds_ollama_from_exact_saved_endpoint():
+    store = LocalStore(":memory:")
+    store.migrate()
+    store.create_tenant("t1", "Acme")
+    store.create_user("t1", "u1", "u1@example.com", "owner")
+    secrets = SecretManager(store, b"0" * 32)
+    created = make_models_create(store, secrets)(
+        RequestContext("t1", "u1", "owner"),
+        {"name": "Local", "provider": "ollama", "model": "llama3",
+         "ollama_base_url": " http://workstation:11434/// "},
+    )
+    row = store._conn.execute(
+        "SELECT * FROM models WHERE model_id=?", (created["model_id"],)
+    ).fetchone()
+    with patch("brain2.chat_providers.OllamaProvider") as cls:
+        build_provider("t1", row, secrets, accessed_by="u1")
+    cls.assert_called_once_with(base_url="http://workstation:11434", model="llama3")
+
+
+@pytest.mark.parametrize("provider,class_name", [
+    ("anthropic", "AnthropicProvider"),
+    ("openrouter", "OpenRouterProvider"),
+])
+def test_builds_cloud_providers_from_encrypted_secret(provider, class_name):
+    row, secrets = _row(provider)
+    with patch(f"brain2.chat_providers.{class_name}") as cls:
+        build_provider("t1", row, secrets, accessed_by="u1")
+    cls.assert_called_once_with(api_key="key", model="provider/model")
+
+
 def test_builds_openrouter_from_encrypted_secret():
     row, secrets = _row()
     with patch("brain2.chat_providers.OpenRouterProvider") as cls:
