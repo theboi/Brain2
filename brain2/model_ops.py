@@ -71,12 +71,18 @@ def make_models_list(store):
     return handler
 
 
-def make_models_create(store, secrets):
+def make_models_create(store, secrets, allowed_providers=None):
+    providers = set(
+        _CREATABLE_PROVIDERS
+        if allowed_providers is None
+        else allowed_providers
+    )
+
     def handler(ctx, params):
         provider = str(params.get("provider") or "").strip().lower()
-        if provider not in _CREATABLE_PROVIDERS:
+        if provider not in providers:
             raise Conflict(
-                f"provider must be one of {sorted(_CREATABLE_PROVIDERS)}"
+                f"provider must be one of {sorted(providers)}"
             )
         name = str(params.get("name") or "").strip()
         provider_model = str(params.get("model") or "").strip()
@@ -346,7 +352,9 @@ def register_model_ops(ops, store, secrets):
     ops.register(
         "models:create",
         action="manage_agents",
-        handler=make_models_create(store, secrets),
+        handler=make_models_create(
+            store, secrets, allowed_providers=_RUNTIME_PROVIDERS
+        ),
         summary="Create a new model config",
         params=[
             {"name": "name", "type": "str", "required": True},

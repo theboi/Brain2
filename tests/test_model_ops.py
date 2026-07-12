@@ -280,6 +280,20 @@ def test_public_registration_exposes_only_runtime_providers():
     assert provider["choices"] == ["anthropic", "ollama", "openrouter"]
 
 
+def test_public_registered_handler_rejects_stub_provider():
+    s, sm = _store_secrets()
+    ops = OperationRegistry()
+    register_model_ops(ops, s, sm)
+    with pytest.raises(Conflict, match="provider"):
+        ops.get("models:create").handler(
+            _ctx(), {"name": "Fixture only", "provider": "stub", "model": "x"}
+        )
+    direct = make_models_create(s, sm)(
+        _ctx(), {"name": "Fixture", "provider": "stub", "model": "x"}
+    )
+    assert direct["provider"] == "stub"
+
+
 @pytest.mark.parametrize("provider", ["gemini", "openai"])
 def test_create_rejects_legacy_provider(provider):
     s, sm = _store_secrets()
