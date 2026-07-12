@@ -1,9 +1,10 @@
 """Store primitives for exact-complexity todo routing and lifecycle."""
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from brain2.errors import Conflict
+from brain2.errors import Conflict, NotFound
 from brain2.store.local import LocalStore
 
 
@@ -131,10 +132,12 @@ def test_claim_orders_priority_desc_then_fifo_and_preferred_pins_one_agent():
     s._conn.execute("UPDATE todos SET created_at='2026-01-02' WHERE todo_id='second'")
     s._conn.execute("UPDATE todos SET created_at='2025-01-01' WHERE todo_id='pinned'")
     s._conn.commit()
-    assert s.claim_todo_for_agent("t1", a1)["todo_id"] == "first"
+    first = s.claim_todo_for_agent("t1", a1)
+    assert first["todo_id"] == "first"
     assert s.claim_todo_for_agent("t1", a2)["todo_id"] == "pinned"
     s.finish_todo("t1", "first", status="done", conversation_id=None,
-                  tokens_total=None, cost_total=None, error=None)
+                  tokens_total=None, cost_total=None, error=None,
+                  run_token=first["run_token"], agent_id=a1)
     assert s.claim_todo_for_agent("t1", a1)["todo_id"] == "second"
 
 
@@ -162,10 +165,46 @@ def test_claim_updates_agent_and_todo_together_and_prevents_duplicate():
     a2 = _agent(s, "Two", "medium")
     _todo(s, "work", "medium")
     claimed = s.claim_todo_for_agent("t1", a1)
+    assert claimed["run_token"]
     assert claimed["status"] == "running" and claimed["assigned_agent_id"] == a1
     agent = s.get_agent("t1", a1)
     assert agent["status"] == "busy" and agent["current_todo_id"] == "work"
     assert s.claim_todo_for_agent("t1", a2) is None
+
+
+def test_stale_reclaim_rejects_late_mutations_from_old_run():
+    s = _store()
+    _model(s)
+    agent_id = _agent(s, "One", "medium")
+    _todo(s, "work", "medium")
+    first = s.claim_todo_for_agent("t1", agent_id)
+    old_token = first["run_token"]
+    s.sweep_stale_workers("2026-07-01T00:05:00Z", stale_seconds=30)
+    s.worker_heartbeat("t1", agent_id, "2026-07-01T00:05:01Z", status="idle")
+    second = s.claim_todo_for_agent("t1", agent_id)
+    assert second["run_token"] and second["run_token"] != old_token
+    s.request_todo_stop("t1", "work")
+    for mutation in ("conversation", "finish", "cancel"):
+        with pytest.raises(Conflict, match="run"):
+            if mutation == "conversation":
+                s.set_todo_conversation(
+                    "t1", "work", "late", run_token=old_token,
+                    agent_id=agent_id,
+                )
+            elif mutation == "finish":
+                s.finish_todo(
+                    "t1", "work", status="done", conversation_id=None,
+                    tokens_total=None, cost_total=None, run_token=old_token,
+                    agent_id=agent_id,
+                )
+            else:
+                s.requeue_cancelled_todo(
+                    "t1", "work", run_token=old_token, agent_id=agent_id,
+                )
+    current = s.get_todo("t1", "work")
+    assert current["status"] == "running" and current["run_token"] == second["run_token"]
+    assert current["cancel_requested"] == 1
+    assert s.get_agent("t1", agent_id)["status"] == "busy"
 
 
 @pytest.mark.parametrize("status", ["done", "failed"])
@@ -174,18 +213,21 @@ def test_finish_todo_sets_terminal_fields_preserves_agent_and_releases_capacity(
     _model(s)
     agent_id = _agent(s, "One", "medium")
     _todo(s, "work", "medium")
-    s.claim_todo_for_agent("t1", agent_id)
+    claimed = s.claim_todo_for_agent("t1", agent_id)
     s.finish_todo("t1", "work", status=status, conversation_id="conv",
-                  tokens_total=7, cost_total="0.1", error="boom" if status == "failed" else None)
+                  tokens_total=7, cost_total="0.1",
+                  error="boom" if status == "failed" else None,
+                  run_token=claimed["run_token"], agent_id=agent_id)
     todo = s.get_todo("t1", "work")
     assert todo["status"] == status and todo["assigned_agent_id"] == agent_id
     assert todo["completed_at"] and todo["conversation_id"] == "conv"
     assert todo["tokens_total"] == 7 and todo["cost_total"] == "0.1"
     assert todo["error"] == ("boom" if status == "failed" else None)
     assert s.get_agent("t1", agent_id)["status"] == "idle"
-    with pytest.raises(Conflict, match="status"):
+    with pytest.raises(ValueError, match="status"):
         s.finish_todo("t1", "work", status="queued", conversation_id=None,
-                      tokens_total=None, cost_total=None, error=None)
+                      tokens_total=None, cost_total=None, error=None,
+                      run_token=claimed["run_token"], agent_id=agent_id)
 
 
 def test_complete_todo_is_done_compatibility_wrapper():
@@ -193,9 +235,10 @@ def test_complete_todo_is_done_compatibility_wrapper():
     _model(s)
     agent_id = _agent(s, "One", "medium")
     _todo(s, "work", "medium")
-    s.claim_todo_for_agent("t1", agent_id)
+    claimed = s.claim_todo_for_agent("t1", agent_id)
     s.complete_todo("t1", "work", conversation_id=None, tokens_total=None,
-                    cost_total=None)
+                    cost_total=None, run_token=claimed["run_token"],
+                    agent_id=agent_id)
     assert s.get_todo("t1", "work")["status"] == "done"
 
 
@@ -204,14 +247,16 @@ def test_stop_is_cooperative_and_cancelled_requeue_is_guarded_and_cleans_state()
     _model(s)
     agent_id = _agent(s, "One", "hard")
     _todo(s, "work", "hard")
-    s.claim_todo_for_agent("t1", agent_id)
+    claimed = s.claim_todo_for_agent("t1", agent_id)
     s.request_todo_stop("t1", "work")
     running = s.get_todo("t1", "work")
     assert running["status"] == "running" and running["cancel_requested"] == 1
     assert s.get_agent("t1", agent_id)["status"] == "busy"
     s._conn.execute("UPDATE todos SET error='cancelled' WHERE todo_id='work'")
     s._conn.commit()
-    s.requeue_cancelled_todo("t1", "work")
+    s.requeue_cancelled_todo(
+        "t1", "work", run_token=claimed["run_token"], agent_id=agent_id,
+    )
     queued = s.get_todo("t1", "work")
     assert queued["status"] == "queued" and queued["complexity"] == "hard"
     assert queued["assigned_agent_id"] is None and queued["started_at"] is None
@@ -219,7 +264,9 @@ def test_stop_is_cooperative_and_cancelled_requeue_is_guarded_and_cleans_state()
     assert queued["cancel_requested"] == 0
     assert s.get_agent("t1", agent_id)["status"] == "idle"
     with pytest.raises(Conflict, match="cancel"):
-        s.requeue_cancelled_todo("t1", "work")
+        s.requeue_cancelled_todo(
+            "t1", "work", run_token=claimed["run_token"], agent_id=agent_id,
+        )
     for status in ("queued", "done"):
         s._conn.execute("UPDATE todos SET status=? WHERE todo_id='work'", (status,))
         s._conn.commit()
@@ -259,9 +306,10 @@ def test_continue_old_todo_does_not_release_agent_from_newer_work():
     _model(s)
     agent_id = _agent(s, "One", "medium")
     _todo(s, "old", "medium")
-    s.claim_todo_for_agent("t1", agent_id)
+    claimed = s.claim_todo_for_agent("t1", agent_id)
     s.finish_todo("t1", "old", status="done", conversation_id=None,
-                  tokens_total=None, cost_total=None, error=None)
+                  tokens_total=None, cost_total=None, error=None,
+                  run_token=claimed["run_token"], agent_id=agent_id)
     _todo(s, "new", "medium")
     assert s.claim_todo_for_agent("t1", agent_id)["todo_id"] == "new"
     s.requeue_todo("t1", "old")
@@ -294,6 +342,72 @@ def test_invalid_continue_does_not_append_conversation_history(status):
         "SELECT COUNT(*) AS n FROM messages WHERE conversation_id='conv'"
     ).fetchone()["n"]
     assert after == before
+
+
+def test_continue_terminal_without_conversation_rejects_without_requeue():
+    s = _store()
+    _todo(s, "work", "medium")
+    s._conn.execute("UPDATE todos SET status='done' WHERE todo_id='work'")
+    s._conn.commit()
+    with pytest.raises(Conflict, match="conversation"):
+        s.append_todo_user_message("t1", "work", "do not discard")
+    assert s.get_todo("t1", "work")["status"] == "done"
+
+
+def test_delete_running_requires_stop_and_preserves_agent_and_capacity():
+    s = _store()
+    _model(s)
+    agent_id = _agent(s, "One", "medium")
+    second_agent = _agent(s, "Two", "medium")
+    _todo(s, "work", "medium")
+    _todo(s, "waiting", "medium")
+    claimed = s.claim_todo_for_agent("t1", agent_id)
+    with pytest.raises(Conflict, match="stop"):
+        s.delete_todo("t1", "work")
+    assert s.get_todo("t1", "work")["run_token"] == claimed["run_token"]
+    assert s.get_agent("t1", agent_id)["status"] == "busy"
+    assert s.claim_todo_for_agent("t1", second_agent) is None
+    with pytest.raises(NotFound):
+        s.delete_todo("t1", "missing")
+
+
+@pytest.mark.parametrize("status", ["queued", "done", "failed"])
+def test_delete_allows_nonrunning_todos(status):
+    s = _store()
+    _todo(s, "work", "medium")
+    s._conn.execute("UPDATE todos SET status=? WHERE todo_id='work'", (status,))
+    s._conn.commit()
+    s.delete_todo("t1", "work")
+    assert s.get_todo("t1", "work") is None
+
+
+@pytest.mark.parametrize("capacity,todo_count", [(1, 2), (2, 1)])
+def test_cross_connection_claims_do_not_duplicate_or_oversubscribe(tmp_path,
+                                                                   capacity,
+                                                                   todo_count):
+    path = tmp_path / "shared.db"
+    seed = LocalStore(str(path))
+    seed.migrate()
+    seed.create_tenant("t1", "Acme")
+    seed.create_user("t1", "mem1", "m@t1.com", "member", "M")
+    seed.create_workspace("t1", "Eng", workspace_id="ws1")
+    _model(seed, capacity=capacity)
+    agents = [_agent(seed, name, "medium") for name in ("One", "Two")]
+    for i in range(todo_count):
+        _todo(seed, f"work-{i}", "medium")
+    stores = [LocalStore(str(path)), LocalStore(str(path))]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(pool.map(
+            lambda pair: pair[0].claim_todo_for_agent("t1", pair[1]),
+            zip(stores, agents),
+        ))
+    claimed = [row for row in claims if row is not None]
+    assert len(claimed) == 1
+    assert len({row["todo_id"] for row in claimed}) == 1
+    running = seed._conn.execute(
+        "SELECT COUNT(*) AS n FROM todos WHERE status='running'"
+    ).fetchone()["n"]
+    assert running == 1
 
 
 def test_list_todos_visible_by_role():

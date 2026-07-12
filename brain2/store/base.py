@@ -27,7 +27,7 @@ class Store(Protocol):
 
     def schema_version(self) -> int: ...
 
-    def transaction(self) -> AbstractContextManager[Transaction]:
+    def transaction(self, *, immediate: bool = False) -> AbstractContextManager[Transaction]:
         """Atomic DB scope. No network I/O permitted inside (Phase 5 §1)."""
         ...
 

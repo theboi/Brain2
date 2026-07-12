@@ -85,6 +85,8 @@ def _run_todo(actx, tenant_id: str, todo: dict) -> None:
                 conversation_id=conversation_id,
                 tokens_total=None,
                 cost_total=None,
+                run_token=todo["run_token"],
+                agent_id=todo["assigned_agent_id"],
             )
             return
 
@@ -92,7 +94,11 @@ def _run_todo(actx, tenant_id: str, todo: dict) -> None:
             conversation_id = _create_conversation(
                 store, tenant_id, ctx.user_id, model_row["model_id"], todo["title"]
             )
-            store.set_todo_conversation(tenant_id, todo["todo_id"], conversation_id)
+            store.set_todo_conversation(
+                tenant_id, todo["todo_id"], conversation_id,
+                run_token=todo["run_token"],
+                agent_id=todo["assigned_agent_id"],
+            )
 
         from brain2.chat import run_turn
 
@@ -129,6 +135,8 @@ def _run_todo(actx, tenant_id: str, todo: dict) -> None:
         conversation_id=conversation_id,
         tokens_total=(total_in + total_out) or None,
         cost_total=None,
+        run_token=todo["run_token"],
+        agent_id=todo["assigned_agent_id"],
     )
 
 

@@ -113,7 +113,7 @@ class LocalStore:
             return applied_version(self._conn)
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, immediate: bool = False):
         from brain2 import discipline
         with self._lock:
             discipline.enter()  # mark thread inside a Store txn (Phase 5 §1)
@@ -123,7 +123,7 @@ class LocalStore:
                     return
                 self.in_transaction = True
                 try:
-                    self._conn.execute("BEGIN")
+                    self._conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
                     yield self._conn
                     self._conn.execute("COMMIT")
                 except Exception:
@@ -1507,7 +1507,7 @@ class LocalStore:
         """Mark stale workers offline and requeue any todo they were running."""
         now_dt = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
         swept = 0
-        with self.transaction() as cx:
+        with self.transaction(immediate=True) as cx:
             rows = cx.execute(
                 "SELECT agent_id, tenant_id, current_todo_id, last_heartbeat "
                 "FROM agents WHERE status != 'offline'"
@@ -1533,7 +1533,8 @@ class LocalStore:
                         "UPDATE todos SET status='queued', assigned_agent_id=NULL, "
                         "memory_flushed=0, started_at=NULL, completed_at=NULL, "
                         "tokens_total=NULL, cost_total=NULL, error=NULL, "
-                        "cancel_requested=0 WHERE tenant_id=? AND todo_id=? "
+                        "cancel_requested=0, run_token=NULL "
+                        "WHERE tenant_id=? AND todo_id=? "
                         "AND status='running'",
                         (r["tenant_id"], r["current_todo_id"]),
                     )
@@ -1550,6 +1551,12 @@ class LocalStore:
         todo_id = todo_id or uuid.uuid4().hex
         now = _now_iso()
         with self.transaction() as cx:
+            workspace = cx.execute(
+                "SELECT 1 FROM workspaces WHERE tenant_id=? AND workspace_id=?",
+                (tenant_id, workspace_id),
+            ).fetchone()
+            if workspace is None:
+                raise Conflict("workspace_id must identify a tenant workspace")
             if preferred_agent_id is not None:
                 preferred = cx.execute(
                     "SELECT 1 FROM agents WHERE tenant_id=? AND agent_id=? "
@@ -1595,10 +1602,21 @@ class LocalStore:
 
     def delete_todo(self, tenant_id: str, todo_id: str) -> None:
         with self.transaction() as cx:
-            cx.execute(
-                "DELETE FROM todos WHERE tenant_id=? AND todo_id=?",
+            row = cx.execute(
+                "SELECT status FROM todos WHERE tenant_id=? AND todo_id=?",
                 (tenant_id, todo_id),
-            )
+            ).fetchone()
+            if row is None:
+                raise NotFound(f"todo {todo_id!r} not found")
+            if row["status"] == "running":
+                raise Conflict("running todos must be stopped before deletion")
+            deleted = cx.execute(
+                "DELETE FROM todos WHERE tenant_id=? AND todo_id=? "
+                "AND status IN ('queued','done','failed')",
+                (tenant_id, todo_id),
+            ).rowcount
+            if deleted != 1:
+                raise Conflict("todo delete constraint violation")
 
     def requeue_todo(self, tenant_id: str, todo_id: str) -> None:
         """Continue a terminal todo with its complexity and conversation intact."""
@@ -1614,7 +1632,8 @@ class LocalStore:
             updated = cx.execute(
                 "UPDATE todos SET status='queued', assigned_agent_id=NULL, "
                 "memory_flushed=0, started_at=NULL, completed_at=NULL, "
-                "tokens_total=NULL, cost_total=NULL, error=NULL, cancel_requested=0 "
+                "tokens_total=NULL, cost_total=NULL, error=NULL, cancel_requested=0, "
+                "run_token=NULL "
                 "WHERE tenant_id=? AND todo_id=? AND status IN ('done','failed')",
                 (tenant_id, todo_id),
             ).rowcount
@@ -1625,7 +1644,7 @@ class LocalStore:
         """Atomically claim the top eligible queued todo for an idle agent."""
         agent_id = self._agent_id(agent_id)
         now = _now_iso()
-        with self.transaction() as cx:
+        with self.transaction(immediate=True) as cx:
             agent = cx.execute(
                 "SELECT a.agent_id, a.model_id, a.complexity, m.max_concurrency "
                 "FROM agents a JOIN models m "
@@ -1656,6 +1675,7 @@ class LocalStore:
             if not row:
                 return None
             todo_id = row["todo_id"]
+            run_token = uuid.uuid4().hex
             agent_updated = cx.execute(
                 "UPDATE agents SET status='busy', current_todo_id=?, updated_at=? "
                 "WHERE tenant_id=? AND agent_id=? AND status='idle' "
@@ -1665,11 +1685,13 @@ class LocalStore:
             if agent_updated != 1:
                 return None
             todo_updated = cx.execute(
-                "UPDATE todos SET status='running', assigned_agent_id=?, started_at=? "
+                "UPDATE todos SET status='running', assigned_agent_id=?, started_at=?, "
+                "run_token=? "
                 "WHERE tenant_id=? AND todo_id=? AND status='queued' "
                 "AND complexity=? AND (preferred_agent_id IS NULL OR "
                 "preferred_agent_id=?)",
-                (agent_id, now, tenant_id, todo_id, agent["complexity"], agent_id),
+                (agent_id, now, run_token, tenant_id, todo_id,
+                 agent["complexity"], agent_id),
             ).rowcount
             if todo_updated != 1:
                 raise Conflict("todo claim constraint violation")
@@ -1681,27 +1703,29 @@ class LocalStore:
 
     def finish_todo(self, tenant_id: str, todo_id: str, *, status: str,
                     conversation_id: str | None, tokens_total: int | None,
-                    cost_total: str | None, error: str | None) -> None:
+                    cost_total: str | None, run_token: str, agent_id: str,
+                    error: str | None = None) -> None:
         if status not in {"done", "failed"}:
-            raise Conflict("status must be done or failed")
+            raise ValueError("status must be done or failed")
         now = _now_iso()
         with self.transaction() as cx:
             row = cx.execute(
-                "SELECT assigned_agent_id, status FROM todos "
-                "WHERE tenant_id=? AND todo_id=?",
-                (tenant_id, todo_id),
+                "SELECT assigned_agent_id, status FROM todos WHERE tenant_id=? "
+                "AND todo_id=? AND status='running' AND run_token=? "
+                "AND assigned_agent_id=?",
+                (tenant_id, todo_id, run_token, agent_id),
             ).fetchone()
             if row is None:
-                raise NotFound(f"todo {todo_id!r} not found")
-            if row["status"] != "running":
-                raise Conflict("only a running todo can be finished")
+                raise Conflict("todo run identity no longer matches")
             updated = cx.execute(
                 "UPDATE todos SET status=?, completed_at=?, memory_flushed=1, "
                 "conversation_id=COALESCE(?, conversation_id), tokens_total=?, "
-                "cost_total=?, error=?, cancel_requested=0 "
-                "WHERE tenant_id=? AND todo_id=? AND status='running'",
+                "cost_total=?, error=?, cancel_requested=0, run_token=NULL "
+                "WHERE tenant_id=? AND todo_id=? AND status='running' "
+                "AND run_token=? AND assigned_agent_id=?",
                 (status, now, conversation_id, tokens_total, cost_total,
-                 error if status == "failed" else None, tenant_id, todo_id),
+                 error if status == "failed" else None, tenant_id, todo_id,
+                 run_token, agent_id),
             ).rowcount
             if updated != 1:
                 raise Conflict("todo finish constraint violation")
@@ -1718,11 +1742,13 @@ class LocalStore:
     def complete_todo(self, tenant_id: str, todo_id: str, *,
                       conversation_id: str | None,
                       tokens_total: int | None,
-                      cost_total: str | None) -> None:
+                      cost_total: str | None, run_token: str,
+                      agent_id: str) -> None:
         """Compatibility wrapper for runtimes that still report only success."""
         self.finish_todo(
             tenant_id, todo_id, status="done", conversation_id=conversation_id,
             tokens_total=tokens_total, cost_total=cost_total, error=None,
+            run_token=run_token, agent_id=agent_id,
         )
 
     def request_todo_stop(self, tenant_id: str, todo_id: str) -> None:
@@ -1735,13 +1761,15 @@ class LocalStore:
             if updated != 1:
                 raise Conflict("only a running todo can be stopped")
 
-    def requeue_cancelled_todo(self, tenant_id: str, todo_id: str) -> None:
+    def requeue_cancelled_todo(self, tenant_id: str, todo_id: str, *,
+                               run_token: str, agent_id: str) -> None:
         now = _now_iso()
         with self.transaction() as cx:
             row = cx.execute(
                 "SELECT assigned_agent_id FROM todos WHERE tenant_id=? "
-                "AND todo_id=? AND status='running' AND cancel_requested=1",
-                (tenant_id, todo_id),
+                "AND todo_id=? AND status='running' AND cancel_requested=1 "
+                "AND run_token=? AND assigned_agent_id=?",
+                (tenant_id, todo_id, run_token, agent_id),
             ).fetchone()
             if row is None:
                 raise Conflict("todo must be running with cancellation requested")
@@ -1749,9 +1777,10 @@ class LocalStore:
                 "UPDATE todos SET status='queued', assigned_agent_id=NULL, "
                 "memory_flushed=0, started_at=NULL, completed_at=NULL, "
                 "tokens_total=NULL, cost_total=NULL, error=NULL, cancel_requested=0 "
+                ", run_token=NULL "
                 "WHERE tenant_id=? AND todo_id=? AND status='running' "
-                "AND cancel_requested=1",
-                (tenant_id, todo_id),
+                "AND cancel_requested=1 AND run_token=? AND assigned_agent_id=?",
+                (tenant_id, todo_id, run_token, agent_id),
             ).rowcount
             if updated != 1:
                 raise Conflict("cancelled todo requeue constraint violation")
@@ -1768,12 +1797,16 @@ class LocalStore:
                     )
 
     def set_todo_conversation(self, tenant_id: str, todo_id: str,
-                              conversation_id: str) -> None:
+                              conversation_id: str, *, run_token: str,
+                              agent_id: str) -> None:
         with self.transaction() as cx:
-            cx.execute(
-                "UPDATE todos SET conversation_id=? WHERE tenant_id=? AND todo_id=?",
-                (conversation_id, tenant_id, todo_id),
-            )
+            updated = cx.execute(
+                "UPDATE todos SET conversation_id=? WHERE tenant_id=? AND todo_id=? "
+                "AND status='running' AND run_token=? AND assigned_agent_id=?",
+                (conversation_id, tenant_id, todo_id, run_token, agent_id),
+            ).rowcount
+            if updated != 1:
+                raise Conflict("todo run identity no longer matches")
 
     def append_todo_user_message(self, tenant_id: str, todo_id: str, text: str) -> None:
         """Continue: append a user message to the linked conversation + requeue."""
@@ -1787,13 +1820,14 @@ class LocalStore:
                 raise NotFound(f"todo {todo_id!r} not found")
             if todo["status"] not in {"done", "failed"}:
                 raise Conflict("only a done or failed todo can be continued")
-            if todo["conversation_id"]:
-                from brain2.chat_ops import insert_user_message
-                insert_user_message(
-                    self,
-                    conversation_id=todo["conversation_id"],
-                    content=text,
-                )
+            if not todo["conversation_id"]:
+                raise Conflict("todo has no conversation to continue")
+            from brain2.chat_ops import insert_user_message
+            insert_user_message(
+                self,
+                conversation_id=todo["conversation_id"],
+                content=text,
+            )
             self.requeue_todo(tenant_id, todo_id)
 
     # --- todo visibility ---

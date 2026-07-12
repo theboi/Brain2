@@ -31,6 +31,29 @@ def _create_params(params):
     return normalized
 
 
+def _mutation_params(params, *, allowed, required, strings=(), priority=False):
+    if not isinstance(params, dict):
+        raise Conflict("operation parameters must be an object")
+    unknown = set(params) - set(allowed)
+    if unknown:
+        raise Conflict(f"unsupported parameters: {sorted(unknown)}")
+    for field in required:
+        if field not in params:
+            raise Conflict(f"{field} is required")
+    normalized = dict(params)
+    for field in strings:
+        if type(normalized.get(field)) is not str:
+            raise Conflict(f"{field} must be a string")
+        normalized[field] = normalized[field].strip()
+        if not normalized[field]:
+            raise Conflict(f"{field} is required")
+    if priority:
+        value = normalized.get("priority")
+        if type(value) is not int or value not in {0, 1}:
+            raise Conflict("priority must be integer 0 or 1")
+    return normalized
+
+
 def _row(row) -> dict:
     return {k: row[k] for k in row.keys()}
 
@@ -118,6 +141,13 @@ def make_todos_get(store):
 def make_todos_create(store):
     def handler(ctx, params):
         params = _create_params(params)
+        workspace = store.get_workspace(ctx.tenant_id, params["workspace_id"])
+        if workspace is None:
+            raise Conflict("workspace_id must identify a tenant workspace")
+        if ctx.tenant_role != "owner" and store.get_workspace_member_role(
+            ctx.tenant_id, params["workspace_id"], ctx.user_id
+        ) is None:
+            raise Conflict("workspace membership is required to create a todo")
         todo_id = store.create_todo(
             ctx.tenant_id,
             params["workspace_id"],
@@ -133,9 +163,14 @@ def make_todos_create(store):
 
 def make_todos_set_priority(store):
     def handler(ctx, params):
+        params = _mutation_params(
+            params, allowed={"todo_id", "priority"},
+            required={"todo_id", "priority"}, strings={"todo_id"},
+            priority=True,
+        )
         _mutable_or_404(store, ctx, params["todo_id"])
         store.set_todo_priority(
-            ctx.tenant_id, params["todo_id"], int(params.get("priority", 1))
+            ctx.tenant_id, params["todo_id"], params["priority"]
         )
         return store.get_todo(ctx.tenant_id, params["todo_id"])
 
@@ -144,6 +179,10 @@ def make_todos_set_priority(store):
 
 def make_todos_stop(store):
     def handler(ctx, params):
+        params = _mutation_params(
+            params, allowed={"todo_id"}, required={"todo_id"},
+            strings={"todo_id"},
+        )
         _mutable_or_404(store, ctx, params["todo_id"])
         store.request_todo_stop(ctx.tenant_id, params["todo_id"])
         return store.get_todo(ctx.tenant_id, params["todo_id"])
@@ -153,6 +192,10 @@ def make_todos_stop(store):
 
 def make_todos_delete(store):
     def handler(ctx, params):
+        params = _mutation_params(
+            params, allowed={"todo_id"}, required={"todo_id"},
+            strings={"todo_id"},
+        )
         _mutable_or_404(store, ctx, params["todo_id"])
         store.delete_todo(ctx.tenant_id, params["todo_id"])
         return {"todo_id": params["todo_id"], "deleted": True}
@@ -162,11 +205,14 @@ def make_todos_delete(store):
 
 def make_todos_continue(store):
     def handler(ctx, params):
+        params = _mutation_params(
+            params, allowed={"todo_id", "text"},
+            required={"todo_id", "text"}, strings={"todo_id", "text"},
+        )
         _mutable_or_404(store, ctx, params["todo_id"])
-        text = (params.get("text") or "").strip()
-        if not text:
-            raise Conflict("text is required")
-        store.append_todo_user_message(ctx.tenant_id, params["todo_id"], text)
+        store.append_todo_user_message(
+            ctx.tenant_id, params["todo_id"], params["text"]
+        )
         return store.get_todo(ctx.tenant_id, params["todo_id"])
 
     return handler
@@ -213,7 +259,7 @@ def register_todo_ops(ops, store):
         summary="Set a todo priority",
         params=[
             p(name="todo_id", type="str", required=True),
-            p(name="priority", type="int", required=False),
+            p(name="priority", type="int", required=True, choices=[0, 1]),
         ],
     )
     ops.register(

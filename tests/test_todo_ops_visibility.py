@@ -7,6 +7,7 @@ from brain2.store.local import LocalStore
 from brain2.todo_ops import (
     make_todos_create,
     make_todos_delete,
+    make_todos_continue,
     make_todos_get,
     make_todos_list,
     make_todos_set_priority,
@@ -27,6 +28,8 @@ def _store():
     s.create_user("t1", "mem1", "m1@t1.com", "member", "M1")
     s.create_user("t1", "mem2", "m2@t1.com", "member", "M2")
     s.create_workspace("t1", "Eng", workspace_id="ws1")
+    s.create_workspace("t1", "Private", workspace_id="ws2")
+    s.add_workspace_member("t1", "ws1", "mem1", "member")
     s.add_workspace_member("t1", "ws1", "mem2", "admin")
     model = make_models_create(s, SecretManager(s, b"0" * 32))(
         _ctx("owner1", "owner"),
@@ -139,7 +142,7 @@ def test_failed_completion_is_visible_with_historical_conversation_model():
     agent = s.list_agents("t1")[0]
     s.worker_heartbeat("t1", agent["agent_id"], "2026-07-01T00:00:00Z", status="idle")
     todo = _create(s)
-    s.claim_todo_for_agent("t1", agent["agent_id"])
+    claimed = s.claim_todo_for_agent("t1", agent["agent_id"])
     model_id = agent["model_id"]
     s._conn.execute(
         "INSERT INTO conversations(conversation_id,tenant_id,agent_id,user_id,title,"
@@ -149,7 +152,8 @@ def test_failed_completion_is_visible_with_historical_conversation_model():
     )
     s._conn.commit()
     s.finish_todo("t1", todo["todo_id"], status="failed", conversation_id="conv",
-                  tokens_total=3, cost_total=None, error="provider failed")
+                  tokens_total=3, cost_total=None, error="provider failed",
+                  run_token=claimed["run_token"], agent_id=agent["agent_id"])
     visible = make_todos_get(s)(_ctx("mem1"), {"todo_id": todo["todo_id"]})["todo"]
     assert visible["status"] == "failed" and visible["error"] == "provider failed"
     assert visible["agent_id"] == agent["agent_id"] and visible["agent_name"] == "Jarvis"
@@ -175,3 +179,38 @@ def test_registration_requires_complexity_and_omits_model_pref():
         "title", "workspace_id", "complexity", "preferred_agent_id"
     ]
     assert spec.params[2]["choices"] == ["simple", "medium", "hard", "complex"]
+
+
+@pytest.mark.parametrize("op_name,params,match", [
+    ("todos:set_priority", {"todo_id": "x", "priority": True}, "priority"),
+    ("todos:set_priority", {"todo_id": "x", "priority": 2}, "priority"),
+    ("todos:set_priority", {"todo_id": "x"}, "priority"),
+    ("todos:stop", {"todo_id": 1}, "todo_id"),
+    ("todos:delete", {"todo_id": "x", "extra": 1}, "unsupported"),
+    ("todos:continue", {"todo_id": "x", "text": 1}, "text"),
+    ("todos:continue", {"todo_id": "x", "text": "  "}, "text"),
+])
+def test_registered_mutations_reject_invalid_payloads(op_name, params, match):
+    ops = OperationRegistry()
+    register_todo_ops(ops, _store())
+    with pytest.raises(Conflict, match=match):
+        ops.get(op_name).handler(_ctx("mem1"), params)
+
+
+def test_create_enforces_workspace_tenant_and_membership_scope():
+    s = _store()
+    s.create_tenant("t2", "Other")
+    s.create_user("t2", "u2", "u@t2.com", "owner", "U2")
+    s.create_workspace("t2", "Other", workspace_id="other-ws")
+    create = make_todos_create(s)
+    with pytest.raises(Conflict, match="workspace"):
+        _create(s, workspace_id="missing")
+    with pytest.raises(Conflict, match="workspace"):
+        _create(s, workspace_id="other-ws")
+    with pytest.raises(Conflict, match="workspace"):
+        _create(s, workspace_id="ws2")
+    assert _create(s, workspace_id="ws1")["workspace_id"] == "ws1"
+    owner = create(_ctx("owner1", "owner"), {
+        "title": "owner", "workspace_id": "ws2", "complexity": "simple",
+    })
+    assert owner["workspace_id"] == "ws2"
