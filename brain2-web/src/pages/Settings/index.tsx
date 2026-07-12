@@ -13,7 +13,7 @@ import { IntegrationsSection } from './sections/IntegrationsSection';
 import { ModelsSection } from './sections/ModelsSection';
 import { AppearanceSection } from './sections/AppearanceSection';
 import { ToolsSection } from './sections/ToolsSection';
-import { AuditSection } from './sections/AuditSection';
+import { ActivitySection } from './sections/ActivitySection';
 import { DangerSection } from './sections/DangerSection';
 import { WorkspacesSection } from './sections/workspaces/WorkspacesSection';
 import { useMe } from '@/hooks/me';
@@ -49,7 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'models',       icon: 'cpu',      label: 'Models',       subtitle: 'Manage the cloud and local models your agents can run.' },
       { id: 'appearance',   icon: 'sparkles', label: 'Appearance',   subtitle: 'Theme, accent and interface preferences.' },
       { id: 'tools',        icon: 'command',  label: 'Tools',        subtitle: 'Control which operations agents can call.' },
-      { id: 'audit',        icon: 'history',  label: 'Audit log',    subtitle: 'A record of every change in this workspace.' },
+      { id: 'audit',        icon: 'history',  label: 'Activity',     subtitle: 'A record of every change in this workspace.' },
       { id: 'danger',       icon: 'shield',   label: 'Danger zone',  subtitle: 'Irreversible, destructive actions.' },
     ],
   },
@@ -104,7 +104,7 @@ export function SettingsPage({ theme, setTheme, accent, setAccent }: SettingsPag
     models:       <ModelsSection />,
     appearance:   <AppearanceSection theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />,
     tools:        <ToolsSection />,
-    audit:        <AuditSection />,
+    audit:        <ActivitySection />,
     danger:       <DangerSection />,
   };
 

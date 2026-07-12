@@ -20,12 +20,13 @@ vi.mock('@/hooks/useActivity', () => ({
   }),
 }));
 
-import { AuditSection } from './AuditSection';
+import { ActivitySection } from './ActivitySection';
 
-describe('AuditSection', () => {
-  it('renders live audit events, not mock rows', () => {
-    const html = renderToStaticMarkup(<AuditSection />);
+describe('ActivitySection', () => {
+  it('renders live activity events, not mock rows', () => {
+    const html = renderToStaticMarkup(<ActivitySection />);
 
+    expect(html).toContain('Activity');
     expect(html).toContain('source.done');
     expect(html).toContain('wiki');
     expect(html).toContain('worker-1');
