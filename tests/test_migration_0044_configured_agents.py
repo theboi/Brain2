@@ -36,7 +36,7 @@ def test_0044_adds_runtime_configuration_and_preserves_existing_rows():
             "VALUES ('a2','t2','Unbound','busy','created','updated')"
         )
         cx.execute(
-            "INSERT INTO todos(todo_id,tenant_id,workspace_id,requester_user_id,title," 
+            "INSERT INTO todos(todo_id,tenant_id,workspace_id,requester_user_id,title,"
             "priority,status,assigned_agent_id,preferred_agent_id,model_pref,conversation_id,"
             "memory_flushed,tokens_total,cost_total,created_at,started_at,completed_at) "
             "VALUES ('td1','t1','w1','u1','legacy',7,'done','a1','a1','legacy-model',"
@@ -149,3 +149,12 @@ def test_0044_accepts_failed_todos_and_enforces_runtime_schema():
     }
     assert indexes["idx_agents_tenant_name"].startswith("CREATE UNIQUE INDEX")
     assert "complexity" in indexes["idx_todos_claim"]
+
+    plan = store._conn.execute(
+        "EXPLAIN QUERY PLAN SELECT todo_id FROM todos "
+        "WHERE tenant_id=? AND status='queued' AND complexity=? "
+        "AND (preferred_agent_id IS NULL OR preferred_agent_id=?) "
+        "ORDER BY priority DESC,created_at ASC LIMIT 1",
+        ("t1", "medium", "a1"),
+    ).fetchall()
+    assert not any("USE TEMP B-TREE" in row["detail"] for row in plan)

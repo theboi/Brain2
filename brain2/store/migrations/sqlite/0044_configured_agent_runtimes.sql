@@ -70,7 +70,7 @@ FROM todos;
 DROP TABLE todos;
 ALTER TABLE todos_new RENAME TO todos;
 CREATE INDEX idx_todos_claim
-    ON todos(tenant_id, status, complexity, priority, created_at);
+    ON todos(tenant_id, status, complexity, priority DESC, created_at ASC);
 CREATE INDEX idx_todos_ws
     ON todos(tenant_id, workspace_id, status);
 CREATE INDEX idx_todos_req
