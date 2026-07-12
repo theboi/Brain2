@@ -1777,11 +1777,24 @@ class LocalStore:
 
     def append_todo_user_message(self, tenant_id: str, todo_id: str, text: str) -> None:
         """Continue: append a user message to the linked conversation + requeue."""
-        td = self.get_todo(tenant_id, todo_id)
-        if td and td.get("conversation_id"):
-            from brain2.chat_ops import insert_user_message
-            insert_user_message(self, conversation_id=td["conversation_id"], content=text)
-        self.requeue_todo(tenant_id, todo_id)
+        with self.transaction() as cx:
+            todo = cx.execute(
+                "SELECT status, conversation_id FROM todos "
+                "WHERE tenant_id=? AND todo_id=?",
+                (tenant_id, todo_id),
+            ).fetchone()
+            if todo is None:
+                raise NotFound(f"todo {todo_id!r} not found")
+            if todo["status"] not in {"done", "failed"}:
+                raise Conflict("only a done or failed todo can be continued")
+            if todo["conversation_id"]:
+                from brain2.chat_ops import insert_user_message
+                insert_user_message(
+                    self,
+                    conversation_id=todo["conversation_id"],
+                    content=text,
+                )
+            self.requeue_todo(tenant_id, todo_id)
 
     # --- todo visibility ---
     def list_admin_workspace_ids(self, tenant_id: str, user_id: str) -> set[str]:

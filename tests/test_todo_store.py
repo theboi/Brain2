@@ -270,6 +270,32 @@ def test_continue_old_todo_does_not_release_agent_from_newer_work():
     assert s.get_todo("t1", "old")["status"] == "queued"
 
 
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_invalid_continue_does_not_append_conversation_history(status):
+    s = _store()
+    _model(s)
+    _todo(s, "work", "medium")
+    s._conn.execute(
+        "INSERT INTO conversations(conversation_id,tenant_id,agent_id,user_id,title,"
+        "created_at,updated_at,model_id) VALUES "
+        "('conv','t1','m1','mem1','work','now','now','m1')"
+    )
+    s._conn.execute(
+        "UPDATE todos SET conversation_id='conv',status=? WHERE todo_id='work'",
+        (status,),
+    )
+    s._conn.commit()
+    before = s._conn.execute(
+        "SELECT COUNT(*) AS n FROM messages WHERE conversation_id='conv'"
+    ).fetchone()["n"]
+    with pytest.raises(Conflict, match="done or failed"):
+        s.append_todo_user_message("t1", "work", "must not persist")
+    after = s._conn.execute(
+        "SELECT COUNT(*) AS n FROM messages WHERE conversation_id='conv'"
+    ).fetchone()["n"]
+    assert after == before
+
+
 def test_list_todos_visible_by_role():
     s = _store()
     for todo_id, ws, requester in (("a", "ws1", "mem1"),
