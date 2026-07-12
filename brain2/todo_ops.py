@@ -8,6 +8,31 @@ def _row(row) -> dict:
     return {k: row[k] for k in row.keys()}
 
 
+def _with_model(store, todo: dict) -> dict:
+    """Attach truthful resolved/selected model metadata to a todo response."""
+    model_id = None
+    if todo.get("conversation_id"):
+        conversation = store._conn.execute(
+            "SELECT agent_id FROM conversations WHERE tenant_id=? AND conversation_id=?",
+            (todo["tenant_id"], todo["conversation_id"]),
+        ).fetchone()
+        if conversation:
+            model_id = conversation["agent_id"]
+    if not model_id and todo.get("model_pref") not in (None, "auto", "cloud", "local"):
+        model_id = todo["model_pref"]
+    model = None
+    if model_id:
+        model = store._conn.execute(
+            "SELECT model_id, name, provider FROM models WHERE tenant_id=? AND model_id=?",
+            (todo["tenant_id"], model_id),
+        ).fetchone()
+    result = dict(todo)
+    result["model_id"] = model["model_id"] if model else None
+    result["model_name"] = model["name"] if model else None
+    result["model_provider"] = model["provider"] if model else None
+    return result
+
+
 def _list_conversation_messages(store, conversation_id: str) -> list[dict]:
     rows = store._conn.execute(
         "SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at",
@@ -38,7 +63,7 @@ def make_todos_list(store):
             status=params.get("status"),
             workspace_id=params.get("workspace_id"),
         )
-        return {"todos": todos}
+        return {"todos": [_with_model(store, todo) for todo in todos]}
 
     return handler
 
@@ -49,7 +74,7 @@ def make_todos_get(store):
         messages = []
         if todo.get("conversation_id"):
             messages = _list_conversation_messages(store, todo["conversation_id"])
-        return {"todo": todo, "messages": messages}
+        return {"todo": _with_model(store, todo), "messages": messages}
 
     return handler
 
@@ -70,7 +95,7 @@ def make_todos_create(store):
             model_pref=params.get("model_pref"),
             preferred_agent_id=params.get("preferred_agent_id"),
         )
-        return store.get_todo(ctx.tenant_id, todo_id)
+        return _with_model(store, store.get_todo(ctx.tenant_id, todo_id))
 
     return handler
 

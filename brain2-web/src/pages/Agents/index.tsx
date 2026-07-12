@@ -17,8 +17,10 @@ import {
 } from './components';
 
 export function AgentsPage() {
-  const { data: agents = [] } = useWorkers();
-  const { data: todos = [] } = useTodos();
+  const workersQuery = useWorkers();
+  const todosQuery = useTodos();
+  const agents = workersQuery.data ?? [];
+  const todos = todosQuery.data ?? [];
   const createTodo = useCreateTodo();
   const setPriority = useSetTodoPriority();
   const stopTodo = useStopTodo();
@@ -32,6 +34,7 @@ export function AgentsPage() {
 
   const agentOf = (id: string | null) => agents.find((a) => a.id === id) || null;
   const availability = agentAvailability(agents);
+  const onlineCount = agents.filter((agent) => agent.status !== 'offline').length;
   const running = todos.filter((t) => t.status === 'running');
   const queued = todos.filter((t) => t.status === 'queued').sort((a, b) => (b.priority ? 1 : 0) - (a.priority ? 1 : 0));
   const done = todos.filter((t) => t.status === 'done').sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
@@ -72,6 +75,7 @@ export function AgentsPage() {
 
   const chips: Array<[typeof filter, string, number]> = [['all', 'All', todos.length], ['running', 'Running', running.length], ['queued', 'Queued', queued.length], ['done', 'Done', done.length]];
   const showGroup = (g: 'running' | 'queued' | 'done') => filter === 'all' || filter === g;
+  const errorText = (error: unknown) => error instanceof Error ? error.message : 'Request failed.';
 
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
@@ -92,6 +96,9 @@ export function AgentsPage() {
           <span style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>{availability.total} total · {availability.free} free</span>
         </div>
         <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 4 }}>
+          {workersQuery.isPending && <div style={{ padding: '24px 4px', color: 'var(--fg-muted)', fontSize: 13 }}>Loading live workers…</div>}
+          {workersQuery.isError && <div role="alert" style={{ padding: '16px 0', color: 'var(--destructive)', fontSize: 13 }}>Could not load workers: {errorText(workersQuery.error)} <button onClick={() => workersQuery.refetch()} style={agBtnGhost()}>Retry</button></div>}
+          {!workersQuery.isPending && !workersQuery.isError && agents.length === 0 && <div style={{ padding: '20px 4px', color: 'var(--fg-muted)', fontSize: 13 }}>No worker runtimes have registered yet. Start a Brain2 worker to process the queue.</div>}
           {agents.map((a) => <RosterCard key={a.id} a={a} todo={a.taskId ? todos.find((t) => t.id === a.taskId) || null : null} onOpen={actions.open} />)}
         </div>
       </div>
@@ -110,6 +117,9 @@ export function AgentsPage() {
             <span className="b2-hide-sm" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--fg-faint)' }}><Icon name="lock" size={13} color="var(--fg-faint)" /> each todo runs with its requester’s access</span>
           </div>
 
+          {todosQuery.isPending && <div style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--fg-muted)', fontSize: 13 }}>Loading durable queue…</div>}
+          {todosQuery.isError && <div role="alert" style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--destructive)', fontSize: 13 }}>Could not load the queue: {errorText(todosQuery.error)} <button onClick={() => todosQuery.refetch()} style={agBtnGhost()}>Retry</button></div>}
+
           {showGroup('running') && running.length > 0 && <GroupHead icon="loader" label="Running" n={running.length} tone="var(--success)" note={running.length + ' agent' + (running.length === 1 ? '' : 's') + ' busy'} />}
           {showGroup('running') && running.map((t) => <TodoRow key={t.id} t={t} agent={agentOf(t.agentId)} menuOpen={menuId === t.id} onMenu={setMenuId} actions={actions} />)}
 
@@ -119,14 +129,14 @@ export function AgentsPage() {
           {showGroup('done') && done.length > 0 && <GroupHead icon="check" label="Done · archived" n={done.length} tone="var(--success)" note="transcripts kept · memory flushed" />}
           {showGroup('done') && done.map((t) => <TodoRow key={t.id} t={t} agent={agentOf(t.agentId)} menuOpen={menuId === t.id} onMenu={setMenuId} actions={actions} />)}
 
-          {((filter === 'running' && !running.length) || (filter === 'queued' && !queued.length) || (filter === 'done' && !done.length)) && (
+          {!todosQuery.isPending && !todosQuery.isError && ((filter === 'all' && !todos.length) || (filter === 'running' && !running.length) || (filter === 'queued' && !queued.length) || (filter === 'done' && !done.length)) && (
             <div style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--fg-faint)', fontSize: 13 }}>Nothing here right now.</div>
           )}
         </div>
         <div className="b2-show-sm" style={{ display: 'none', height: 'calc(56px + env(safe-area-inset-bottom, 0px))' }} />
       </div>
 
-      {adding && <AddTodoModal agents={agents} freeCount={availability.free} onClose={() => setAdding(false)} onAdd={actions.add} />}
+      {adding && <AddTodoModal agents={agents} freeCount={availability.free} onlineCount={onlineCount} pending={createTodo.isPending} error={createTodo.isError ? errorText(createTodo.error) : null} onClose={() => setAdding(false)} onAdd={actions.add} />}
       {openId && <ConversationDrawer todoId={openId} agentOf={agentOf} onClose={() => setOpenId(null)} onContinue={actions.continue} />}
     </div>
   );

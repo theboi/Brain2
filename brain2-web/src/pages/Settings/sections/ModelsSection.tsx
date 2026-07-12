@@ -1,275 +1,127 @@
-/*
- * ModelsSection — manage the cloud and local models agents can run.
- *   · Local models  — Ollama / LM Studio / vLLM endpoints (inline-editable)
- *   · Cloud models  — bring-your-own-key provider model configs
- * Wired to the real models:* ops via useModels; styled to the v1 design.
- */
 import { useState, type CSSProperties } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { SCard } from '@/components/settings/SettingsCard';
 import { RowMenu } from '@/components/ui/RowMenu';
-import {
-  useModels,
-  useCreateModel,
-  useUpdateModel,
-  useDeleteModel,
-  useTestModel,
-} from '@/hooks/useModels';
+import { useCreateModel, useDeleteModel, useModels, useTestModel } from '@/hooks/useModels';
 import type { ModelConfig } from '@/lib/types';
 
-const CLOUD_PROVIDERS: ModelConfig['provider'][] = ['anthropic', 'gemini', 'openai'];
+type CloudProvider = 'anthropic' | 'openrouter';
+const PROVIDERS: Array<{ id: CloudProvider; label: string; hint: string }> = [
+  { id: 'anthropic', label: 'Anthropic', hint: 'e.g. claude-sonnet-4-5' },
+  { id: 'openrouter', label: 'OpenRouter', hint: 'e.g. anthropic/claude-sonnet-4.5' },
+];
 
-// ── Small style primitives (ported from the v1 design) ───────────────────────
-function mInput(extra?: CSSProperties): CSSProperties {
-  return {
-    height: 34, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)',
-    background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--mono-font)', fontSize: 12.5,
-    outline: 'none', width: '100%', ...extra,
-  };
-}
-function sbtn(kind?: 'primary' | 'danger'): CSSProperties {
-  const base: CSSProperties = {
-    display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 13px',
-    borderRadius: 8, fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600,
-    cursor: 'pointer', border: '1px solid transparent', whiteSpace: 'nowrap',
-  };
-  if (kind === 'primary') return { ...base, background: 'var(--accent)', color: '#fff' };
-  if (kind === 'danger') return { ...base, background: 'transparent', color: 'var(--destructive)', borderColor: 'var(--border)' };
-  return { ...base, background: 'transparent', color: 'var(--fg)', borderColor: 'var(--border)' };
-}
-const fieldLabel: CSSProperties = { display: 'block', fontSize: 11.5, color: 'var(--fg-muted)', marginBottom: 5 };
-const labelTxt: CSSProperties = { fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', padding: '0 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
-
-function statusView(status: ModelConfig['status']) {
-  if (status === 'ready') return { color: 'var(--success)', fill: true, label: 'Ready' };
-  if (status === 'paused') return { color: 'var(--warning)', fill: true, label: 'Paused' };
-  return { color: 'var(--fg-faint)', fill: false, label: 'Disabled' };
+function input(extra?: CSSProperties): CSSProperties {
+  return { height: 36, padding: '0 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'var(--mono-font)', fontSize: 12.5, outline: 'none', width: '100%', ...extra };
 }
 
-function TestBtn({ testing, ok, onClick }: { testing?: boolean; ok?: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} disabled={testing} style={{ ...sbtn(), opacity: testing ? 0.7 : 1, cursor: testing ? 'default' : 'pointer' }}>
-      {testing ? (
-        <>
-          <span className="b2-spin" style={{ display: 'flex' }}><Icon name="loader" size={13} color="var(--fg-muted)" /></span> Testing…
-        </>
-      ) : ok ? (
-        <><Icon name="check" size={13} color="var(--success)" /> Test</>
-      ) : (
-        'Test'
-      )}
-    </button>
-  );
+function button(primary = false): CSSProperties {
+  return { display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 13px', borderRadius: 8, border: primary ? 'none' : '1px solid var(--border)', background: primary ? 'var(--accent)' : 'transparent', color: primary ? '#fff' : 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' };
 }
 
-// ── Section ──────────────────────────────────────────────────────────────────
+const label: CSSProperties = { display: 'block', fontSize: 11.5, color: 'var(--fg-muted)', marginBottom: 5 };
+const errorStyle: CSSProperties = { color: 'var(--destructive)', fontSize: 12.5, marginTop: 10 };
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Request failed. Please try again.';
+}
+
 export function ModelsSection() {
-  const { data: models = [] } = useModels();
+  const modelsQuery = useModels();
   const createModel = useCreateModel();
-  const updateModel = useUpdateModel();
   const deleteModel = useDeleteModel();
   const testModel = useTestModel();
-
-  const local = models.filter((m) => m.provider === 'ollama');
-  const cloud = models.filter((m) => m.provider !== 'ollama');
-
+  const cloud = (modelsQuery.data ?? []).filter(
+    (model): model is ModelConfig & { provider: CloudProvider } =>
+      model.provider === 'anthropic' || model.provider === 'openrouter',
+  );
   const [adding, setAdding] = useState(false);
-  const [addingCloud, setAddingCloud] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [edit, setEdit] = useState({ name: '', url: '', params: '' });
+  const [form, setForm] = useState<{ provider: CloudProvider; name: string; model: string; key: string }>({ provider: 'anthropic', name: '', model: '', key: '' });
+  const [validation, setValidation] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
-  const [tested, setTested] = useState<Record<string, boolean>>({});
-  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; text: string }>>({});
 
-  const [nf, setNf] = useState({ name: '', url: 'http://', model: '', params: '' });
-  const [ncf, setNcf] = useState<{ provider: ModelConfig['provider']; name: string; model: string; key: string }>({ provider: 'anthropic', name: '', model: '', key: '' });
-
-  const startEdit = (m: ModelConfig) => {
-    setEditId(m.model_id);
-    setEdit({ name: m.name, url: m.ollama_base_url ?? '', params: m.param_count ?? '' });
-  };
-  const saveEdit = (id: string) => {
-    updateModel.mutate(
-      { model_id: id, name: edit.name, ollama_base_url: edit.url, param_count: edit.params },
-      { onSuccess: () => setEditId(null) },
-    );
+  const resetForm = () => {
+    setForm({ provider: 'anthropic', name: '', model: '', key: '' });
+    setValidation(null);
+    createModel.reset();
   };
 
-  const addLocal = () => {
-    if (!nf.name.trim() || !nf.url.trim() || !nf.model.trim()) return;
+  const save = () => {
+    if (!form.name.trim() || !form.model.trim() || !form.key.trim()) {
+      setValidation('Display name, provider model ID, and API key are required.');
+      return;
+    }
+    setValidation(null);
     createModel.mutate(
-      { name: nf.name.trim(), provider: 'ollama', model: nf.model.trim(), ollama_base_url: nf.url.trim(), param_count: nf.params.trim() || undefined },
-      { onSuccess: () => { setNf({ name: '', url: 'http://', model: '', params: '' }); setAdding(false); } },
-    );
-  };
-  const addCloud = () => {
-    if (!ncf.name.trim() || !ncf.model.trim()) return;
-    createModel.mutate(
-      { name: ncf.name.trim(), provider: ncf.provider, model: ncf.model.trim(), api_key: ncf.key.trim() || undefined },
-      { onSuccess: () => { setNcf({ provider: 'anthropic', name: '', model: '', key: '' }); setAddingCloud(false); } },
+      { provider: form.provider, name: form.name.trim(), model: form.model.trim(), api_key: form.key.trim() },
+      { onSuccess: () => { resetForm(); setAdding(false); } },
     );
   };
 
-  const runTest = (m: ModelConfig) => {
+  const runTest = (model: ModelConfig) => {
     if (testingId) return;
-    setTestResult(null);
-    setTestingId(m.model_id);
+    setTestingId(model.model_id);
     testModel.mutate(
-      { model_id: m.model_id },
+      { model_id: model.model_id },
       {
-        onSuccess: (result) => {
-          if (result.ok) setTested((t) => ({ ...t, [m.model_id]: true }));
-          setTestResult(result.ok ? `${m.name}: ${result.text ?? 'ok'}` : `${m.name}: ${result.error ?? 'test failed'}`);
-        },
+        onSuccess: (result) => setTestResults((current) => ({
+          ...current,
+          [model.model_id]: { ok: result.ok, text: result.ok ? (result.text || 'Connection succeeded.') : (result.error || 'Connection failed.') },
+        })),
+        onError: (error) => setTestResults((current) => ({ ...current, [model.model_id]: { ok: false, text: errorMessage(error) } })),
         onSettled: () => setTestingId(null),
       },
     );
   };
 
   return (
-    <div>
-      {testResult && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, color: 'var(--fg-muted)', fontSize: 12.5 }}>
-          <Icon name="check" size={14} color="var(--success)" />
-          {testResult}
+    <SCard
+      title="Cloud models"
+      desc="Connect Anthropic or OpenRouter. API keys are encrypted at rest and never returned after saving."
+      action={<button onClick={() => { setAdding((value) => !value); resetForm(); }} style={button()}><Icon name="plus" size={14} /> Add model</button>}
+    >
+      {modelsQuery.isPending && <div style={{ padding: '18px 0', color: 'var(--fg-muted)', fontSize: 13 }}>Loading saved models…</div>}
+      {modelsQuery.isError && (
+        <div style={{ padding: '14px 0', color: 'var(--destructive)', fontSize: 13 }}>
+          Could not load models. <button onClick={() => modelsQuery.refetch()} style={{ ...button(), marginLeft: 8 }}>Retry</button>
         </div>
       )}
-
-      {/* ── Local models ─────────────────────────────────────────────── */}
-      <SCard
-        title="Local models"
-        desc="Point at a runtime URL (Ollama, LM Studio, vLLM…). Name each endpoint, record its size, and the agents can run it."
-        action={<button onClick={() => setAdding((a) => !a)} style={sbtn()}><Icon name="plus" size={14} /> Add local model</button>}
-      >
-        {local.length === 0 && !adding && (
-          <div style={{ fontSize: 13, color: 'var(--fg-faint)', padding: '6px 0' }}>No local models yet.</div>
-        )}
-        {local.map((m, i) => {
-          const editing = editId === m.model_id;
-          const sv = statusView(m.status);
-          return (
-            <div key={m.model_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: i === local.length - 1 ? 'none' : '1px solid var(--border)' }}>
-              <span style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 9, background: 'var(--surface-2)', color: sv.fill ? 'var(--success)' : 'var(--fg-faint)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Icon name="cpu" size={17} />
-              </span>
-              <div style={{ width: 132, flexShrink: 0 }}>
-                {editing ? (
-                  <input autoFocus value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} title="Rename endpoint" style={mInput({ height: 26, fontFamily: 'var(--ui-font)', fontWeight: 600, fontSize: 13.5 })} />
-                ) : (
-                  <div style={labelTxt}>{m.name}</div>
-                )}
-                <div style={{ fontSize: 11, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)', paddingLeft: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.model}</div>
-              </div>
-              {editing ? (
-                <input value={edit.url} onChange={(e) => setEdit({ ...edit, url: e.target.value })} style={mInput({ flex: 1, minWidth: 90 })} />
-              ) : (
-                <div style={{ flex: 1, minWidth: 90, fontFamily: 'var(--mono-font)', fontSize: 12.5, color: 'var(--fg-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ollama_base_url}</div>
-              )}
-              {editing ? (
-                <input value={edit.params} onChange={(e) => setEdit({ ...edit, params: e.target.value })} title="Parameter count — free-form" style={mInput({ width: 72, textAlign: 'center', fontWeight: 600 })} />
-              ) : (
-                <div style={{ width: 72, textAlign: 'center', fontFamily: 'var(--mono-font)', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{m.param_count || '—'}</div>
-              )}
-              <span className="b2-hide-sm" style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: sv.color, width: 88 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: sv.fill ? sv.color : 'transparent', border: sv.fill ? 'none' : `1.5px solid ${sv.color}` }} /> {sv.label}
-              </span>
-              {editing ? (
-                <button onClick={() => saveEdit(m.model_id)} style={sbtn('primary')}><Icon name="check" size={14} color="#fff" /> Done</button>
-              ) : (
-                <TestBtn testing={testingId === m.model_id} ok={tested[m.model_id]} onClick={() => runTest(m)} />
-              )}
-              <RowMenu items={editing
-                ? [{ label: 'Done editing', icon: 'check', onClick: () => saveEdit(m.model_id) }, { divider: true, label: 'Remove endpoint', icon: 'trash', danger: true, onClick: () => deleteModel.mutate({ model_id: m.model_id }) }]
-                : [{ label: 'Edit', icon: 'pencil', onClick: () => startEdit(m) }, { divider: true, label: 'Remove endpoint', icon: 'trash', danger: true, onClick: () => deleteModel.mutate({ model_id: m.model_id }) }]} />
+      {!modelsQuery.isPending && !modelsQuery.isError && cloud.length === 0 && !adding && (
+        <div style={{ padding: '18px 0', color: 'var(--fg-muted)', fontSize: 13 }}>No eligible models configured. Add an Anthropic or OpenRouter model before agents can run.</div>
+      )}
+      {cloud.map((model, index) => {
+        const result = testResults[model.model_id];
+        return (
+          <div key={model.model_id} style={{ padding: '14px 0', borderBottom: index === cloud.length - 1 ? 'none' : '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--accent-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="cloud" size={17} color="var(--accent)" /></span>
+              <div style={{ width: 150, minWidth: 0 }}><div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{model.name}</div><div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{model.provider === 'anthropic' ? 'Anthropic' : 'OpenRouter'}</div></div>
+              <div style={{ flex: 1, minWidth: 80, fontFamily: 'var(--mono-font)', fontSize: 12, color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{model.model}</div>
+              <span style={{ fontSize: 12, color: model.status === 'ready' ? 'var(--success)' : 'var(--fg-muted)' }}>{model.status}</span>
+              <button onClick={() => runTest(model)} disabled={testingId !== null} style={{ ...button(), opacity: testingId && testingId !== model.model_id ? 0.5 : 1 }}>{testingId === model.model_id ? 'Testing…' : 'Test'}</button>
+              <RowMenu items={[{ label: 'Remove model', icon: 'trash', danger: true, onClick: () => deleteModel.mutate({ model_id: model.model_id }) }]} />
             </div>
-          );
-        })}
-        {adding && (
-          <div style={{ marginTop: 16, padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)' }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 10 }}>Add a local model</div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-              <label style={{ flex: '1 1 130px' }}>
-                <span style={fieldLabel}>Name</span>
-                <input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="mac-studio-2" style={mInput({ fontFamily: 'var(--ui-font)' })} />
-              </label>
-              <label style={{ flex: '2 1 220px' }}>
-                <span style={fieldLabel}>Base URL</span>
-                <input value={nf.url} onChange={(e) => setNf({ ...nf, url: e.target.value })} placeholder="http://10.0.0.9:11434" style={mInput()} />
-              </label>
-              <label style={{ flex: '1 1 130px' }}>
-                <span style={fieldLabel}>Model</span>
-                <input value={nf.model} onChange={(e) => setNf({ ...nf, model: e.target.value })} placeholder="llama3.3" style={mInput()} />
-              </label>
-              <label style={{ flex: '0 1 100px' }}>
-                <span style={fieldLabel}>Parameters</span>
-                <input value={nf.params} onChange={(e) => setNf({ ...nf, params: e.target.value })} placeholder="90B · 1T" style={mInput()} />
-              </label>
-              <button onClick={addLocal} disabled={createModel.isPending} style={{ ...sbtn('primary'), height: 34 }}><Icon name="check" size={14} color="#fff" /> Add</button>
-              <button onClick={() => { setNf({ name: '', url: 'http://', model: '', params: '' }); setAdding(false); }} style={{ ...sbtn(), height: 34 }}>Cancel</button>
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 9 }}>Parameter count is free-form — use the model’s own scale (e.g. 10M, 8B, 90B, 1T).</div>
+            {result && <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '9px 0 0 46px', fontSize: 12, color: result.ok ? 'var(--success)' : 'var(--destructive)' }}><Icon name={result.ok ? 'check' : 'alert'} size={13} /> {result.text}</div>}
           </div>
-        )}
-      </SCard>
-
-      {/* ── Cloud models ─────────────────────────────────────────────── */}
-      <SCard
-        title="Cloud models"
-        desc="Bring your own API keys. Keys are encrypted at rest (AES-256-GCM) and never shown again after saving."
-        action={<button onClick={() => setAddingCloud((a) => !a)} style={sbtn()}><Icon name="plus" size={14} /> Add provider</button>}
-      >
-        {cloud.length === 0 && !addingCloud && (
-          <div style={{ fontSize: 13, color: 'var(--fg-faint)', padding: '6px 0' }}>No cloud models yet.</div>
-        )}
-        {cloud.map((m, i) => {
-          const sv = statusView(m.status);
-          return (
-            <div key={m.model_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 0', borderBottom: i === cloud.length - 1 ? 'none' : '1px solid var(--border)' }}>
-              <span style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 9, background: 'var(--surface-2)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Icon name="cloud" size={17} />
-              </span>
-              <div style={{ width: 132, flexShrink: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--fg-muted)', textTransform: 'capitalize' }}>{m.provider}</div>
-              </div>
-              <div style={{ flex: 1, fontFamily: 'var(--mono-font)', fontSize: 12.5, color: 'var(--fg-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.model}</div>
-              <span className="b2-hide-sm" style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: sv.color, width: 88 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: sv.fill ? sv.color : 'transparent', border: sv.fill ? 'none' : `1.5px solid ${sv.color}` }} /> {sv.label}
-              </span>
-              <TestBtn testing={testingId === m.model_id} ok={tested[m.model_id]} onClick={() => runTest(m)} />
-              <RowMenu items={[{ label: 'Remove model', icon: 'trash', danger: true, onClick: () => deleteModel.mutate({ model_id: m.model_id }) }]} />
-            </div>
-          );
-        })}
-        {addingCloud && (
-          <div style={{ marginTop: 16, padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)' }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 10 }}>Add a cloud model</div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-              <label style={{ flex: '0 1 120px' }}>
-                <span style={fieldLabel}>Provider</span>
-                <select value={ncf.provider} onChange={(e) => setNcf({ ...ncf, provider: e.target.value as ModelConfig['provider'] })} style={mInput({ fontFamily: 'var(--ui-font)', textTransform: 'capitalize' })}>
-                  {CLOUD_PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
-              </label>
-              <label style={{ flex: '1 1 130px' }}>
-                <span style={fieldLabel}>Name</span>
-                <input value={ncf.name} onChange={(e) => setNcf({ ...ncf, name: e.target.value })} placeholder="Claude Sonnet" style={mInput({ fontFamily: 'var(--ui-font)' })} />
-              </label>
-              <label style={{ flex: '1 1 150px' }}>
-                <span style={fieldLabel}>Model</span>
-                <input value={ncf.model} onChange={(e) => setNcf({ ...ncf, model: e.target.value })} placeholder="claude-sonnet-4-5" style={mInput()} />
-              </label>
-              <label style={{ flex: '2 1 180px' }}>
-                <span style={fieldLabel}>API key</span>
-                <input type="password" value={ncf.key} onChange={(e) => setNcf({ ...ncf, key: e.target.value })} placeholder="Paste API key…" style={mInput()} />
-              </label>
-              <button onClick={addCloud} disabled={createModel.isPending} style={{ ...sbtn('primary'), height: 34 }}><Icon name="check" size={14} color="#fff" /> Add</button>
-              <button onClick={() => { setNcf({ provider: 'anthropic', name: '', model: '', key: '' }); setAddingCloud(false); }} style={{ ...sbtn(), height: 34 }}>Cancel</button>
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 9 }}>The key is encrypted at rest and never shown again after saving.</div>
+        );
+      })}
+      {adding && (
+        <div style={{ marginTop: 12, padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)' }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <label style={{ flex: '0 1 130px' }}><span style={label}>Provider</span><select aria-label="Provider" value={form.provider} onChange={(event) => setForm({ ...form, provider: event.target.value as CloudProvider, model: '' })} style={input({ fontFamily: 'var(--ui-font)' })}>{PROVIDERS.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
+            <label style={{ flex: '1 1 150px' }}><span style={label}>Display name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Team Sonnet" style={input({ fontFamily: 'var(--ui-font)' })} /></label>
+            <label style={{ flex: '1 1 210px' }}><span style={label}>Provider model ID</span><input value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder={PROVIDERS.find((provider) => provider.id === form.provider)?.hint} style={input()} /></label>
+            <label style={{ flex: '1 1 210px' }}><span style={label}>API key</span><input type="password" autoComplete="off" value={form.key} onChange={(event) => setForm({ ...form, key: event.target.value })} placeholder="Paste API key" style={input()} /></label>
+            <button onClick={save} disabled={createModel.isPending} style={{ ...button(true), opacity: createModel.isPending ? 0.6 : 1 }}>{createModel.isPending ? 'Saving…' : 'Save'}</button>
+            <button onClick={() => { resetForm(); setAdding(false); }} style={button()}>Cancel</button>
           </div>
-        )}
-      </SCard>
-    </div>
+          {validation && <div style={errorStyle}>{validation}</div>}
+          {createModel.isError && <div style={errorStyle}>{errorMessage(createModel.error)}</div>}
+          {deleteModel.isError && <div style={errorStyle}>{errorMessage(deleteModel.error)}</div>}
+        </div>
+      )}
+      {!adding && deleteModel.isError && <div style={errorStyle}>{errorMessage(deleteModel.error)}</div>}
+    </SCard>
   );
 }

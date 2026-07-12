@@ -1,4 +1,4 @@
-"""LLM provider protocol + Anthropic, Gemini, Ollama implementations.
+"""LLM provider protocol and HTTP provider implementations.
 
 All providers use httpx directly — no vendor SDK imports.
 """
@@ -14,6 +14,24 @@ from brain2.errors import LLMError
 
 _DEFAULT_MAX_TOKENS = 1024
 _TIMEOUT_S = 60.0
+_ERROR_TEXT_LIMIT = 500
+
+
+def _safe_error_text(response: httpx.Response, api_key: str) -> str:
+    """Return bounded provider error context without echoing a credential."""
+    text = ""
+    try:
+        data = response.json()
+        error = data.get("error") if isinstance(data, dict) else None
+        if isinstance(error, dict):
+            text = str(error.get("message") or error.get("code") or "")
+        elif error:
+            text = str(error)
+    except Exception:
+        text = response.text or ""
+    if api_key:
+        text = text.replace(api_key, "[redacted]")
+    return " ".join(text.split())[:_ERROR_TEXT_LIMIT]
 
 
 class ServiceClass(enum.IntEnum):
@@ -83,6 +101,78 @@ class AnthropicProvider:
             output_tokens=data["usage"]["output_tokens"],
             model=data.get("model", request.model),
         )
+
+
+class OpenRouterProvider:
+    _BASE = "https://openrouter.ai/api/v1/chat/completions"
+
+    def __init__(self, api_key: str, model: str, client: httpx.Client | None = None,
+                 app_url: str | None = None, app_title: str = "Brain2") -> None:
+        self._api_key = api_key
+        self._model = model
+        self._client = client or httpx.Client(timeout=_TIMEOUT_S)
+        self._app_url = app_url
+        self._app_title = app_title
+
+    def complete(self, request: CompletionRequest) -> CompletionResponse:
+        model = request.model or self._model
+        messages = []
+        if request.system:
+            messages.append({"role": "system", "content": request.system})
+        messages.append({"role": "user", "content": request.prompt})
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        if self._app_url:
+            headers["HTTP-Referer"] = self._app_url
+        if self._app_title:
+            headers["X-OpenRouter-Title"] = self._app_title
+        try:
+            response = self._client.post(
+                self._BASE,
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "max_tokens": request.max_tokens,
+                    "stream": False,
+                },
+                headers=headers,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = _safe_error_text(exc.response, self._api_key)
+            suffix = f": {detail}" if detail else ""
+            raise LLMError(
+                f"OpenRouter {exc.response.status_code}{suffix}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            message = str(exc).replace(self._api_key, "[redacted]")
+            raise LLMError(f"OpenRouter network error: {message[:_ERROR_TEXT_LIMIT]}") from exc
+
+        try:
+            data = response.json()
+            if isinstance(data, dict) and data.get("error"):
+                detail = _safe_error_text(response, self._api_key)
+                raise LLMError(f"OpenRouter error: {detail or 'request failed'}")
+            choice = data["choices"][0]
+            text = choice["message"]["content"]
+            usage = data.get("usage") or {}
+            if not isinstance(text, str):
+                raise TypeError("message content is not text")
+            return CompletionResponse(
+                text=text,
+                input_tokens=int(usage.get("prompt_tokens") or 0),
+                output_tokens=int(usage.get("completion_tokens") or 0),
+                model=data.get("model") or model,
+            )
+        except LLMError:
+            raise
+        except Exception as exc:
+            message = str(exc).replace(self._api_key, "[redacted]")
+            raise LLMError(
+                f"OpenRouter malformed response: {message[:_ERROR_TEXT_LIMIT]}"
+            ) from exc
 
 
 class GeminiProvider:

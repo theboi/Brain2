@@ -205,7 +205,7 @@ export interface WorkspacesOverview {
 export interface ModelConfig {
   model_id: string;
   name: string;
-  provider: 'anthropic' | 'gemini' | 'ollama' | 'openai' | 'stub';
+  provider: 'anthropic' | 'gemini' | 'ollama' | 'openai' | 'openrouter' | 'stub';
   model: string;
   param_count: string | null;
   system_prompt: string;
@@ -234,6 +234,8 @@ export interface LiveTodo {
   assigned_agent_id: string | null;
   preferred_agent_id: string | null;
   model_pref: string | null;
+  model_name?: string | null;
+  model_provider?: ModelConfig['provider'] | null;
   conversation_id: string | null;
   memory_flushed: number;
   tokens_total: number | null;

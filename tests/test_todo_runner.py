@@ -7,6 +7,7 @@ from brain2.model_ops import make_models_create
 from brain2.secrets import SecretManager
 from brain2.store.local import LocalStore
 from brain2.tasks.todo_runner import todo_tick
+from unittest.mock import patch
 
 
 def _now():
@@ -41,3 +42,38 @@ def test_idle_worker_runs_and_completes_a_todo():
     assert done["memory_flushed"] == 1
     assert done["conversation_id"] is not None
     assert s.list_workers("t1")[0]["status"] == "idle"
+
+
+def test_tick_only_claims_for_current_runtime():
+    actx, s = _actx()
+    s.ensure_workers("t1", ["Terra", "Atlas"])
+    workers = {worker["name"]: worker for worker in s.list_workers("t1")}
+    for worker in workers.values():
+        s.worker_heartbeat("t1", worker["agent_id"], _now(), status="idle")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="terra only",
+                            preferred_agent_id=workers["Terra"]["agent_id"])
+    assert todo_tick(actx, {"t1": workers["Atlas"]["agent_id"]}) is False
+    assert s.get_todo("t1", todo_id)["status"] == "queued"
+    assert todo_tick(actx, {"t1": workers["Terra"]["agent_id"]}) is True
+    assert s.get_todo("t1", todo_id)["status"] == "done"
+
+
+def test_provider_failure_is_persisted_in_transcript():
+    actx, s = _actx()
+    s.ensure_workers("t1", ["Terra"])
+    worker = s.list_workers("t1")[0]
+    s.worker_heartbeat("t1", worker["agent_id"], _now(), status="idle")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="fail visibly")
+
+    def failed_turn(*args, **kwargs):
+        yield "error", {"message": "provider unavailable"}
+
+    with patch("brain2.chat.run_turn", failed_turn):
+        assert todo_tick(actx, {"t1": worker["agent_id"]}) is True
+    todo = s.get_todo("t1", todo_id)
+    messages = s._conn.execute(
+        "SELECT role, content FROM messages WHERE conversation_id=? ORDER BY created_at",
+        (todo["conversation_id"],),
+    ).fetchall()
+    assert any(row["role"] == "assistant" and
+               row["content"] == "Error: provider unavailable" for row in messages)

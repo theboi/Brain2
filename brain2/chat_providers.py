@@ -1,6 +1,6 @@
-"""Per-agent provider construction + one-shot completion (Phases E/F).
+"""Per-model provider construction + one-shot completion (Phases E/F).
 
-Builds a brain2.llm.providers Provider from an agents-table row, pulling the
+Builds a brain2.llm.providers Provider from a models-table row, pulling the
 API key from the SecretManager when needed. A 'stub' provider is included so
 tests can exercise the full pipeline without hitting a network.
 """
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from brain2.errors import LLMError
 from brain2.llm.providers import (AnthropicProvider, CompletionRequest,
                                    CompletionResponse, GeminiProvider,
-                                   OllamaProvider, ServiceClass)
+                                   OllamaProvider, OpenRouterProvider, ServiceClass)
 
 
 @dataclass
@@ -26,27 +26,34 @@ class StubProvider:
                                    model=request.model or "stub")
 
 
-def build_provider(tenant_id: str, agent_row, secrets):
-    p = agent_row["provider"]
-    model = agent_row["model"]
+def build_provider(tenant_id: str, model_row, secrets, *,
+                   accessed_by: str = "agent_runtime"):
+    p = model_row["provider"]
+    model = model_row["model"]
     if p == "stub":
         import os
         return StubProvider(canned_text=os.environ.get(
             "BRAIN2_STUB_TEXT", "stub: ok"))
     if p == "ollama":
-        base = agent_row["ollama_base_url"] or "http://localhost:11434"
+        base = model_row["ollama_base_url"] or "http://localhost:11434"
         return OllamaProvider(base_url=base, model=model)
     if p == "anthropic":
-        if not agent_row["secret_key"]:
-            raise LLMError("anthropic agent missing api_key")
-        api_key = secrets.retrieve(tenant_id, agent_row["secret_key"],
-                                   accessed_by="agent_runtime").decode()
+        if not model_row["secret_key"]:
+            raise LLMError("anthropic model missing api_key")
+        api_key = secrets.retrieve(tenant_id, model_row["secret_key"],
+                                   accessed_by=accessed_by).decode()
         return AnthropicProvider(api_key=api_key, model=model)
+    if p == "openrouter":
+        if not model_row["secret_key"]:
+            raise LLMError("openrouter model missing api_key")
+        api_key = secrets.retrieve(tenant_id, model_row["secret_key"],
+                                   accessed_by=accessed_by).decode()
+        return OpenRouterProvider(api_key=api_key, model=model)
     if p == "gemini":
-        if not agent_row["secret_key"]:
-            raise LLMError("gemini agent missing api_key")
-        api_key = secrets.retrieve(tenant_id, agent_row["secret_key"],
-                                   accessed_by="agent_runtime").decode()
+        if not model_row["secret_key"]:
+            raise LLMError("gemini model missing api_key")
+        api_key = secrets.retrieve(tenant_id, model_row["secret_key"],
+                                   accessed_by=accessed_by).decode()
         return GeminiProvider(api_key=api_key, model=model)
     raise LLMError(f"unsupported provider: {p}")
 

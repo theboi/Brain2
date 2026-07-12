@@ -35,8 +35,13 @@ export function mapTodo(todo: LiveTodo, messages: TodoMessage[]): Todo {
     agentId: todo.assigned_agent_id,
     preferredAgent: todo.preferred_agent_id,
     modelPref: todo.model_pref ?? undefined,
+    model: todo.model_name ?? undefined,
+    modelProvider: todo.model_provider === 'anthropic' || todo.model_provider === 'openrouter'
+      ? todo.model_provider
+      : undefined,
     memoryFlushed: todo.memory_flushed === 1,
     doneAt: todo.completed_at ? Date.parse(todo.completed_at) : undefined,
+    completedLabel: todo.completed_at ? new Date(todo.completed_at).toLocaleString() : undefined,
     tokens: todo.tokens_total != null ? `${todo.tokens_total} tok` : undefined,
     messages: messages.map(mapMessage),
   };

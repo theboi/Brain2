@@ -11,7 +11,8 @@ import uuid
 
 from brain2.errors import Conflict, NotFound
 
-_PROVIDERS = {"anthropic", "gemini", "ollama", "openai", "stub"}
+_PROVIDERS = {"anthropic", "gemini", "ollama", "openai", "openrouter", "stub"}
+_KEYED_PROVIDERS = {"anthropic", "openrouter"}
 
 
 def _now():
@@ -44,17 +45,26 @@ def make_models_list(store):
 
 def make_models_create(store, secrets):
     def handler(ctx, params):
-        provider = params["provider"]
+        provider = str(params.get("provider") or "").strip().lower()
         if provider not in _PROVIDERS:
             raise Conflict(f"provider must be one of {sorted(_PROVIDERS)}")
+        name = str(params.get("name") or "").strip()
+        provider_model = str(params.get("model") or "").strip()
+        api_key = str(params.get("api_key") or "").strip()
+        if not name:
+            raise Conflict("name is required")
+        if not provider_model:
+            raise Conflict("model is required")
+        if provider in _KEYED_PROVIDERS and not api_key:
+            raise Conflict(f"api_key is required for {provider}")
         model_id = str(uuid.uuid4())
         secret_key = None
-        if params.get("api_key"):
+        if api_key:
             secret_key = f"model:{model_id}:api_key"
             secrets.store(
                 ctx.tenant_id,
                 secret_key,
-                params["api_key"].encode(),
+                api_key.encode(),
                 accessed_by=ctx.user_id,
             )
         tool_allowlist = json.dumps(params.get("tool_allowlist") or [])
@@ -68,9 +78,9 @@ def make_models_create(store, secrets):
                 (
                     model_id,
                     ctx.tenant_id,
-                    params["name"],
+                    name,
                     provider,
-                    params["model"],
+                    provider_model,
                     params.get("system_prompt", ""),
                     tool_allowlist,
                     params.get("fallback_model"),
@@ -187,7 +197,8 @@ def make_models_test(store, secrets):
         from brain2.chat_providers import build_provider, complete_once
 
         try:
-            provider = build_provider(ctx.tenant_id, row, secrets)
+            provider = build_provider(ctx.tenant_id, row, secrets,
+                                      accessed_by=ctx.user_id)
             resp = complete_once(provider, prompt, system=row["system_prompt"])
             return {
                 "ok": True,
@@ -196,7 +207,15 @@ def make_models_test(store, secrets):
                 "output_tokens": resp.output_tokens,
             }
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            error = str(exc)
+            if row["secret_key"]:
+                try:
+                    key = secrets.retrieve(ctx.tenant_id, row["secret_key"],
+                                           accessed_by=ctx.user_id).decode()
+                    error = error.replace(key, "[redacted]")
+                except Exception:
+                    pass
+            return {"ok": False, "error": error[:500]}
 
     return handler
 

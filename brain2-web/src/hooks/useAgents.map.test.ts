@@ -4,7 +4,7 @@ import type { LiveTodo, Worker } from '@/lib/types';
 
 const W: Worker = {
   agent_id: 'a1',
-  name: 'Jarvis',
+  name: 'Terra',
   status: 'busy',
   current_todo_id: 't1',
   todo_summary: { todo_id: 't1', title: 'Audit page' },
@@ -21,6 +21,8 @@ const T: LiveTodo = {
   assigned_agent_id: 'a1',
   preferred_agent_id: null,
   model_pref: 'auto',
+  model_name: 'Team Sonnet',
+  model_provider: 'anthropic',
   conversation_id: 'c1',
   memory_flushed: 0,
   tokens_total: null,
@@ -34,7 +36,7 @@ describe('mapWorker', () => {
   it('maps status busy->busy and carries taskId', () => {
     const agent = mapWorker(W);
     expect(agent.id).toBe('a1');
-    expect(agent.name).toBe('Jarvis');
+    expect(agent.name).toBe('Terra');
     expect(agent.status).toBe('busy');
     expect(agent.taskId).toBe('t1');
   });
@@ -47,6 +49,8 @@ describe('mapTodo', () => {
     expect(todo.priority).toBe(true);
     expect(todo.status).toBe('running');
     expect(todo.agentId).toBe('a1');
+    expect(todo.model).toBe('Team Sonnet');
+    expect(todo.modelProvider).toBe('anthropic');
   });
 
   it('maps done todo memory flush', () => {

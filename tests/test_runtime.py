@@ -44,6 +44,21 @@ def test_worker_tick_noop_when_idle():
     assert worker_tick(actx.store, actx.tasks, actx.events) is False
 
 
+def test_app_context_does_not_seed_workers_and_runtime_registers_only_itself():
+    actx = _actx()
+    assert actx.store.list_workers("t1") == []
+    run_worker(actx, max_ticks=1, agent_name="Terra")
+    workers = actx.store.list_workers("t1")
+    assert [(worker["name"], worker["status"]) for worker in workers] == [("Terra", "idle")]
+
+
+def test_named_runtimes_remain_distinct():
+    actx = _actx()
+    run_worker(actx, max_ticks=1, agent_name="Terra")
+    run_worker(actx, max_ticks=1, agent_name="Atlas")
+    assert {worker["name"] for worker in actx.store.list_workers("t1")} == {"Terra", "Atlas"}
+
+
 def test_init_tenant_bootstraps_and_token_works():
     store = LocalStore(":memory:")
     store.migrate()

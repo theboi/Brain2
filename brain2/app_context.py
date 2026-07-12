@@ -70,12 +70,6 @@ def build_app_context(*, store: Store | None = None, gateway=None) -> AppContext
                       tasks=tasks, events=events, connector_factory=connector_factory,
                       config=cfg, blob_store=blob_store)
 
-    try:
-        for _tid in store.list_tenant_ids():
-            store.ensure_workers(_tid, ["Jarvis", "Steve", "Marvin", "Ada", "Hal", "Friday"])
-    except Exception:
-        pass
-
     # Start VaultWatcher for all projects with vault paths
     import logging as _logging
     _logger = _logging.getLogger(__name__)

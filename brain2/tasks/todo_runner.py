@@ -97,6 +97,7 @@ def _run_todo(actx, tenant_id: str, todo: dict) -> None:
         from brain2.chat import run_turn
 
         total_in = total_out = 0
+        run_error = None
         for event_type, payload in run_turn(
             store,
             actx.operations,
@@ -109,6 +110,15 @@ def _run_todo(actx, tenant_id: str, todo: dict) -> None:
             if event_type == "done":
                 total_in = payload.get("tokens_in", total_in)
                 total_out = payload.get("tokens_out", total_out)
+            elif event_type == "error":
+                run_error = payload.get("message") or "model execution failed"
+        if run_error:
+            from brain2.chat_ops import insert_assistant_message
+            insert_assistant_message(
+                store,
+                conversation_id=conversation_id,
+                content=f"Error: {run_error}",
+            )
     except Exception as exc:
         logger.warning("todo %s run failed: %s", todo["todo_id"], exc)
         total_in = total_out = 0
@@ -122,27 +132,35 @@ def _run_todo(actx, tenant_id: str, todo: dict) -> None:
     )
 
 
-def todo_tick(actx) -> bool:
+def todo_tick(actx, agent_ids: dict[str, str] | None = None) -> bool:
     """Run one dispatch pass. Returns True if any todo was claimed and run."""
     store = actx.store
     now = _now()
     store.sweep_stale_workers(now, stale_seconds=_STALE_SECONDS)
     did = False
+    if agent_ids is None:
+        # Compatibility for direct single-runtime ticks: a lone live worker is
+        # unambiguous. Never fan out across or impersonate multiple roster rows.
+        agent_ids = {}
+        for tenant_id in store.list_tenant_ids():
+            live = [worker for worker in store.list_workers(tenant_id)
+                    if worker["status"] != "offline"]
+            if len(live) == 1:
+                agent_ids[tenant_id] = live[0]["agent_id"]
     for tenant_id in store.list_tenant_ids():
-        for worker in store.list_workers(tenant_id):
-            if worker["status"] == "offline":
-                continue
-            store.worker_heartbeat(
-                tenant_id,
-                worker["agent_id"],
-                now,
-                status=worker["status"],
-            )
-            if worker["status"] != "idle":
-                continue
-            todo = store.claim_todo_for_agent(tenant_id, worker["agent_id"])
-            if todo is None:
-                continue
-            _run_todo(actx, tenant_id, todo)
-            did = True
+        agent_id = agent_ids.get(tenant_id)
+        if not agent_id:
+            continue
+        worker = next((w for w in store.list_workers(tenant_id)
+                       if w["agent_id"] == agent_id), None)
+        if worker is None or worker["status"] == "offline":
+            continue
+        store.worker_heartbeat(tenant_id, agent_id, now, status=worker["status"])
+        if worker["status"] != "idle":
+            continue
+        todo = store.claim_todo_for_agent(tenant_id, agent_id)
+        if todo is None:
+            continue
+        _run_todo(actx, tenant_id, todo)
+        did = True
     return did

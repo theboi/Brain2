@@ -7,6 +7,8 @@ from brain2.model_ops import (
     make_models_list,
     make_models_update,
 )
+from brain2.errors import Conflict
+import pytest
 from brain2.secrets import SecretManager
 from brain2.store.local import LocalStore
 
@@ -62,3 +64,17 @@ def test_delete_soft_disables():
     assert all(
         m["model_id"] != mid for m in make_models_list(s)(_ctx(), {})["models"]
     )
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openrouter"])
+def test_cloud_model_requires_key_and_strips_fields(provider):
+    s, sm = _store_secrets()
+    with pytest.raises(Conflict, match="api_key is required"):
+        make_models_create(s, sm)(_ctx(), {"name": "M", "provider": provider, "model": "x"})
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": " M ", "provider": provider, "model": " x ", "api_key": " secret "})
+    assert created["name"] == "M" and created["model"] == "x"
+    assert "secret_key" not in created and "api_key" not in created
+    row = s._conn.execute("SELECT secret_key FROM models WHERE model_id=?", (created["model_id"],)).fetchone()
+    assert sm.retrieve("t1", row["secret_key"], accessed_by="u1") == b"secret"
+    assert "secret" not in str(make_models_list(s)(_ctx(), {}))

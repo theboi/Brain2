@@ -20,7 +20,7 @@ const ITEMS: NavItem[] = [
   { id: 'home',     icon: 'home',     label: 'Home',    href: '/' },
   { id: 'sources',  icon: 'sources',  label: 'Sources', href: '/sources' },
   { id: 'wiki',     icon: 'wiki',     label: 'Wiki',    href: '/wiki' },
-  { id: 'agents',   icon: 'robot',    label: 'Agents',  href: '/agents', badge: 3 },
+  { id: 'agents',   icon: 'robot',    label: 'Agents',  href: '/agents' },
   { id: 'reports',  icon: 'file',     label: 'Reports', href: '/reports' },
   { id: 'settings', icon: 'settings', label: 'Settings', href: '/settings' },
 ];

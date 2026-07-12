@@ -1,6 +1,5 @@
 // Brain2 Console — Agents page view-model types.
 
-export type Loc = 'cloud' | 'local';
 export type TodoStatus = 'running' | 'queued' | 'done';
 export type AgentRunStatus = 'busy' | 'idle' | 'offline';
 
@@ -42,15 +41,13 @@ export interface Todo {
   priority: boolean;
   status: TodoStatus;
   agentId: string | null;
-  loc?: Loc;
   model?: string;
+  modelProvider?: 'anthropic' | 'openrouter';
   modelPref?: string;
-  elapsed?: number;
-  dur?: number;
-  when?: string;
   tokens?: string;
   memoryFlushed?: boolean;
   doneAt?: number;
+  completedLabel?: string;
   preferredAgent?: string | null;
   messages: Message[];
 }

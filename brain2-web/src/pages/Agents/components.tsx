@@ -1,9 +1,10 @@
 /*
  * Brain2 Console — Agents page components (roster, queue, drawer, add-todo).
- * Faithful TS port of docs/design/v1/project/agents.jsx. Mock-only for now.
+ * Live worker roster, durable queue, and persisted conversations.
  */
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
@@ -14,6 +15,7 @@ import { useTodo } from '@/hooks/useAgents';
 import { useModels } from '@/hooks/useModels';
 import { useWorkspacesOverview } from '@/hooks/useWorkspaces';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
+import type { ModelConfig } from '@/lib/types';
 import type { Agent, Message, Todo, Tool } from './data';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -26,6 +28,14 @@ function hexToRgba(hex: string, a: number): string {
 }
 
 const AG_TINT = ['#7C8CFF', '#34D399', '#F59E0B', '#A78BFA', '#F472B6', '#38BDF8', '#FB7185', '#2DD4BF'];
+
+export function eligibleAgentModels(models: ModelConfig[]): ModelConfig[] {
+  return models.filter((model) => model.status === 'ready' && (model.provider === 'anthropic' || model.provider === 'openrouter'));
+}
+
+export function canSubmitTodo(input: { title: string; workspaceId: string; modelId: string; onlineCount: number; pending?: boolean }): boolean {
+  return Boolean(input.title.trim() && input.workspaceId && input.modelId && input.onlineCount > 0 && !input.pending);
+}
 
 export function Av({ name, size = 30 }: { name?: string; size?: number }) {
   const nm = name || '?';
@@ -68,11 +78,6 @@ function PriorityBadge() {
   );
 }
 
-export function fmtTime(s?: number): string {
-  s = Math.max(0, Math.floor(s || 0));
-  const m = Math.floor(s / 60);
-  return m + ':' + String(s % 60).padStart(2, '0');
-}
 function accessOf(by: string): string {
   return by === 'you' ? 'your access' : 'requester';
 }
@@ -144,8 +149,7 @@ export function RosterCard({ a, todo, onOpen }: { a: Agent; todo: Todo | null; o
         <Fragment>
           <div style={{ fontSize: 12.5, color: 'var(--fg)', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: 34 }}>{todo.title}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={agChip(todo.loc === 'cloud' ? 'var(--accent)' : 'var(--fg-muted)')}><Icon name={todo.loc === 'cloud' ? 'cloud' : 'cpu'} size={11} /> {todo.model}</span>
-            <span style={{ fontSize: 11, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{fmtTime(todo.elapsed)}</span>
+            {todo.model && <span style={agChip('var(--accent)')}><Icon name="cloud" size={11} /> {todo.model}</span>}
             <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--fg-muted)' }}><Av name={todo.by} size={16} /> {todo.by}</span>
           </div>
         </Fragment>
@@ -198,20 +202,21 @@ export function TodoRow({ t, agent, menuOpen, onMenu, actions }: { t: Todo; agen
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, flexWrap: 'wrap' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: 'var(--fg-muted)' }}><Av name={t.by} size={16} /> {t.by}</span>
           <AccessTag user={t.by} level={accessOf(t.by)} />
-          <span style={agChip((t.loc === 'cloud') ? 'var(--accent)' : 'var(--fg-muted)')}><Icon name={t.loc === 'cloud' ? 'cloud' : 'cpu'} size={11} /> {t.model || (t.modelPref === 'cloud' ? 'cloud · auto' : t.modelPref === 'local' ? 'local · auto' : 'auto')}</span>
-          {t.status === 'queued' && <span style={{ fontSize: 11.5, color: t.loc === 'cloud' ? 'var(--accent)' : 'var(--fg-faint)' }}>· {t.priority ? 'cuts the queue' : (t.loc === 'cloud' ? 'starts on a free agent' : 'waiting for a free agent')}</span>}
+          {t.model
+            ? <span style={agChip('var(--accent)')}><Icon name="cloud" size={11} /> {t.model}</span>
+            : <span style={{ fontSize: 11.5, color: 'var(--fg-faint)' }}>model resolves when claimed</span>}
+          {t.status === 'queued' && <span style={{ fontSize: 11.5, color: 'var(--fg-faint)' }}>· {t.priority ? 'high priority' : 'waiting for an online worker'}</span>}
         </div>
       </div>
       {t.status === 'running' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--fg)' }}><Av name={agent ? agent.name : '?'} size={20} /> {agent ? agent.name : ''}</span>
-          <span style={{ fontSize: 11.5, color: 'var(--fg-muted)', fontFamily: 'var(--mono-font)', width: 40, textAlign: 'right' }}>{fmtTime(t.elapsed)}</span>
         </div>
       )}
       {t.status === 'done' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
           <span title="Conversation archived; KV cache flushed from RAM" className="b2-hide-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 22, padding: '0 8px', borderRadius: 6, fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', background: 'var(--surface-2)' }}><Icon name="cpu" size={11} /> memory flushed</span>
-          <span style={{ fontSize: 11.5, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{t.when}</span>
+          <span style={{ fontSize: 11.5, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{t.completedLabel}</span>
           <span className="b2-hide-sm" style={{ fontSize: 11.5, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)', width: 64, textAlign: 'right' }}>{t.tokens}</span>
         </div>
       )}
@@ -348,8 +353,8 @@ export function ConversationDrawer({
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--fg)', fontFamily: 'var(--display-font)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{todo.title}</div>
             <div style={{ fontSize: 11.5, marginTop: 1, display: 'flex', alignItems: 'center', gap: 6, color: running ? 'var(--success)' : 'var(--fg-muted)' }}>
-              {running && <Fragment><span className="b2-spin" style={{ display: 'flex' }}><Icon name="loader" size={11} color="var(--success)" /></span> Running · {agent && agent.name} · {fmtTime(todo.elapsed)}</Fragment>}
-              {done && <Fragment><Icon name="check" size={12} color="var(--fg-muted)" /> Completed {todo.when} · {agent && agent.name}</Fragment>}
+              {running && <Fragment><span className="b2-spin" style={{ display: 'flex' }}><Icon name="loader" size={11} color="var(--success)" /></span> Running · {agent && agent.name}</Fragment>}
+              {done && <Fragment><Icon name="check" size={12} color="var(--fg-muted)" /> Completed {todo.completedLabel} · {agent && agent.name}</Fragment>}
               {queued && <Fragment><Icon name="clock" size={12} color="var(--warning)" /> Queued{todo.priority ? ' · high priority' : ''}</Fragment>}
             </div>
           </div>
@@ -359,7 +364,7 @@ export function ConversationDrawer({
         <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
           <div style={{ marginBottom: 16 }}>
             <DMeta label="Requested by"><Av name={todo.by} size={18} /> {todo.by} <AccessTag user={todo.by} level={accessOf(todo.by)} /></DMeta>
-            <DMeta label="Model">{todo.model ? <span style={agChip(todo.loc === 'cloud' ? 'var(--accent)' : 'var(--fg-muted)')}><Icon name={todo.loc === 'cloud' ? 'cloud' : 'cpu'} size={11} /> {todo.model}</span> : <span style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>resolved when an agent picks it up</span>}</DMeta>
+            <DMeta label="Model">{todo.model ? <span style={agChip('var(--accent)')}><Icon name="cloud" size={11} /> {todo.model}</span> : <span style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>resolved when a worker claims it</span>}</DMeta>
             {done && <DMeta label="Memory"><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--fg-muted)' }}><Icon name="cpu" size={12} /> KV cache flushed · transcript restored from cold storage</span></DMeta>}
           </div>
           {queued && todo.messages.length <= 1 && (
@@ -433,22 +438,29 @@ function Dropdown({ value, options, onPick, width = 220, icon }: { value: string
 export function AddTodoModal({
   agents,
   freeCount,
+  onlineCount,
+  pending,
+  error,
   onClose,
   onAdd,
 }: {
   agents: Agent[];
   freeCount: number;
+  onlineCount: number;
+  pending?: boolean;
+  error?: string | null;
   onClose: () => void;
   onAdd: (opts: { title: string; assign: string; model: string; workspaceId: string }) => void;
 }) {
   const { workspaceId } = useWorkspace();
   const { data: wsOverview } = useWorkspacesOverview();
-  const { data: models = [] } = useModels();
+  const modelsQuery = useModels();
+  const models = modelsQuery.data ?? [];
   const workspaces = wsOverview?.workspaces ?? [];
   const [text, setText] = useState('');
   const [ws, setWs] = useState(workspaceId ?? '');
   const [assign, setAssign] = useState('any');
-  const [model, setModel] = useState('auto');
+  const [model, setModel] = useState('');
   useEffect(() => {
     if (ws) return;
     if (workspaceId) setWs(workspaceId);
@@ -471,19 +483,19 @@ export function AddTodoModal({
       .filter((a) => a.status === 'idle')
       .map((a) => ({ id: a.id, label: a.name, icon: 'user' as IconName, hint: 'free' })),
   ];
-  const cloudModels = models.filter((m) => m.provider !== 'ollama');
-  const localModels = models.filter((m) => m.provider === 'ollama');
-  const modelOpts: DropdownOption[] = [
-    { id: 'auto', label: 'Auto', icon: 'cpu', hint: 'cheapest capable' },
-    ...(cloudModels.length ? [{ id: 'h-cloud', label: 'Cloud', header: true } as DropdownOption] : []),
-    ...cloudModels.map((m) => ({ id: m.model_id, label: m.name, icon: 'cloud' as IconName, tone: 'var(--accent)' })),
-    ...(localModels.length ? [{ id: 'h-local', label: 'Local', header: true } as DropdownOption] : []),
-    ...localModels.map((m) => ({ id: m.model_id, label: m.name, icon: 'cpu' as IconName, hint: m.param_count ?? m.model })),
-  ];
-  const selectedModel = models.find((m) => m.model_id === model);
-  const isCloud = selectedModel ? selectedModel.provider !== 'ollama' : false;
+  const cloudModels = eligibleAgentModels(models);
+  useEffect(() => {
+    if (!model && cloudModels[0]) setModel(cloudModels[0].model_id);
+  }, [cloudModels, model]);
+  const modelOpts: DropdownOption[] = cloudModels.map((m) => ({ id: m.model_id, label: m.name, icon: 'cloud' as IconName, tone: 'var(--accent)', hint: m.provider === 'anthropic' ? 'Anthropic' : 'OpenRouter' }));
+  if (modelsQuery.isPending) modelOpts.push({ id: '', label: 'Loading models…', icon: 'loader' });
+  if (!modelsQuery.isPending && modelOpts.length === 0) modelOpts.push({ id: '', label: 'No ready cloud models', icon: 'alert' });
+  // Busy workers still represent a healthy runtime pool: a durable todo may
+  // wait behind current work. Only block when every registered runtime is
+  // offline, since no process exists to claim the queue.
+  const canSubmit = canSubmitTodo({ title: text, workspaceId: ws, modelId: model, onlineCount, pending });
   const submit = () => {
-    if (!text.trim() || !ws) return;
+    if (!canSubmit) return;
     onAdd({ title: text.trim(), assign, model, workspaceId: ws });
   };
   return createPortal(
@@ -494,7 +506,7 @@ export function AddTodoModal({
           <span style={{ width: 38, height: 38, borderRadius: 10, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="plus" size={19} /></span>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--fg)', fontFamily: 'var(--display-font)' }}>Add a todo to the queue</div>
-            <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginTop: 2 }}>A free agent will pick it up — you don’t wait on this screen.</div>
+            <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginTop: 2 }}>Every todo enters the durable queue and is claimed by an online worker.</div>
           </div>
           <button onClick={onClose} style={{ ...iconBtn(), width: 32, height: 32 }}><Icon name="x" size={16} color="var(--fg-muted)" /></button>
         </div>
@@ -515,6 +527,8 @@ export function AddTodoModal({
               <span style={{ width: 78, fontSize: 12.5, color: 'var(--fg-muted)' }}>Model</span>
               <Dropdown value={model} options={modelOpts} onPick={setModel} width={220} />
             </div>
+            {modelsQuery.isError && <div role="alert" style={{ marginLeft: 90, fontSize: 12.5, color: 'var(--destructive)' }}>Could not load models. <button onClick={() => modelsQuery.refetch()} style={{ ...agBtnGhost(), height: 28 }}>Retry</button></div>}
+            {!modelsQuery.isPending && !modelsQuery.isError && cloudModels.length === 0 && <div style={{ marginLeft: 90, fontSize: 12.5, color: 'var(--warning)' }}>No ready Anthropic or OpenRouter model. <Link to="/settings#models" style={{ color: 'var(--accent)' }}>Configure models</Link></div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{ width: 78, fontSize: 12.5, color: 'var(--fg-muted)' }}>Access</span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--fg)' }}><Icon name="lock" size={13} color="var(--accent)" /> runs with your access</span>
@@ -522,12 +536,13 @@ export function AddTodoModal({
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 13px', borderRadius: 10, background: 'var(--accent-soft)', border: '1px solid var(--accent-line)', marginTop: 16 }}>
             <Icon name="zap" size={15} color="var(--accent)" style={{ marginTop: 1, flexShrink: 0 }} />
-            <div style={{ fontSize: 12, color: 'var(--fg)', lineHeight: 1.5 }}>{isCloud ? <Fragment><b>Cloud model — starts immediately.</b> Cloud is elastic, so it won’t wait for a worker.</Fragment> : <Fragment><b>Local / auto — queues for a worker.</b> There {freeCount === 1 ? 'is' : 'are'} <b>{freeCount} free agent{freeCount === 1 ? '' : 's'}</b> right now.</Fragment>}</div>
+            <div style={{ fontSize: 12, color: 'var(--fg)', lineHeight: 1.5 }}>Todos stay durable in the queue until claimed. There {freeCount === 1 ? 'is' : 'are'} <b>{freeCount} free worker{freeCount === 1 ? '' : 's'}</b> right now{freeCount === 0 && onlineCount > 0 ? '; this todo will wait for the next available worker' : ''}.</div>
           </div>
+          {error && <div role="alert" style={{ marginTop: 10, color: 'var(--destructive)', fontSize: 12.5 }}>{error}</div>}
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '0 20px 18px' }}>
           <button onClick={onClose} style={agBtnGhost()}>Cancel</button>
-          <button onClick={submit} disabled={!text.trim() || !ws} style={{ ...agBtnPrimary(), opacity: text.trim() && ws ? 1 : 0.5, cursor: text.trim() && ws ? 'pointer' : 'not-allowed' }}><Icon name="plus" size={14} color="#fff" /> Add to queue</button>
+          <button onClick={submit} disabled={!canSubmit} style={{ ...agBtnPrimary(), opacity: canSubmit ? 1 : 0.5, cursor: canSubmit ? 'pointer' : 'not-allowed' }}><Icon name="plus" size={14} color="#fff" /> {pending ? 'Adding…' : 'Add to queue'}</button>
         </div>
       </div>
     </div>,

@@ -13,6 +13,8 @@ delivers to any subscriber registered on `actx.events`.
 from __future__ import annotations
 
 import time
+import os
+import socket
 from datetime import datetime, timezone
 
 from brain2.app_context import AppContext
@@ -42,22 +44,45 @@ def worker_tick(store: Store, tasks: TaskRegistry, events: EventRegistry,
 
 
 def run_worker(actx: AppContext, *, max_ticks: int | None = None,
-               idle_sleep_s: float = 0.2) -> int:
+               idle_sleep_s: float = 0.2,
+               agent_name: str | None = None) -> int:
     """Recover orphans once, then loop worker_tick. `max_ticks` bounds it for tests
     (None = run forever). Returns the number of ticks that did work."""
     actx.store.recover_orphan_tasks()
+    runtime_name = (agent_name or os.environ.get("BRAIN2_AGENT_NAME") or
+                    socket.gethostname().split(".")[0].replace("-", " ").title())
+    runtime_name = runtime_name.strip() or "Brain2 Worker"
     now = _now_iso()
+    agent_ids: dict[str, str] = {}
     for tenant_id in actx.store.list_tenant_ids():
-        for worker in actx.store.list_workers(tenant_id):
-            actx.store.worker_heartbeat(
-                tenant_id, worker["agent_id"], now, status="idle"
-            )
+        actx.store.ensure_workers(tenant_id, [runtime_name])
+        worker = next(w for w in actx.store.list_workers(tenant_id)
+                      if w["name"] == runtime_name)
+        agent_ids[tenant_id] = worker["agent_id"]
+        actx.store.worker_heartbeat(
+            tenant_id, worker["agent_id"], now, status="idle",
+            current_todo_id=None,
+        )
     worked_ticks = 0
     ticks = 0
     from brain2.tasks.todo_runner import todo_tick
     while max_ticks is None or ticks < max_ticks:
+        # Tenants may be provisioned after a long-running worker starts. Register
+        # this runtime lazily for them so their Agents page and queue become live
+        # without restarting the process.
+        for tenant_id in actx.store.list_tenant_ids():
+            if tenant_id in agent_ids:
+                continue
+            actx.store.ensure_workers(tenant_id, [runtime_name])
+            worker = next(w for w in actx.store.list_workers(tenant_id)
+                          if w["name"] == runtime_name)
+            agent_ids[tenant_id] = worker["agent_id"]
+            actx.store.worker_heartbeat(
+                tenant_id, worker["agent_id"], _now_iso(), status="idle",
+                current_todo_id=None,
+            )
         worked = worker_tick(actx.store, actx.tasks, actx.events)
-        worked = todo_tick(actx) or worked
+        worked = todo_tick(actx, agent_ids) or worked
         if worked:
             worked_ticks += 1
         else:
