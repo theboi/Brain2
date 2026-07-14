@@ -26,7 +26,23 @@ describe('liveAgentCard', () => {
       modelName: 'Local Qwen',
       modelProvider: 'ollama',
       status: 'busy',
-      taskId: 'td1',
+      todoTitle: 'Review sources',
+    });
+  });
+
+  it('never exposes a raw current todo when its access-filtered summary is absent', () => {
+    expect(liveAgentCard({
+      ...AGENT,
+      taskId: 'secret-todo-id',
+      todoSummary: null,
+    })).toEqual({
+      id: 'a1',
+      name: 'Analyst',
+      complexity: 'hard',
+      modelName: 'Local Qwen',
+      modelProvider: 'ollama',
+      status: 'busy',
+      todoTitle: null,
     });
   });
 
@@ -37,11 +53,12 @@ describe('liveAgentCard', () => {
       modelProvider: null,
       status: 'offline',
       taskId: null,
+      todoSummary: null,
     })).toMatchObject({
       modelName: null,
       modelProvider: null,
       status: 'offline',
-      taskId: null,
+      todoTitle: null,
     });
   });
 });

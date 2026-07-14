@@ -52,10 +52,10 @@ export function AgentCard({ agent: a }: AgentCardProps) {
         <strong style={{ color: 'var(--fg)', fontFamily: 'var(--mono-font)', fontWeight: 600 }}>{a.complexity}</strong>
       </div>
 
-      {a.taskId && (
-        <div title={a.taskId} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, marginTop: 10, fontSize: 11.5, color: 'var(--fg-muted)', minWidth: 0 }}>
+      {a.todoTitle && (
+        <div title={a.todoTitle} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, marginTop: 10, fontSize: 11.5, color: 'var(--fg-muted)', minWidth: 0 }}>
           {a.status === 'busy' && <Icon name="loader" size={12} className="b2-spin" />}
-          <span style={{ fontFamily: 'var(--mono-font)', overflowWrap: 'anywhere', minWidth: 0 }}>Todo {a.taskId}</span>
+          <span style={{ overflowWrap: 'anywhere', minWidth: 0 }}>Current todo: {a.todoTitle}</span>
         </div>
       )}
     </div>

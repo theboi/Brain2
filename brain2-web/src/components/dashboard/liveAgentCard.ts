@@ -8,7 +8,7 @@ export interface LiveAgentCardModel {
   modelName: string | null;
   modelProvider: ModelProvider | null;
   status: Agent['status'];
-  taskId: string | null;
+  todoTitle: string | null;
 }
 
 export function liveAgentCard(agent: Agent): LiveAgentCardModel {
@@ -19,6 +19,6 @@ export function liveAgentCard(agent: Agent): LiveAgentCardModel {
     modelName: agent.modelName,
     modelProvider: agent.modelProvider,
     status: agent.status,
-    taskId: agent.taskId,
+    todoTitle: agent.todoSummary?.title ?? null,
   };
 }
