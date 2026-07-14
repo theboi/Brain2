@@ -1550,13 +1550,22 @@ class LocalStore:
             raise Conflict("preferred_agent_id must be a string")
         todo_id = todo_id or uuid.uuid4().hex
         now = _now_iso()
-        with self.transaction() as cx:
-            workspace = cx.execute(
-                "SELECT 1 FROM workspaces WHERE tenant_id=? AND workspace_id=?",
-                (tenant_id, workspace_id),
+        with self.transaction(immediate=True) as cx:
+            authorization = cx.execute(
+                "SELECT u.role AS tenant_role, wm.role AS workspace_role "
+                "FROM users u JOIN workspaces w ON w.tenant_id=u.tenant_id "
+                "AND w.workspace_id=? LEFT JOIN workspace_members wm "
+                "ON wm.tenant_id=w.tenant_id AND wm.workspace_id=w.workspace_id "
+                "AND wm.user_id=u.user_id WHERE u.tenant_id=? AND u.user_id=?",
+                (workspace_id, tenant_id, requester_user_id),
             ).fetchone()
-            if workspace is None:
-                raise Conflict("workspace_id must identify a tenant workspace")
+            if authorization is None or (
+                authorization["tenant_role"] != "owner"
+                and authorization["workspace_role"] is None
+            ):
+                raise Conflict(
+                    "workspace_id must identify an authorized tenant workspace"
+                )
             if preferred_agent_id is not None:
                 preferred = cx.execute(
                     "SELECT 1 FROM agents WHERE tenant_id=? AND agent_id=? "
@@ -1708,11 +1717,11 @@ class LocalStore:
         if status not in {"done", "failed"}:
             raise ValueError("status must be done or failed")
         now = _now_iso()
-        with self.transaction() as cx:
+        with self.transaction(immediate=True) as cx:
             row = cx.execute(
                 "SELECT assigned_agent_id, status FROM todos WHERE tenant_id=? "
                 "AND todo_id=? AND status='running' AND run_token=? "
-                "AND assigned_agent_id=?",
+                "AND assigned_agent_id=? AND cancel_requested=0",
                 (tenant_id, todo_id, run_token, agent_id),
             ).fetchone()
             if row is None:
@@ -1722,7 +1731,7 @@ class LocalStore:
                 "conversation_id=COALESCE(?, conversation_id), tokens_total=?, "
                 "cost_total=?, error=?, cancel_requested=0, run_token=NULL "
                 "WHERE tenant_id=? AND todo_id=? AND status='running' "
-                "AND run_token=? AND assigned_agent_id=?",
+                "AND run_token=? AND assigned_agent_id=? AND cancel_requested=0",
                 (status, now, conversation_id, tokens_total, cost_total,
                  error if status == "failed" else None, tenant_id, todo_id,
                  run_token, agent_id),
@@ -1751,20 +1760,22 @@ class LocalStore:
             run_token=run_token, agent_id=agent_id,
         )
 
-    def request_todo_stop(self, tenant_id: str, todo_id: str) -> None:
+    def request_todo_stop(self, tenant_id: str, todo_id: str, *,
+                          run_token: str, agent_id: str) -> None:
         with self.transaction() as cx:
             updated = cx.execute(
                 "UPDATE todos SET cancel_requested=1 WHERE tenant_id=? "
-                "AND todo_id=? AND status='running'",
-                (tenant_id, todo_id),
+                "AND todo_id=? AND status='running' AND run_token=? "
+                "AND assigned_agent_id=?",
+                (tenant_id, todo_id, run_token, agent_id),
             ).rowcount
             if updated != 1:
-                raise Conflict("only a running todo can be stopped")
+                raise Conflict("todo run identity no longer matches")
 
     def requeue_cancelled_todo(self, tenant_id: str, todo_id: str, *,
                                run_token: str, agent_id: str) -> None:
         now = _now_iso()
-        with self.transaction() as cx:
+        with self.transaction(immediate=True) as cx:
             row = cx.execute(
                 "SELECT assigned_agent_id FROM todos WHERE tenant_id=? "
                 "AND todo_id=? AND status='running' AND cancel_requested=1 "

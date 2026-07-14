@@ -84,6 +84,7 @@ def _with_model(store, todo: dict) -> dict:
             (todo["tenant_id"], model_id),
         ).fetchone()
     result = dict(todo)
+    result.pop("run_token", None)
     result["agent_id"] = agent["agent_id"] if agent else None
     result["agent_name"] = agent["name"] if agent else None
     result["model_id"] = model["model_id"] if model else None
@@ -141,13 +142,6 @@ def make_todos_get(store):
 def make_todos_create(store):
     def handler(ctx, params):
         params = _create_params(params)
-        workspace = store.get_workspace(ctx.tenant_id, params["workspace_id"])
-        if workspace is None:
-            raise Conflict("workspace_id must identify a tenant workspace")
-        if ctx.tenant_role != "owner" and store.get_workspace_member_role(
-            ctx.tenant_id, params["workspace_id"], ctx.user_id
-        ) is None:
-            raise Conflict("workspace membership is required to create a todo")
         todo_id = store.create_todo(
             ctx.tenant_id,
             params["workspace_id"],
@@ -172,7 +166,9 @@ def make_todos_set_priority(store):
         store.set_todo_priority(
             ctx.tenant_id, params["todo_id"], params["priority"]
         )
-        return store.get_todo(ctx.tenant_id, params["todo_id"])
+        return _with_model(
+            store, store.get_todo(ctx.tenant_id, params["todo_id"])
+        )
 
     return handler
 
@@ -183,9 +179,15 @@ def make_todos_stop(store):
             params, allowed={"todo_id"}, required={"todo_id"},
             strings={"todo_id"},
         )
-        _mutable_or_404(store, ctx, params["todo_id"])
-        store.request_todo_stop(ctx.tenant_id, params["todo_id"])
-        return store.get_todo(ctx.tenant_id, params["todo_id"])
+        todo = _mutable_or_404(store, ctx, params["todo_id"])
+        store.request_todo_stop(
+            ctx.tenant_id, params["todo_id"],
+            run_token=todo.get("run_token"),
+            agent_id=todo.get("assigned_agent_id"),
+        )
+        return _with_model(
+            store, store.get_todo(ctx.tenant_id, params["todo_id"])
+        )
 
     return handler
 
@@ -213,7 +215,9 @@ def make_todos_continue(store):
         store.append_todo_user_message(
             ctx.tenant_id, params["todo_id"], params["text"]
         )
-        return store.get_todo(ctx.tenant_id, params["todo_id"])
+        return _with_model(
+            store, store.get_todo(ctx.tenant_id, params["todo_id"])
+        )
 
     return handler
 

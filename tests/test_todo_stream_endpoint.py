@@ -14,6 +14,7 @@ def _client(tmp_path, monkeypatch):
     s.create_user("t1", "mem1", "m1@t1.com", "member", "M1")
     s.create_user("t1", "mem3", "m3@t1.com", "member", "M3")
     s.create_workspace("t1", "Eng", workspace_id="ws1")
+    s.add_workspace_member("t1", "ws1", "mem1", "member")
     actx = build_app_context(store=s, gateway=object())
     actx.passwords.set_password("t1", "mem1", "pw")
     actx.passwords.set_password("t1", "mem3", "pw")
@@ -40,3 +41,17 @@ def test_stranger_is_forbidden(tmp_path, monkeypatch):
     _s, client, tid, _t1, t3 = _client(tmp_path, monkeypatch)
     r = client.get(f"/api/v1/todos/{tid}/stream", headers={"Authorization": f"Bearer {t3}"})
     assert r.status_code in (403, 404)
+
+
+def test_stream_never_exposes_private_run_token(tmp_path, monkeypatch):
+    s, client, tid, token, _ = _client(tmp_path, monkeypatch)
+    s._conn.execute(
+        "UPDATE todos SET status='running',run_token='private-token' WHERE todo_id=?",
+        (tid,),
+    )
+    s._conn.commit()
+    response = client.get(
+        f"/api/v1/todos/{tid}/stream",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert "private-token" not in response.text

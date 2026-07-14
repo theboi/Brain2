@@ -20,6 +20,7 @@ def _store(*, tenant2=False):
     s.create_user("t1", "mem2", "mem2@t1.com", "member", "Mem Two")
     s.create_workspace("t1", "Eng", workspace_id="ws1")
     s.create_workspace("t1", "Sales", workspace_id="ws2")
+    s.add_workspace_member("t1", "ws1", "mem1", "member")
     s.add_workspace_member("t1", "ws1", "mem2", "admin")
     if tenant2:
         s.create_tenant("t2", "Other")
@@ -68,6 +69,17 @@ def test_create_todo_rejects_invalid_complexity(complexity):
     s = _store()
     with pytest.raises(Conflict, match="complexity"):
         _todo(s, "bad", complexity)
+
+
+def test_create_todo_authorizes_workspace_membership_in_insert_transaction():
+    s = _store()
+    s.remove_workspace_member("t1", "ws1", "mem1")
+    with pytest.raises(Conflict, match="workspace"):
+        _todo(s, "denied", "medium")
+    s.create_todo(
+        "t1", "ws2", "owner1", title="owner", complexity="medium",
+    )
+    assert s.list_todos_visible("t1", "owner1", "owner")[0]["title"] == "owner"
 
 
 def test_preferred_agent_must_be_live_tenant_scoped_and_exact_complexity():
@@ -183,7 +195,14 @@ def test_stale_reclaim_rejects_late_mutations_from_old_run():
     s.worker_heartbeat("t1", agent_id, "2026-07-01T00:05:01Z", status="idle")
     second = s.claim_todo_for_agent("t1", agent_id)
     assert second["run_token"] and second["run_token"] != old_token
-    s.request_todo_stop("t1", "work")
+    with pytest.raises(Conflict, match="run"):
+        s.request_todo_stop(
+            "t1", "work", run_token=old_token, agent_id=agent_id,
+        )
+    assert s.get_todo("t1", "work")["cancel_requested"] == 0
+    s.request_todo_stop(
+        "t1", "work", run_token=second["run_token"], agent_id=agent_id,
+    )
     for mutation in ("conversation", "finish", "cancel"):
         with pytest.raises(Conflict, match="run"):
             if mutation == "conversation":
@@ -230,6 +249,25 @@ def test_finish_todo_sets_terminal_fields_preserves_agent_and_releases_capacity(
                       run_token=claimed["run_token"], agent_id=agent_id)
 
 
+def test_stop_then_finish_cannot_become_done():
+    s = _store()
+    _model(s)
+    agent_id = _agent(s, "One", "medium")
+    _todo(s, "work", "medium")
+    claimed = s.claim_todo_for_agent("t1", agent_id)
+    s.request_todo_stop(
+        "t1", "work", run_token=claimed["run_token"], agent_id=agent_id,
+    )
+    with pytest.raises(Conflict, match="run"):
+        s.finish_todo(
+            "t1", "work", status="done", conversation_id=None,
+            tokens_total=None, cost_total=None,
+            run_token=claimed["run_token"], agent_id=agent_id,
+        )
+    todo = s.get_todo("t1", "work")
+    assert todo["status"] == "running" and todo["cancel_requested"] == 1
+
+
 def test_complete_todo_is_done_compatibility_wrapper():
     s = _store()
     _model(s)
@@ -248,7 +286,9 @@ def test_stop_is_cooperative_and_cancelled_requeue_is_guarded_and_cleans_state()
     agent_id = _agent(s, "One", "hard")
     _todo(s, "work", "hard")
     claimed = s.claim_todo_for_agent("t1", agent_id)
-    s.request_todo_stop("t1", "work")
+    s.request_todo_stop(
+        "t1", "work", run_token=claimed["run_token"], agent_id=agent_id,
+    )
     running = s.get_todo("t1", "work")
     assert running["status"] == "running" and running["cancel_requested"] == 1
     assert s.get_agent("t1", agent_id)["status"] == "busy"
@@ -270,8 +310,11 @@ def test_stop_is_cooperative_and_cancelled_requeue_is_guarded_and_cleans_state()
     for status in ("queued", "done"):
         s._conn.execute("UPDATE todos SET status=? WHERE todo_id='work'", (status,))
         s._conn.commit()
-        with pytest.raises(Conflict, match="running"):
-            s.request_todo_stop("t1", "work")
+        with pytest.raises(Conflict, match="run identity"):
+            s.request_todo_stop(
+                "t1", "work", run_token=claimed["run_token"],
+                agent_id=agent_id,
+            )
 
 
 def test_continue_and_stale_sweep_preserve_history_complexity_and_reset_terminal_state():
@@ -391,6 +434,7 @@ def test_cross_connection_claims_do_not_duplicate_or_oversubscribe(tmp_path,
     seed.create_tenant("t1", "Acme")
     seed.create_user("t1", "mem1", "m@t1.com", "member", "M")
     seed.create_workspace("t1", "Eng", workspace_id="ws1")
+    seed.add_workspace_member("t1", "ws1", "mem1", "member")
     _model(seed, capacity=capacity)
     agents = [_agent(seed, name, "medium") for name in ("One", "Two")]
     for i in range(todo_count):
@@ -412,6 +456,7 @@ def test_cross_connection_claims_do_not_duplicate_or_oversubscribe(tmp_path,
 
 def test_list_todos_visible_by_role():
     s = _store()
+    s.add_workspace_member("t1", "ws2", "mem1", "member")
     for todo_id, ws, requester in (("a", "ws1", "mem1"),
                                    ("b", "ws2", "mem1"),
                                    ("c", "ws1", "owner1")):

@@ -57,6 +57,7 @@ def test_create_sets_requester_complexity_and_truthful_model_fields():
     assert out["complexity"] == "medium" and out["error"] is None
     assert out["model_id"] is None and out["model_name"] is None
     assert out["agent_id"] is None and out["agent_name"] is None
+    assert "run_token" not in out
     listed = make_todos_list(s)(_ctx("mem1"), {})["todos"]
     assert [t["todo_id"] for t in listed] == [out["todo_id"]]
 
@@ -168,6 +169,7 @@ def test_stop_only_requests_cooperative_cancellation():
     s.claim_todo_for_agent("t1", agent["agent_id"])
     stopped = make_todos_stop(s)(_ctx("mem1"), {"todo_id": todo["todo_id"]})
     assert stopped["status"] == "running" and stopped["cancel_requested"] == 1
+    assert "run_token" not in stopped
     assert s.get_agent("t1", agent["agent_id"])["status"] == "busy"
 
 
@@ -214,3 +216,19 @@ def test_create_enforces_workspace_tenant_and_membership_scope():
         "title": "owner", "workspace_id": "ws2", "complexity": "simple",
     })
     assert owner["workspace_id"] == "ws2"
+
+    s.remove_workspace_member("t1", "ws1", "mem1")
+    with pytest.raises(Conflict, match="workspace"):
+        _create(s, workspace_id="ws1", title="after revocation")
+
+
+def test_list_and_get_redact_private_run_token():
+    s = _store()
+    agent = s.list_agents("t1")[0]
+    s.worker_heartbeat("t1", agent["agent_id"], "2026-07-01T00:00:00Z", status="idle")
+    todo = _create(s)
+    claimed = s.claim_todo_for_agent("t1", agent["agent_id"])
+    listed = make_todos_list(s)(_ctx("mem1"), {})["todos"][0]
+    got = make_todos_get(s)(_ctx("mem1"), {"todo_id": todo["todo_id"]})["todo"]
+    assert claimed["run_token"]
+    assert "run_token" not in listed and "run_token" not in got

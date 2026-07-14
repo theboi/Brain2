@@ -20,6 +20,7 @@ def _actx():
     s.create_tenant("t1", "Acme")
     s.create_user("t1", "mem1", "m1@t1.com", "member", "M1")
     s.create_workspace("t1", "Eng", workspace_id="ws1")
+    s.add_workspace_member("t1", "ws1", "mem1", "member")
     sm = SecretManager(s, b"0" * 32)
     model = make_models_create(s, sm)(
         RequestContext(tenant_id="t1", user_id="mem1", tenant_role="member"),
@@ -93,3 +94,27 @@ def test_provider_failure_is_persisted_in_transcript():
     ).fetchall()
     assert any(row["role"] == "assistant" and
                row["content"] == "Error: provider unavailable" for row in messages)
+
+
+def test_runtime_requeues_generation_when_stop_is_requested():
+    actx, s, model_id = _actx()
+    agent_id = _worker(s, model_id, "Terra")
+    s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    todo_id = s.create_todo(
+        "t1", "ws1", "mem1", title="cancel me", complexity="medium",
+    )
+
+    def cancelling_turn(*args, **kwargs):
+        running = s.get_todo("t1", todo_id)
+        s.request_todo_stop(
+            "t1", todo_id, run_token=running["run_token"],
+            agent_id=running["assigned_agent_id"],
+        )
+        yield "done", {"tokens_in": 1, "tokens_out": 1}
+
+    with patch("brain2.chat.run_turn", cancelling_turn):
+        assert todo_tick(actx, {"t1": agent_id}) is True
+    todo = s.get_todo("t1", todo_id)
+    assert todo["status"] == "queued" and todo["run_token"] is None
+    assert todo["cancel_requested"] == 0
+    assert s.get_agent("t1", agent_id)["status"] == "idle"

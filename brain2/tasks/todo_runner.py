@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 
 from brain2.context import RequestContext
-from brain2.errors import NotFound
+from brain2.errors import Conflict, NotFound
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,46 @@ def _create_conversation(store, tenant_id: str, user_id: str,
     return conversation_id
 
 
+def _same_run(current: dict | None, todo: dict) -> bool:
+    return bool(
+        current
+        and current.get("status") == "running"
+        and current.get("run_token") == todo.get("run_token")
+        and current.get("assigned_agent_id") == todo.get("assigned_agent_id")
+    )
+
+
+def _finish_or_requeue(store, tenant_id: str, todo: dict, *,
+                       conversation_id: str | None,
+                       tokens_total: int | None) -> None:
+    current = store.get_todo(tenant_id, todo["todo_id"])
+    if _same_run(current, todo) and current.get("cancel_requested"):
+        store.requeue_cancelled_todo(
+            tenant_id, todo["todo_id"], run_token=todo["run_token"],
+            agent_id=todo["assigned_agent_id"],
+        )
+        return
+    try:
+        store.complete_todo(
+            tenant_id,
+            todo["todo_id"],
+            conversation_id=conversation_id,
+            tokens_total=tokens_total,
+            cost_total=None,
+            run_token=todo["run_token"],
+            agent_id=todo["assigned_agent_id"],
+        )
+    except Conflict:
+        current = store.get_todo(tenant_id, todo["todo_id"])
+        if _same_run(current, todo) and current.get("cancel_requested"):
+            store.requeue_cancelled_todo(
+                tenant_id, todo["todo_id"], run_token=todo["run_token"],
+                agent_id=todo["assigned_agent_id"],
+            )
+            return
+        raise
+
+
 def _run_todo(actx, tenant_id: str, todo: dict) -> None:
     store = actx.store
     conversation_id = todo.get("conversation_id")
@@ -79,14 +119,10 @@ def _run_todo(actx, tenant_id: str, todo: dict) -> None:
         model_row = _resolve_model_row(store, tenant_id, todo.get("model_pref"))
         if model_row is None:
             logger.warning("todo %s: no ready model", todo["todo_id"])
-            store.complete_todo(
-                tenant_id,
-                todo["todo_id"],
+            _finish_or_requeue(
+                store, tenant_id, todo,
                 conversation_id=conversation_id,
                 tokens_total=None,
-                cost_total=None,
-                run_token=todo["run_token"],
-                agent_id=todo["assigned_agent_id"],
             )
             return
 
@@ -129,14 +165,10 @@ def _run_todo(actx, tenant_id: str, todo: dict) -> None:
         logger.warning("todo %s run failed: %s", todo["todo_id"], exc)
         total_in = total_out = 0
 
-    store.complete_todo(
-        tenant_id,
-        todo["todo_id"],
+    _finish_or_requeue(
+        store, tenant_id, todo,
         conversation_id=conversation_id,
         tokens_total=(total_in + total_out) or None,
-        cost_total=None,
-        run_token=todo["run_token"],
-        agent_id=todo["assigned_agent_id"],
     )
 
 

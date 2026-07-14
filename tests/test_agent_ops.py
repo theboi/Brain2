@@ -361,6 +361,7 @@ def test_create_and_update_return_transaction_snapshots_without_get_agent():
 def test_revoked_agent_ignores_stale_heartbeat_and_cannot_claim(lifecycle):
     store, secrets = _setup()
     store.create_workspace("t1", "Eng", workspace_id="ws1")
+    store.add_workspace_member("t1", "ws1", "u1", "member")
     model = _model(store, secrets)
     agent = store.create_agent("t1", "Terra", model["model_id"], "medium")
     store.worker_heartbeat("t1", agent["agent_id"], "2026-07-01T00:00:00Z",

@@ -25,4 +25,3 @@ def test_0045_adds_nullable_run_token_and_preserves_todos():
     assert row["run_token"] is None
     info = {r["name"]: r for r in store._conn.execute("PRAGMA table_info(todos)")}
     assert info["run_token"]["notnull"] == 0
-
