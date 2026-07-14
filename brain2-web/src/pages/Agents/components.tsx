@@ -76,6 +76,20 @@ export interface AgentDraft {
   enabled: boolean;
 }
 
+function agentDraftFrom(agent: Agent): AgentDraft {
+  return {
+    name: agent.name,
+    modelId: agent.modelId ?? '',
+    complexity: agent.complexity,
+    enabled: agent.enabled,
+  };
+}
+
+/** Signature of remotely editable configuration only; live runtime polling is excluded. */
+export function agentConfigSignature(agent: Agent): string {
+  return JSON.stringify([agent.name, agent.modelId, agent.complexity, agent.enabled]);
+}
+
 export function agentUpdateChanges(
   current: Agent,
   draft: AgentDraft,
@@ -91,12 +105,13 @@ export function agentUpdateChanges(
   return changes;
 }
 
-export function todoStatusView(status: Todo['status']): {
+export function todoStatusView(status: Todo['status'], cancelRequested = false): {
   icon: IconName;
   label: string;
   tone: string;
   spin: boolean;
 } {
+  if (status === 'running' && cancelRequested) return { icon: 'loader', label: 'Stopping', tone: 'var(--warning)', spin: true };
   if (status === 'running') return { icon: 'loader', label: 'Running', tone: 'var(--success)', spin: true };
   if (status === 'queued') return { icon: 'clock', label: 'Queued', tone: 'var(--fg-muted)', spin: false };
   if (status === 'failed') return { icon: 'alert', label: 'Failed', tone: 'var(--destructive)', spin: false };
@@ -453,12 +468,9 @@ export function ConfigureAgentModal({
         provider: model.provider,
         status: model.status,
       }))];
-  const [draft, setDraft] = useState<AgentDraft>({
-    name: agent.name,
-    modelId: agent.modelId ?? '',
-    complexity: agent.complexity,
-    enabled: agent.enabled,
-  });
+  const [draft, setDraft] = useState<AgentDraft>(() => agentDraftFrom(agent));
+  const [baselineSignature, setBaselineSignature] = useState(() => agentConfigSignature(agent));
+  const configConflict = agentConfigSignature(agent) !== baselineSignature;
   const nameRef = useRef<HTMLInputElement>(null);
   const modelRef = useRef<HTMLSelectElement>(null);
   const formId = useId();
@@ -466,12 +478,12 @@ export function ConfigureAgentModal({
   const [touched, setTouched] = useState(false);
   useEffect(() => { nameRef.current?.focus(); }, []);
   useEffect(() => {
-    if (!modelsReady) return;
+    if (!modelsReady || configConflict) return;
     setDraft((current) => ({
       ...current,
       modelId: revalidateAgentModelSelection(current.modelId, models, agent.modelId),
     }));
-  }, [agent.modelId, models, modelsReady]);
+  }, [agent.modelId, configConflict, models, modelsReady]);
   useEffect(() => {
     if (!pending && !deletePending) submitLockedRef.current = false;
   }, [deletePending, pending]);
@@ -482,7 +494,15 @@ export function ConfigureAgentModal({
   const modelChangeUnavailable = 'model_id' in changes && !modelsReady;
   const valid = canCreateAgent({ name: draft.name, modelId: draft.modelId, complexity: draft.complexity, pending: pending || deletePending })
     && !hasBusyProtectedChanges
-    && !modelChangeUnavailable;
+    && !modelChangeUnavailable
+    && !configConflict;
+  const editLocked = pending || deletePending || configConflict;
+  const reloadLatest = () => {
+    setDraft(agentDraftFrom(agent));
+    setBaselineSignature(agentConfigSignature(agent));
+    setTouched(false);
+    submitLockedRef.current = false;
+  };
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     setTouched(true);
@@ -498,7 +518,7 @@ export function ConfigureAgentModal({
     }
   };
   const confirmDelete = () => {
-    if (busy || pending || deletePending || submitLockedRef.current) return;
+    if (busy || pending || deletePending || configConflict || submitLockedRef.current) return;
     if (window.confirm(`Delete ${agent.name}? Historical todo attribution will be preserved.`)) {
       submitLockedRef.current = true;
       try {
@@ -515,12 +535,12 @@ export function ConfigureAgentModal({
         <div className="b2-agent-modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, padding: '20px' }}>
           <div style={{ gridColumn: '1 / -1' }}>
             <label htmlFor={`${formId}-name`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Name</label>
-            <input ref={nameRef} className="b2-agent-focus" id={`${formId}-name`} value={draft.name} disabled={pending || deletePending} onChange={(event) => setDraft({ ...draft, name: event.target.value })} aria-invalid={touched && !draft.name.trim()} aria-describedby={touched && !draft.name.trim() ? `${formId}-name-error` : undefined} style={fieldStyle} />
+            <input ref={nameRef} className="b2-agent-focus" id={`${formId}-name`} value={draft.name} disabled={editLocked} onChange={(event) => setDraft({ ...draft, name: event.target.value })} aria-invalid={touched && !draft.name.trim()} aria-describedby={touched && !draft.name.trim() ? `${formId}-name-error` : undefined} style={fieldStyle} />
             {touched && !draft.name.trim() && <FieldError id={`${formId}-name-error`}>Enter an agent name.</FieldError>}
           </div>
           <div>
             <label htmlFor={`${formId}-model`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Model</label>
-            <select ref={modelRef} className="b2-agent-focus" id={`${formId}-model`} value={draft.modelId} onChange={(event) => setDraft({ ...draft, modelId: event.target.value })} disabled={busy || pending || deletePending || !modelsReady} aria-invalid={touched && !draft.modelId} aria-describedby={touched && !draft.modelId ? `${formId}-model-error` : undefined} style={fieldStyle}>
+            <select ref={modelRef} className="b2-agent-focus" id={`${formId}-model`} value={draft.modelId} onChange={(event) => setDraft({ ...draft, modelId: event.target.value })} disabled={busy || editLocked || !modelsReady} aria-invalid={touched && !draft.modelId} aria-describedby={touched && !draft.modelId ? `${formId}-model-error` : undefined} style={fieldStyle}>
               <option value="">{modelOptions.length ? 'Select a ready model' : 'No model available'}</option>
               {modelOptions.map((model) => <option key={model.model_id} value={model.model_id}>{model.name} · {providerLabel(model.provider)}{model.status !== 'ready' ? ` · ${model.status}` : ''}</option>)}
             </select>
@@ -528,21 +548,22 @@ export function ConfigureAgentModal({
           </div>
           <div>
             <label htmlFor={`${formId}-complexity`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Exact complexity</label>
-            <select className="b2-agent-focus" id={`${formId}-complexity`} value={draft.complexity} onChange={(event) => setDraft({ ...draft, complexity: event.target.value as Complexity })} disabled={busy || pending || deletePending} style={fieldStyle}>
+            <select className="b2-agent-focus" id={`${formId}-complexity`} value={draft.complexity} onChange={(event) => setDraft({ ...draft, complexity: event.target.value as Complexity })} disabled={busy || editLocked} style={fieldStyle}>
               {COMPLEXITIES.map((item) => <option key={item.id} value={item.id}>{item.label} ({item.id})</option>)}
             </select>
           </div>
           <label style={{ gridColumn: '1 / -1', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10, cursor: busy ? 'not-allowed' : 'pointer' }}>
-            <input className="b2-agent-focus" type="checkbox" checked={draft.enabled} disabled={busy || pending || deletePending} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} style={{ width: 20, height: 20 }} />
+            <input className="b2-agent-focus" type="checkbox" checked={draft.enabled} disabled={busy || editLocked} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} style={{ width: 20, height: 20 }} />
             <span><strong>Enabled</strong><span style={{ display: 'block', color: 'var(--fg-muted)', fontSize: 12, marginTop: 2 }}>Enabled runtimes may claim exact-complexity work when their model is ready.</span></span>
           </label>
           {busy && <div role="status" style={{ gridColumn: '1 / -1', color: 'var(--fg-muted)', fontSize: 12.5 }}>This agent is busy. Its model, complexity, enabled state, and deletion become available when the current todo finishes.</div>}
+          {configConflict && <div role="alert" style={{ gridColumn: '1 / -1', border: '1px solid var(--warning)', borderRadius: 9, padding: 10, color: 'var(--fg)', fontSize: 12.5, lineHeight: 1.5 }}>This agent’s configuration changed elsewhere. Reload the latest values before making more edits. <button className="b2-agent-focus" type="button" onClick={reloadLatest} disabled={pending || deletePending} style={{ ...agBtnGhost(), marginLeft: 8 }}>Reload latest</button></div>}
           {!modelsReady && <div role="status" style={{ gridColumn: '1 / -1', color: 'var(--fg-muted)', fontSize: 12.5 }}>Refreshing registered models…</div>}
           {error && <div role="alert" style={{ gridColumn: '1 / -1', color: 'var(--destructive)', fontSize: 13 }}>{error}</div>}
           {deleteError && <div role="alert" style={{ gridColumn: '1 / -1', color: 'var(--destructive)', fontSize: 13 }}>{deleteError}</div>}
         </div>
         <div className="b2-agent-modal-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 20px 20px' }}>
-          <button className="b2-agent-focus" type="button" onClick={confirmDelete} disabled={busy || pending || deletePending} style={{ ...agBtnGhost(), color: 'var(--destructive)', opacity: busy || pending || deletePending ? 0.45 : 1, cursor: busy ? 'not-allowed' : 'pointer', marginRight: 'auto' }}><Icon name="trash" size={15} /> {deletePending ? 'Deleting…' : 'Delete agent'}</button>
+          <button className="b2-agent-focus" type="button" onClick={confirmDelete} disabled={busy || editLocked} style={{ ...agBtnGhost(), color: 'var(--destructive)', opacity: busy || editLocked ? 0.45 : 1, cursor: busy || configConflict ? 'not-allowed' : 'pointer', marginRight: 'auto' }}><Icon name="trash" size={15} /> {deletePending ? 'Deleting…' : 'Delete agent'}</button>
           <button className="b2-agent-focus" type="button" onClick={onClose} disabled={pending || deletePending} style={agBtnGhost()}>Cancel</button>
           <button className="b2-agent-focus" type="submit" disabled={!valid} style={{ ...agBtnPrimary(), opacity: valid ? 1 : 0.5 }}>{pending ? 'Saving…' : 'Save changes'}</button>
         </div>
@@ -573,26 +594,45 @@ interface MenuItem {
   divider?: boolean;
 }
 
+export function nextMenuItemIndex(current: number, count: number, key: string): number | null {
+  if (count <= 0) return null;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  if (key === 'ArrowDown') return current < 0 ? 0 : (current + 1) % count;
+  if (key === 'ArrowUp') return current < 0 ? count - 1 : (current - 1 + count) % count;
+  return null;
+}
+
 // ── controlled overflow menu ──────────────────────────────────────────────────
 function DotsMenu({ open, onToggle, items, disabled = false }: { open: boolean; onToggle: () => void; items: MenuItem[]; disabled?: boolean }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const onToggleRef = useRef(onToggle);
+  onToggleRef.current = onToggle;
   const menuId = useId();
   useEffect(() => {
     if (!open) return;
     const focusTimer = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus());
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onToggleRef.current();
+        requestAnimationFrame(() => triggerRef.current?.focus());
+        return;
+      }
+      const menuItems = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+      const current = menuItems.indexOf(document.activeElement as HTMLButtonElement);
+      const next = nextMenuItemIndex(current, menuItems.length, event.key);
+      if (next == null) return;
       event.preventDefault();
-      onToggle();
-      requestAnimationFrame(() => triggerRef.current?.focus());
+      menuItems[next]?.focus();
     };
     document.addEventListener('keydown', onKey);
     return () => {
       cancelAnimationFrame(focusTimer);
       document.removeEventListener('keydown', onKey);
     };
-  }, [onToggle, open]);
+  }, [open]);
   const closeAndRestore = () => {
     onToggle();
     requestAnimationFrame(() => triggerRef.current?.focus());
@@ -682,7 +722,7 @@ export function RosterCard({
 function rowMenu(t: Todo, actions: TodoActions): MenuItem[] {
   if (t.status === 'running') return [
     { icon: 'history', label: 'Open conversation', onClick: () => actions.open(t.id) },
-    { divider: true, icon: 'repeat', label: 'Stop task and re-queue', danger: true, onClick: () => actions.stop(t.id) },
+    ...(t.cancelRequested ? [] : [{ divider: true, icon: 'repeat' as IconName, label: 'Stop task and re-queue', danger: true, onClick: () => actions.stop(t.id) }]),
   ];
   if (t.status === 'queued') return [
     t.priority ? { icon: 'zap', label: 'Remove high priority', onClick: () => actions.priority(t.id) } : { icon: 'zap', label: 'Mark high priority', onClick: () => actions.priority(t.id) },
@@ -697,7 +737,8 @@ function rowMenu(t: Todo, actions: TodoActions): MenuItem[] {
 }
 
 export function TodoRow({ t, agent, menuOpen, onMenu, actions, actionPending, actionsDisabled = false }: { t: Todo; agent?: Agent | null; menuOpen: boolean; onMenu: (id: string | null) => void; actions: TodoActions; actionPending?: string | null; actionsDisabled?: boolean }) {
-  const status = todoStatusView(t.status);
+  const stopping = t.status === 'running' && t.cancelRequested;
+  const status = todoStatusView(t.status, t.cancelRequested);
   const assignedName = todoAgentDisplayName(t, agent);
   const isPriorityQueued = t.priority && t.status === 'queued';
   return (
@@ -732,6 +773,7 @@ export function TodoRow({ t, agent, menuOpen, onMenu, actions, actionPending, ac
           </span>
         )}
         {t.status === 'failed' && <span style={{ fontSize: 11.5, color: 'var(--destructive)', fontWeight: 600 }}>{status.label}</span>}
+        {stopping && <span role="status" style={{ fontSize: 11.5, color: 'var(--warning)', fontWeight: 600 }}>Stop requested / waiting for agent</span>}
         {actionPending && <span role="status" style={{ fontSize: 11.5, color: 'var(--accent)', fontWeight: 600 }}>{actionPending}</span>}
       </button>
       <DotsMenu open={menuOpen} onToggle={() => onMenu(menuOpen ? null : t.id)} items={rowMenu(t, actions)} disabled={actionsDisabled} />

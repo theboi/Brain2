@@ -56,6 +56,7 @@ export interface Todo {
   by: string;
   priority: boolean;
   status: TodoStatus;
+  cancelRequested: boolean;
   complexity: Complexity;
   error: string | null;
   assignedAgentId: string | null;

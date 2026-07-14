@@ -37,6 +37,7 @@ type QueueActionState = {
   label: string;
   pending: boolean;
   error: string | null;
+  kind: 'mutation' | 'stop-convergence';
 };
 type QueueMutationCallbacks = {
   onSuccess: () => void;
@@ -100,29 +101,52 @@ export function AgentsPage() {
   const done = todos.filter((todo) => todo.status === 'done').sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
   const failed = todos.filter((todo) => todo.status === 'failed').sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
 
+  useEffect(() => {
+    if (queueAction?.kind !== 'stop-convergence') return;
+    const todo = todos.find((item) => item.id === queueAction.todoId);
+    if (todo?.status === 'running' && !todo.cancelRequested) return;
+    queueActionLockRef.current = false;
+    setQueueAction((current) => current?.kind === 'stop-convergence' ? null : current);
+  }, [queueAction?.kind, queueAction?.todoId, todos]);
+
   const runQueueAction = (
     todoId: string,
     label: string,
     start: (callbacks: QueueMutationCallbacks) => void,
     afterSuccess?: () => void,
+    retainUntilStopConverges = false,
   ) => {
     if (queueActionLockRef.current || continueTodo.isPending) return;
     queueActionLockRef.current = true;
     setMenuId(null);
-    setQueueAction({ todoId, label, pending: true, error: null });
+    setQueueAction({ todoId, label, pending: true, error: null, kind: 'mutation' });
+    let waitingForStopConvergence = false;
     const callbacks: QueueMutationCallbacks = {
       onSuccess: () => {
         afterSuccess?.();
-        setQueueAction(null);
+        if (retainUntilStopConverges) {
+          waitingForStopConvergence = true;
+          setQueueAction({
+            todoId,
+            label: 'Stop requested / waiting for agent',
+            pending: true,
+            error: null,
+            kind: 'stop-convergence',
+          });
+        } else {
+          setQueueAction(null);
+        }
       },
-      onError: (error) => setQueueAction({ todoId, label, pending: false, error: errorText(error) }),
-      onSettled: () => { queueActionLockRef.current = false; },
+      onError: (error) => setQueueAction({ todoId, label, pending: false, error: errorText(error), kind: 'mutation' }),
+      onSettled: () => {
+        if (!waitingForStopConvergence) queueActionLockRef.current = false;
+      },
     };
     try {
       start(callbacks);
     } catch (error) {
       queueActionLockRef.current = false;
-      setQueueAction({ todoId, label, pending: false, error: errorText(error) });
+      setQueueAction({ todoId, label, pending: false, error: errorText(error), kind: 'mutation' });
     }
   };
 
@@ -140,14 +164,14 @@ export function AgentsPage() {
     },
     stop: (id) => runQueueAction(id, 'Requesting stop…', (callbacks) => {
       stopTodo.mutate({ todo_id: id }, callbacks);
-    }),
+    }, undefined, true),
     remove: (id) => runQueueAction(id, 'Deleting todo…', (callbacks) => {
       deleteTodo.mutate({ todo_id: id }, callbacks);
     }, () => setOpenId((current) => (current === id ? null : current))),
     rerun: (id) => {
       const source = todos.find((item) => item.id === id);
       if (!source?.workspace_id) {
-        setQueueAction({ todoId: id, label: 'Re-running todo', pending: false, error: 'This todo has no visible workspace and cannot be re-run.' });
+        setQueueAction({ todoId: id, label: 'Re-running todo', pending: false, error: 'This todo has no visible workspace and cannot be re-run.', kind: 'mutation' });
         return;
       }
       runQueueAction(id, 'Creating re-run…', (callbacks) => {

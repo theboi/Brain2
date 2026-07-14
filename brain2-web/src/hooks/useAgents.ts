@@ -73,6 +73,7 @@ export function mapTodo(todo: LiveTodo, messages: TodoMessage[]): Todo {
     by: todo.requester_user_id,
     priority: todo.priority > 0,
     status: todo.status,
+    cancelRequested: Boolean(todo.cancel_requested),
     complexity: todo.complexity,
     error: todo.error ?? null,
     assignedAgentId: todo.assigned_agent_id ?? null,
@@ -136,17 +137,17 @@ export function useTodo(todoId: string | null) {
 }
 
 function invalidateAgentRoster(qc: ReturnType<typeof useQueryClient>) {
-  qc.invalidateQueries({ queryKey: qk.agents() });
+  return qc.invalidateQueries({ queryKey: qk.agents() });
 }
 
 function useAgentMutation<V extends object>(name: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (params: V) => ops(name, params),
-    onSuccess: () => {
-      invalidateAgentRoster(qc);
-      invalidateTodoQueries(qc);
-    },
+    onSuccess: () => Promise.all([
+      invalidateAgentRoster(qc),
+      invalidateTodoQueries(qc),
+    ]),
   });
 }
 
@@ -175,14 +176,17 @@ function useTodoMutation<V extends object>(
   return useMutation({
     mutationFn: (params: V) => ops(name, params),
     onSuccess: (_result, variables) => {
-      invalidateTodoQueries(qc);
-      invalidateAgentRoster(qc);
+      const invalidations = [
+        invalidateTodoQueries(qc),
+        invalidateAgentRoster(qc),
+      ];
       if (invalidateActiveTodo && 'todo_id' in variables) {
         const todoId = variables.todo_id;
         if (typeof todoId === 'string') {
-          qc.invalidateQueries({ queryKey: qk.todo(todoId) });
+          invalidations.push(qc.invalidateQueries({ queryKey: qk.todo(todoId) }));
         }
       }
+      return Promise.all(invalidations);
     },
   });
 }

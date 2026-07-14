@@ -4,11 +4,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ModelConfig, ModelProvider } from '@/lib/types';
 import {
   agentUpdateChanges,
+  agentConfigSignature,
   canContinueTodo,
   canCreateAgent,
   canManageAgents,
   canSubmitTodo,
   eligibleAgentModels,
+  nextMenuItemIndex,
   revalidateAgentModelSelection,
   RosterCard,
   TodoRow,
@@ -82,16 +84,44 @@ describe('live permissions and selections', () => {
 });
 
 describe('agent configuration changes', () => {
+  const current: Agent = {
+    id: 'a1', name: 'Analyst', modelId: 'm1', modelName: 'Paused local',
+    modelProvider: 'ollama', modelStatus: 'paused', complexity: 'hard',
+    enabled: true, status: 'offline', taskId: null, lastHeartbeat: null,
+    todoSummary: null,
+  };
+
   it('omits an unchanged paused model from unrelated edits', () => {
-    const current: Agent = {
-      id: 'a1', name: 'Analyst', modelId: 'm1', modelName: 'Paused local',
-      modelProvider: 'ollama', modelStatus: 'paused', complexity: 'hard',
-      enabled: true, status: 'offline', taskId: null, lastHeartbeat: null,
-      todoSummary: null,
-    };
     expect(agentUpdateChanges(current, {
       name: 'Senior analyst', modelId: 'm1', complexity: 'hard', enabled: true,
     })).toEqual({ name: 'Senior analyst' });
+  });
+
+  it('detects only remote configuration changes, not polled runtime state', () => {
+    const baseline = agentConfigSignature(current);
+    expect(agentConfigSignature({
+      ...current,
+      status: 'busy',
+      taskId: 't1',
+      lastHeartbeat: '2026-07-14T12:00:00Z',
+      todoSummary: { todo_id: 't1', title: 'Live work' },
+    })).toBe(baseline);
+    expect(agentConfigSignature({ ...current, name: 'Renamed' })).not.toBe(baseline);
+    expect(agentConfigSignature({ ...current, modelId: 'm2' })).not.toBe(baseline);
+    expect(agentConfigSignature({ ...current, complexity: 'complex' })).not.toBe(baseline);
+    expect(agentConfigSignature({ ...current, enabled: false })).not.toBe(baseline);
+  });
+});
+
+describe('overflow menu keyboard navigation', () => {
+  it('wraps arrow navigation and supports Home and End', () => {
+    expect(nextMenuItemIndex(0, 3, 'ArrowDown')).toBe(1);
+    expect(nextMenuItemIndex(2, 3, 'ArrowDown')).toBe(0);
+    expect(nextMenuItemIndex(0, 3, 'ArrowUp')).toBe(2);
+    expect(nextMenuItemIndex(1, 3, 'Home')).toBe(0);
+    expect(nextMenuItemIndex(1, 3, 'End')).toBe(2);
+    expect(nextMenuItemIndex(1, 3, 'Escape')).toBeNull();
+    expect(nextMenuItemIndex(-1, 0, 'ArrowDown')).toBeNull();
   });
 });
 
@@ -99,6 +129,12 @@ describe('todo status view', () => {
   it('renders failed as a terminal alert state', () => {
     expect(todoStatusView('failed')).toMatchObject({
       icon: 'alert', label: 'Failed', spin: false,
+    });
+  });
+
+  it('renders a cancel-requested running todo as stopping', () => {
+    expect(todoStatusView('running', true)).toMatchObject({
+      icon: 'loader', label: 'Stopping', spin: true,
     });
   });
 
@@ -146,6 +182,7 @@ describe('todo status view', () => {
     const todo: Todo = {
       id: 't1', workspace_id: 'ws1', title: 'Failed audit', by: 'u1',
       priority: false, status: 'failed', complexity: 'hard', error: 'Provider failed',
+      cancelRequested: false,
       assignedAgentId: 'a1', agentId: 'a1', agentName: 'Deleted analyst',
       modelId: 'm1', modelName: 'Local model', modelProvider: 'ollama',
       conversationId: 'c1', runs: [], messages: [],
@@ -162,6 +199,26 @@ describe('todo status view', () => {
     expect(html).toContain('role="menu"');
     expect(html).toContain('role="menuitem"');
     expect(html).toContain('Deleted analyst');
+  });
+
+  it('shows cooperative stopping feedback without offering Stop again', () => {
+    const todo: Todo = {
+      id: 't1', workspace_id: 'ws1', title: 'Running audit', by: 'u1',
+      priority: false, status: 'running', complexity: 'hard', error: null,
+      cancelRequested: true,
+      assignedAgentId: 'a1', agentId: 'a1', agentName: 'Analyst',
+      modelId: 'm1', modelName: 'Local model', modelProvider: 'ollama',
+      conversationId: 'c1', runs: [], messages: [],
+    };
+    const actions = {
+      open: () => undefined, priority: () => undefined, stop: () => undefined,
+      remove: () => undefined, rerun: () => undefined, add: () => undefined,
+    };
+    const html = renderToStaticMarkup(createElement(TodoRow, {
+      t: todo, menuOpen: true, onMenu: () => undefined, actions,
+    }));
+    expect(html).toContain('Stop requested / waiting for agent');
+    expect(html).not.toContain('Stop task and re-queue');
   });
 });
 

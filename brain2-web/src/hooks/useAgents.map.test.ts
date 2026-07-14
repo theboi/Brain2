@@ -126,6 +126,7 @@ describe('mapTodo', () => {
       status: 'failed',
       complexity: 'hard',
       error: 'Provider unavailable',
+      cancelRequested: false,
       assignedAgentId: 'a1',
       agentId: 'a1',
       agentName: 'Terra',
@@ -136,6 +137,11 @@ describe('mapTodo', () => {
       tokens: '0 tok',
       runs: T.runs,
     });
+  });
+
+  it('maps cooperative cancellation as a boolean', () => {
+    expect(mapTodo({ ...T, status: 'running', cancel_requested: 1 }, []).cancelRequested).toBe(true);
+    expect(mapTodo({ ...T, status: 'running', cancel_requested: 0 }, []).cancelRequested).toBe(false);
   });
 
   it('maps queued, running, done, and failed without collapsing valid zeroes', () => {
