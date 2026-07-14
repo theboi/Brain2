@@ -673,16 +673,46 @@ def create_app(actx: AppContext) -> FastAPI:
             raise HTTPException(status_code=403, detail="not permitted")
 
         def _events():
-            conversation_id = todo.get("conversation_id")
-            if conversation_id:
-                rows = actx.store._conn.execute(
-                    "SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at",
-                    (conversation_id,),
-                ).fetchall()
-                for row in rows:
-                    yield "event: message\n" + _sse({k: row[k] for k in row.keys()})
-            current = actx.store.get_todo(ctx.tenant_id, todo_id)
-            yield "event: status\n" + _sse({"status": current["status"] if current else "gone"})
+            import time
+            seen_messages = set()
+            previous_status = None
+            idle_polls = 0
+            # A finite idle bound keeps synchronous test/CLI consumers from
+            # hanging forever while still giving newly linked runs time to emit.
+            while idle_polls < 100:
+                current = actx.store.get_todo(ctx.tenant_id, todo_id)
+                if current is None:
+                    if previous_status != "gone":
+                        yield "event: status\n" + _sse({"status": "gone"})
+                    return
+                emitted = False
+                conversation_id = current.get("conversation_id")
+                if conversation_id:
+                    rows = actx.store._conn.execute(
+                        "SELECT * FROM messages WHERE conversation_id=? "
+                        "ORDER BY created_at,rowid",
+                        (conversation_id,),
+                    ).fetchall()
+                    for row in rows:
+                        if row["message_id"] in seen_messages:
+                            continue
+                        seen_messages.add(row["message_id"])
+                        emitted = True
+                        yield "event: message\n" + _sse(
+                            {k: row[k] for k in row.keys()}
+                        )
+                status = current["status"]
+                if status != previous_status:
+                    payload = {"status": status}
+                    if status == "failed" and current.get("error"):
+                        payload["error"] = current["error"]
+                    yield "event: status\n" + _sse(payload)
+                    previous_status = status
+                    emitted = True
+                if status in {"done", "failed"}:
+                    return
+                idle_polls = 0 if emitted else idle_polls + 1
+                time.sleep(0.02)
 
         return StreamingResponse(_events(), media_type="text/event-stream")
 

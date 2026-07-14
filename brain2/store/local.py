@@ -1503,6 +1503,30 @@ class LocalStore:
                 tuple(args),
             )
 
+    def agent_run_heartbeat(self, tenant_id: str, agent_id: str,
+                            todo_id: str, run_token: str,
+                            now_iso: str) -> bool:
+        """Heartbeat a busy runtime only while its exact generation still owns it."""
+        with self.transaction(immediate=True) as cx:
+            updated = cx.execute(
+                "UPDATE agents SET last_heartbeat=?,updated_at=?,status='busy',"
+                "current_todo_id=? WHERE tenant_id=? AND agent_id=? "
+                "AND enabled=1 AND deleted_at IS NULL AND EXISTS ("
+                "SELECT 1 FROM todos WHERE tenant_id=? AND todo_id=? "
+                "AND status='running' AND run_token=? AND assigned_agent_id=?)",
+                (now_iso, now_iso, todo_id, tenant_id, agent_id,
+                 tenant_id, todo_id, run_token, agent_id),
+            ).rowcount
+        return updated == 1
+
+    def agent_heartbeat(self, tenant_id: str, agent_id: str, now_iso: str,
+                        status: str | None = None,
+                        current_todo_id: str | None = "__keep__") -> None:
+        self.worker_heartbeat(
+            tenant_id, agent_id, now_iso, status=status,
+            current_todo_id=current_todo_id,
+        )
+
     def sweep_stale_workers(self, now_iso: str, stale_seconds: int = 30) -> int:
         """Mark stale workers offline and requeue any todo they were running."""
         now_dt = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
@@ -1540,6 +1564,9 @@ class LocalStore:
                     )
                 swept += 1
         return swept
+
+    def sweep_stale_agents(self, now_iso: str, stale_seconds: int = 30) -> int:
+        return self.sweep_stale_workers(now_iso, stale_seconds=stale_seconds)
 
     # --- todos ---
     def create_todo(self, tenant_id: str, workspace_id: str, requester_user_id: str,

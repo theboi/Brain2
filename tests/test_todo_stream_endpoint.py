@@ -1,4 +1,7 @@
 """GET /api/v1/todos/{id}/stream: visibility-gated transcript SSE."""
+import threading
+import time
+import uuid
 from fastapi.testclient import TestClient
 
 from brain2.api import create_app
@@ -55,3 +58,39 @@ def test_stream_never_exposes_private_run_token(tmp_path, monkeypatch):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert "private-token" not in response.text
+
+
+def test_stream_tails_late_linked_messages_and_failed_status(tmp_path, monkeypatch):
+    s, client, tid, token, _ = _client(tmp_path, monkeypatch)
+
+    def complete_later():
+        time.sleep(0.05)
+        cid = uuid.uuid4().hex
+        now = "2026-07-14T00:00:00+00:00"
+        with s.transaction() as cx:
+            cx.execute(
+                "INSERT INTO conversations(conversation_id,tenant_id,agent_id,user_id,"
+                "title,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+                (cid, "t1", "model", "mem1", "x", now, now),
+            )
+            cx.execute("UPDATE todos SET conversation_id=?,status='running' WHERE todo_id=?",
+                       (cid, tid))
+        time.sleep(0.05)
+        from brain2.chat_ops import insert_assistant_message
+        insert_assistant_message(s, conversation_id=cid, content="Error: provider down")
+        with s.transaction() as cx:
+            cx.execute("UPDATE todos SET status='failed',error='provider down' WHERE todo_id=?",
+                       (tid,))
+
+    thread = threading.Thread(target=complete_later)
+    thread.start()
+    response = client.get(
+        f"/api/v1/todos/{tid}/stream",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    thread.join(timeout=2)
+    assert response.status_code == 200
+    assert response.text.count('"content": "Error: provider down"') == 1
+    assert '"status": "running"' in response.text
+    assert '"status": "failed"' in response.text
+    assert '"error": "provider down"' in response.text

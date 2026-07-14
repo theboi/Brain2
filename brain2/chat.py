@@ -80,7 +80,9 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
              user_message_id: str | None = None,
              persist_user_message: bool = True,
              stop_check=lambda: False,
-             use_persona: bool = True):
+             use_persona: bool = True,
+             history: list[dict] | None = None,
+             runtime_guard: dict | None = None):
     """Yield (event_type, payload) tuples for one user turn.
 
     The generator persists assistant + tool messages as it produces them so a
@@ -91,7 +93,7 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
     if persist_user_message:
         user_message_id = insert_user_message(
             store, conversation_id=conversation_id, content=user_text,
-            message_id=user_message_id)
+            message_id=user_message_id, runtime_guard=runtime_guard)
 
     try:
         provider = build_provider(ctx.tenant_id, agent_row, secrets)
@@ -110,7 +112,9 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
         from brain2.persona_ops import persona_preamble
         persona = persona_preamble(store, ctx.tenant_id, ctx.user_id)
 
-    history = [{"role": "user", "content": user_text}]
+    history = [dict(message) for message in history] if history is not None else []
+    if persist_user_message or not history:
+        history.append({"role": "user", "content": user_text})
     total_in = total_out = 0
     started = time.monotonic()
     final_assistant_text = ""
@@ -138,6 +142,10 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
                 break
             yield ("token", {"text": ch})
 
+        if stop_check():
+            yield ("error", {"message": "stopped"})
+            return
+
         tool_calls = list(_TOOL_LINE_RE.finditer(text))
         if not tool_calls:
             # Final assistant message — persist and finish.
@@ -145,7 +153,8 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
             final_msg_id = insert_assistant_message(
                 store, conversation_id=conversation_id, content=text,
                 tokens_in=resp.input_tokens, tokens_out=resp.output_tokens,
-                parent_message_id=user_message_id)
+                parent_message_id=user_message_id,
+                runtime_guard=runtime_guard)
             break
 
         # Persist this assistant turn (it contained tool calls).
@@ -160,7 +169,8 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
         insert_assistant_message(
             store, conversation_id=conversation_id, content=text,
             tool_calls=parsed_calls,
-            tokens_in=resp.input_tokens, tokens_out=resp.output_tokens)
+            tokens_in=resp.input_tokens, tokens_out=resp.output_tokens,
+            runtime_guard=runtime_guard)
         history.append({"role": "assistant", "content": text})
 
         # Execute each tool call.
@@ -176,10 +186,13 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
                 except Exception as exc:
                     result = {"error": str(exc)}
             yield ("tool_call_result", {"name": name, "result": result})
+            if stop_check():
+                yield ("error", {"message": "stopped"})
+                return
             tool_text = json.dumps(result)[:4000]
             insert_tool_message(store, conversation_id=conversation_id,
                                 tool_call_id=str(turn), tool_name=name,
-                                content=tool_text)
+                                content=tool_text, runtime_guard=runtime_guard)
             history.append({"role": "tool", "content": f"{name} -> {tool_text}"})
     else:
         # Hit the turn limit without a final assistant message — emit what we have.
@@ -187,7 +200,8 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
             final_assistant_text = "(turn limit reached)"
             final_msg_id = insert_assistant_message(
                 store, conversation_id=conversation_id, content=final_assistant_text,
-                tokens_in=0, tokens_out=0, parent_message_id=user_message_id)
+                tokens_in=0, tokens_out=0, parent_message_id=user_message_id,
+                runtime_guard=runtime_guard)
 
     latency_ms = int((time.monotonic() - started) * 1000)
     yield ("done", {"tokens_in": total_in, "tokens_out": total_out,

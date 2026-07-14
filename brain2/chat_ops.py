@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import uuid
 
-from brain2.errors import NotFound
+from brain2.errors import Conflict, NotFound
 
 
 def _now():
@@ -21,10 +21,31 @@ def _row(row) -> dict:
     return {k: row[k] for k in row.keys()}
 
 
+def _guard_runtime_write(cx, conversation_id: str, runtime_guard: dict | None) -> None:
+    """Fence a runtime transcript write in the transaction doing the insert."""
+    if runtime_guard is None:
+        return
+    cancellation_clause = "" if runtime_guard.get("allow_cancelled") else " AND cancel_requested=0"
+    row = cx.execute(
+        "SELECT 1 FROM todos WHERE tenant_id=? AND todo_id=? "
+        "AND status='running' AND run_token=? AND assigned_agent_id=? "
+        "AND conversation_id=?" + cancellation_clause,
+        (
+            runtime_guard["tenant_id"], runtime_guard["todo_id"],
+            runtime_guard["run_token"], runtime_guard["agent_id"],
+            conversation_id,
+        ),
+    ).fetchone()
+    if row is None:
+        raise Conflict("todo run identity no longer permits transcript writes")
+
+
 def insert_user_message(store, *, conversation_id: str, content: str,
-                        message_id: str | None = None) -> str:
+                        message_id: str | None = None,
+                        runtime_guard: dict | None = None) -> str:
     mid = message_id or str(uuid.uuid4())
     with store.transaction() as cx:
+        _guard_runtime_write(cx, conversation_id, runtime_guard)
         cx.execute(
             "INSERT INTO messages(message_id, conversation_id, role, content, created_at) "
             "VALUES (?,?,?,?,?)",
@@ -38,10 +59,12 @@ def insert_user_message(store, *, conversation_id: str, content: str,
 def insert_assistant_message(store, *, conversation_id: str, content: str,
                              tool_calls=None, tokens_in: int = 0,
                              tokens_out: int = 0, latency_ms: int = 0,
-                             parent_message_id: str | None = None) -> str:
+                             parent_message_id: str | None = None,
+                             runtime_guard: dict | None = None) -> str:
     mid = str(uuid.uuid4())
     tc = json.dumps(tool_calls) if tool_calls else None
     with store.transaction() as cx:
+        _guard_runtime_write(cx, conversation_id, runtime_guard)
         cx.execute(
             "INSERT INTO messages(message_id, conversation_id, role, content, "
             "tool_calls_json, tokens_in, tokens_out, latency_ms, parent_message_id, "
@@ -55,9 +78,11 @@ def insert_assistant_message(store, *, conversation_id: str, content: str,
 
 
 def insert_tool_message(store, *, conversation_id: str, tool_call_id: str,
-                        tool_name: str, content: str) -> str:
+                        tool_name: str, content: str,
+                        runtime_guard: dict | None = None) -> str:
     mid = str(uuid.uuid4())
     with store.transaction() as cx:
+        _guard_runtime_write(cx, conversation_id, runtime_guard)
         cx.execute(
             "INSERT INTO messages(message_id, conversation_id, role, content, "
             "tool_call_id, tool_name, created_at) VALUES (?,?,?,?,?,?,?)",

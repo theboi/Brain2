@@ -44,27 +44,19 @@ def test_worker_tick_noop_when_idle():
     assert worker_tick(actx.store, actx.tasks, actx.events) is False
 
 
-def test_app_context_does_not_seed_workers_and_runtime_registers_only_itself():
+def test_runtime_does_not_hostname_register_agents():
     actx = _actx()
     assert actx.store.list_workers("t1") == []
-    run_worker(actx, max_ticks=1, agent_name="Terra")
-    workers = actx.store.list_workers("t1")
-    assert [(worker["name"], worker["status"]) for worker in workers] == [("Terra", "idle")]
+    run_worker(actx, max_ticks=1)
+    assert actx.store.list_workers("t1") == []
 
 
-def test_named_runtimes_remain_distinct():
-    actx = _actx()
-    run_worker(actx, max_ticks=1, agent_name="Terra")
-    run_worker(actx, max_ticks=1, agent_name="Atlas")
-    assert {worker["name"] for worker in actx.store.list_workers("t1")} == {"Terra", "Atlas"}
-
-
-def test_runtime_skips_deleted_matching_name_without_reactivating_it():
+def test_runtime_does_not_reactivate_deleted_agent():
     actx = _actx()
     actx.store.ensure_workers("t1", ["Terra"])
     deleted_id = actx.store.list_workers("t1")[0]["agent_id"]
     actx.store.delete_agent("t1", deleted_id)
-    run_worker(actx, max_ticks=1, agent_name="Terra")
+    run_worker(actx, max_ticks=1)
     assert actx.store.list_workers("t1") == []
     deleted = actx.store.get_agent("t1", deleted_id, include_deleted=True)
     assert deleted["deleted_at"] is not None
