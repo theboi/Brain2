@@ -57,9 +57,15 @@ describe('model registry hooks', () => {
   });
 
   it('uses a registry-only query key', () => {
-    const options = useModels() as unknown as { queryKey: readonly string[] };
+    const options = useModels() as unknown as {
+      queryKey: readonly string[];
+      refetchInterval: number;
+      refetchOnWindowFocus: boolean;
+    };
     expect(options.queryKey).toEqual(MODEL_REGISTRY_KEY);
     expect(options.queryKey).not.toEqual(qk.reportModels());
+    expect(options.refetchInterval).toBe(4000);
+    expect(options.refetchOnWindowFocus).toBe(true);
   });
 
   it('moves the public raw key into a one-shot vault before internal mutate', () => {

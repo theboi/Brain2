@@ -98,12 +98,14 @@ describe('mapWorker', () => {
       model_id: null,
       model_name: null,
       model_provider: null,
+      model_status: null,
       enabled: false,
       status: 'offline',
     })).toMatchObject({
       modelId: null,
       modelName: null,
       modelProvider: null,
+      modelStatus: null,
       enabled: false,
     });
   });

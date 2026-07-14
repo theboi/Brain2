@@ -100,6 +100,8 @@ export function useModels() {
   return useQuery({
     queryKey: MODEL_REGISTRY_KEY,
     queryFn: () => ops<{ models: ModelConfig[] }>('models:list').then((r) => r.models),
+    refetchInterval: 4000,
+    refetchOnWindowFocus: true,
   });
 }
 

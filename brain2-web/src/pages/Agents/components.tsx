@@ -1,7 +1,7 @@
 /*
  * Brain2 Console — configured runtimes, durable queue, and conversations.
  */
-import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from '@/components/ui/Icon';
@@ -37,6 +37,22 @@ export function eligibleAgentModels(
         || model.provider === 'ollama'
         || model.provider === 'openrouter'),
   );
+}
+
+export function canManageAgents(role: string | undefined): boolean {
+  return role === 'admin' || role === 'owner';
+}
+
+export function revalidateAgentModelSelection(
+  selectedModelId: string,
+  models: ModelConfig[],
+  currentModelId: string | null,
+): string {
+  if (!selectedModelId) return '';
+  const selected = models.find((model) => model.model_id === selectedModelId);
+  if (!selected) return '';
+  if (selectedModelId === currentModelId) return selectedModelId;
+  return eligibleAgentModels([selected]).length === 1 ? selectedModelId : '';
 }
 
 export function canCreateAgent(input: {
@@ -87,6 +103,14 @@ export function todoStatusView(status: Todo['status']): {
   return { icon: 'check', label: 'Done', tone: 'var(--success)', spin: false };
 }
 
+export function canContinueTodo(status: Todo['status']): boolean {
+  return status === 'done' || status === 'failed';
+}
+
+export function todoAgentDisplayName(todo: Pick<Todo, 'agentName'>, agent?: Agent | null): string | null {
+  return todo.agentName ?? agent?.name ?? null;
+}
+
 function providerLabel(provider: Agent['modelProvider'] | ModelConfig['provider'] | null): string {
   if (!provider) return 'provider unknown';
   return provider === 'openrouter' ? 'OpenRouter' : provider[0].toUpperCase() + provider.slice(1);
@@ -97,12 +121,14 @@ export function canSubmitTodo(input: {
   workspaceId: string;
   complexity: string;
   pending?: boolean;
+  workspaceReady?: boolean;
 }): boolean {
   return Boolean(
     input.title.trim()
     && input.workspaceId
     && COMPLEXITIES.some((item) => item.id === input.complexity)
-    && !input.pending,
+    && !input.pending
+    && input.workspaceReady !== false,
   );
 }
 
@@ -162,36 +188,107 @@ const fieldStyle: CSSProperties = {
   padding: '9px 11px',
 };
 
+let openDialogCount = 0;
+let appRootPreviousAriaHidden: string | null = null;
+let appRootPreviousInert = false;
+
+function isolateApplicationRoot(): () => void {
+  const appRoot = document.getElementById('root');
+  if (!appRoot) return () => undefined;
+  if (openDialogCount === 0) {
+    appRootPreviousAriaHidden = appRoot.getAttribute('aria-hidden');
+    appRootPreviousInert = appRoot.inert;
+    appRoot.setAttribute('aria-hidden', 'true');
+    appRoot.inert = true;
+  }
+  openDialogCount += 1;
+  return () => {
+    openDialogCount = Math.max(0, openDialogCount - 1);
+    if (openDialogCount !== 0) return;
+    appRoot.inert = appRootPreviousInert;
+    if (appRootPreviousAriaHidden === null) appRoot.removeAttribute('aria-hidden');
+    else appRoot.setAttribute('aria-hidden', appRootPreviousAriaHidden);
+    appRootPreviousAriaHidden = null;
+  };
+}
+
 function ModalFrame({
   title,
   description,
+  blocked = false,
   onClose,
   children,
 }: {
   title: string;
   description: string;
+  blocked?: boolean;
   onClose: () => void;
   children: ReactNode;
 }) {
-  const titleId = useRef(`agent-dialog-${Math.random().toString(36).slice(2)}`);
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const blockedRef = useRef(blocked);
+  const closeRef = useRef(onClose);
+  useEffect(() => { blockedRef.current = blocked; }, [blocked]);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
   useEffect(() => {
+    const restoreApplicationRoot = isolateApplicationRoot();
+    previousFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter((element) => element.getClientRects().length > 0);
+    const focusTimer = requestAnimationFrame(() => {
+      if (!dialogRef.current?.contains(document.activeElement)) {
+        (focusable()[0] ?? dialogRef.current)?.focus();
+      }
+    });
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        if (!blockedRef.current) closeRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const elements = focusable();
+      if (!elements.length) {
+        event.preventDefault();
+        dialogRef.current?.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => {
+      cancelAnimationFrame(focusTimer);
+      document.removeEventListener('keydown', onKey);
+      restoreApplicationRoot();
+      previousFocusRef.current?.focus();
+    };
+  }, []);
+  const requestClose = () => {
+    if (!blockedRef.current) closeRef.current();
+  };
   return createPortal(
     <div className="b2-agent-modal-shell" style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 'max(5vh, 20px) 16px 20px' }}>
-      <div aria-hidden="true" onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' }} />
-      <div role="dialog" aria-modal="true" aria-labelledby={titleId.current} style={{ position: 'relative', width: 600, maxWidth: '100%', maxHeight: '90dvh', overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 16, boxShadow: '0 28px 80px rgba(0,0,0,0.55)' }}>
+      <div aria-hidden="true" onClick={requestClose} style={{ position: 'absolute', inset: 0, background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)', cursor: blocked ? 'wait' : 'default' }} />
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} style={{ position: 'relative', width: 600, maxWidth: '100%', maxHeight: '90dvh', overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 16, boxShadow: '0 28px 80px rgba(0,0,0,0.55)' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '18px 20px 0' }}>
           <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Icon name="robot" size={19} /></span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <h2 id={titleId.current} style={{ margin: 0, fontSize: 17, color: 'var(--fg)', fontFamily: 'var(--display-font)' }}>{title}</h2>
+            <h2 id={titleId} style={{ margin: 0, fontSize: 17, color: 'var(--fg)', fontFamily: 'var(--display-font)' }}>{title}</h2>
             <p style={{ margin: '4px 0 0', fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.5 }}>{description}</p>
           </div>
-          <button className="b2-agent-focus" type="button" onClick={onClose} aria-label={`Close ${title}`} style={iconBtn()}><Icon name="x" size={17} color="var(--fg-muted)" /></button>
+          <button className="b2-agent-focus" type="button" onClick={requestClose} disabled={blocked} aria-label={`Close ${title}`} style={{ ...iconBtn(), opacity: blocked ? 0.45 : 1 }}><Icon name="x" size={17} color="var(--fg-muted)" /></button>
         </div>
         {children}
       </div>
@@ -228,10 +325,21 @@ export function AddAgentModal({
   const [modelId, setModelId] = useState('');
   const [complexity, setComplexity] = useState<Complexity>('medium');
   const [touched, setTouched] = useState(false);
+  const formId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
   const modelRef = useRef<HTMLSelectElement>(null);
+  const submitLockedRef = useRef(false);
   useEffect(() => { nameRef.current?.focus(); }, []);
-  const valid = canCreateAgent({ name, modelId, complexity, pending });
+  useEffect(() => {
+    if (!modelsPending && !modelsError) {
+      setModelId((selected) => revalidateAgentModelSelection(selected, models, null));
+    }
+  }, [models, modelsError, modelsPending]);
+  useEffect(() => { if (!pending) submitLockedRef.current = false; }, [pending]);
+  const valid = canCreateAgent({ name, modelId, complexity, pending })
+    && !modelsPending
+    && !modelsError
+    && readyModels.some((model) => model.model_id === modelId);
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     setTouched(true);
@@ -243,29 +351,35 @@ export function AddAgentModal({
       modelRef.current?.focus();
       return;
     }
-    if (!valid) return;
-    onAdd({ name: name.trim(), modelId, complexity });
+    if (!valid || submitLockedRef.current) return;
+    submitLockedRef.current = true;
+    try {
+      onAdd({ name: name.trim(), modelId, complexity });
+    } catch (submitError) {
+      submitLockedRef.current = false;
+      throw submitError;
+    }
   };
   return (
-    <ModalFrame title="Add agent" description="Create a configured runtime bound to one registered model and one exact complexity." onClose={onClose}>
+    <ModalFrame title="Add agent" description="Create a configured runtime bound to one registered model and one exact complexity." blocked={pending} onClose={onClose}>
       <form onSubmit={submit} noValidate>
         <div className="b2-agent-modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, padding: '20px' }}>
           <div style={{ gridColumn: '1 / -1' }}>
-            <label htmlFor="agent-name" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Name</label>
-            <input ref={nameRef} className="b2-agent-focus" id="agent-name" value={name} onChange={(event) => setName(event.target.value)} aria-invalid={touched && !name.trim()} aria-describedby={touched && !name.trim() ? 'agent-name-error' : undefined} style={fieldStyle} />
-            {touched && !name.trim() && <FieldError id="agent-name-error">Enter an agent name.</FieldError>}
+            <label htmlFor={`${formId}-name`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Name</label>
+            <input ref={nameRef} className="b2-agent-focus" id={`${formId}-name`} value={name} disabled={pending} onChange={(event) => setName(event.target.value)} aria-invalid={touched && !name.trim()} aria-describedby={touched && !name.trim() ? `${formId}-name-error` : undefined} style={fieldStyle} />
+            {touched && !name.trim() && <FieldError id={`${formId}-name-error`}>Enter an agent name.</FieldError>}
           </div>
           <div>
-            <label htmlFor="agent-model" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Model</label>
-            <select ref={modelRef} className="b2-agent-focus" id="agent-model" value={modelId} onChange={(event) => setModelId(event.target.value)} disabled={modelsPending || readyModels.length === 0} aria-invalid={touched && !modelId} aria-describedby={touched && !modelId ? 'agent-model-error' : undefined} style={fieldStyle}>
+            <label htmlFor={`${formId}-model`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Model</label>
+            <select ref={modelRef} className="b2-agent-focus" id={`${formId}-model`} value={modelId} onChange={(event) => setModelId(event.target.value)} disabled={pending || modelsPending || Boolean(modelsError) || readyModels.length === 0} aria-invalid={touched && !modelId} aria-describedby={touched && !modelId ? `${formId}-model-error` : undefined} style={fieldStyle}>
               <option value="">Select a ready model</option>
               {readyModels.map((model) => <option key={model.model_id} value={model.model_id}>{model.name} · {providerLabel(model.provider)}</option>)}
             </select>
-            {touched && !modelId && readyModels.length > 0 && <FieldError id="agent-model-error">Select a ready model.</FieldError>}
+            {touched && !modelId && readyModels.length > 0 && <FieldError id={`${formId}-model-error`}>Select a ready model.</FieldError>}
           </div>
           <div>
-            <label htmlFor="agent-complexity" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Exact complexity</label>
-            <select className="b2-agent-focus" id="agent-complexity" value={complexity} onChange={(event) => setComplexity(event.target.value as Complexity)} style={fieldStyle}>
+            <label htmlFor={`${formId}-complexity`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Exact complexity</label>
+            <select className="b2-agent-focus" id={`${formId}-complexity`} value={complexity} disabled={pending} onChange={(event) => setComplexity(event.target.value as Complexity)} style={fieldStyle}>
               {COMPLEXITIES.map((item) => <option key={item.id} value={item.id}>{item.label} ({item.id})</option>)}
             </select>
           </div>
@@ -288,6 +402,7 @@ export function AddAgentModal({
 export function ConfigureAgentModal({
   agent,
   models,
+  modelsReady,
   pending,
   error,
   deletePending,
@@ -298,6 +413,7 @@ export function ConfigureAgentModal({
 }: {
   agent: Agent;
   models: ModelConfig[];
+  modelsReady: boolean;
   pending: boolean;
   error: string | null;
   deletePending: boolean;
@@ -308,12 +424,18 @@ export function ConfigureAgentModal({
 }) {
   const readyModels = eligibleAgentModels(models);
   const currentModelInList = readyModels.some((model) => model.model_id === agent.modelId);
+  const currentModel = models.find((model) => model.model_id === agent.modelId);
+  const includeCurrentModel = Boolean(
+    agent.modelId
+    && !currentModelInList
+    && (!modelsReady || currentModel),
+  );
   const modelOptions: Array<{
     model_id: string;
     name: string;
     provider: Agent['modelProvider'];
     status: ModelConfig['status'];
-  }> = currentModelInList || !agent.modelId
+  }> = !includeCurrentModel
     ? readyModels.map((model) => ({
         model_id: model.model_id,
         name: model.name,
@@ -321,10 +443,10 @@ export function ConfigureAgentModal({
         status: model.status,
       }))
     : [{
-        model_id: agent.modelId,
-        name: agent.modelName ?? 'Current model',
-        provider: agent.modelProvider,
-        status: agent.modelStatus ?? 'paused',
+        model_id: agent.modelId!,
+        name: currentModel?.name ?? agent.modelName ?? 'Current model',
+        provider: currentModel?.provider ?? agent.modelProvider,
+        status: currentModel?.status ?? agent.modelStatus ?? 'paused',
       }, ...readyModels.map((model) => ({
         model_id: model.model_id,
         name: model.name,
@@ -339,50 +461,83 @@ export function ConfigureAgentModal({
   });
   const nameRef = useRef<HTMLInputElement>(null);
   const modelRef = useRef<HTMLSelectElement>(null);
+  const formId = useId();
+  const submitLockedRef = useRef(false);
   const [touched, setTouched] = useState(false);
   useEffect(() => { nameRef.current?.focus(); }, []);
-  const valid = canCreateAgent({ name: draft.name, modelId: draft.modelId, complexity: draft.complexity, pending: pending || deletePending });
+  useEffect(() => {
+    if (!modelsReady) return;
+    setDraft((current) => ({
+      ...current,
+      modelId: revalidateAgentModelSelection(current.modelId, models, agent.modelId),
+    }));
+  }, [agent.modelId, models, modelsReady]);
+  useEffect(() => {
+    if (!pending && !deletePending) submitLockedRef.current = false;
+  }, [deletePending, pending]);
   const busy = agent.status === 'busy';
+  const changes = agentUpdateChanges(agent, draft);
+  const hasBusyProtectedChanges = busy
+    && ('model_id' in changes || 'complexity' in changes || 'enabled' in changes);
+  const modelChangeUnavailable = 'model_id' in changes && !modelsReady;
+  const valid = canCreateAgent({ name: draft.name, modelId: draft.modelId, complexity: draft.complexity, pending: pending || deletePending })
+    && !hasBusyProtectedChanges
+    && !modelChangeUnavailable;
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     setTouched(true);
     if (!draft.name.trim()) { nameRef.current?.focus(); return; }
     if (!draft.modelId) { modelRef.current?.focus(); return; }
-    if (!valid) return;
-    onSave(agentUpdateChanges(agent, draft));
+    if (!valid || submitLockedRef.current) return;
+    submitLockedRef.current = true;
+    try {
+      onSave(changes);
+    } catch (submitError) {
+      submitLockedRef.current = false;
+      throw submitError;
+    }
   };
   const confirmDelete = () => {
-    if (busy || deletePending) return;
-    if (window.confirm(`Delete ${agent.name}? Historical todo attribution will be preserved.`)) onDelete();
+    if (busy || pending || deletePending || submitLockedRef.current) return;
+    if (window.confirm(`Delete ${agent.name}? Historical todo attribution will be preserved.`)) {
+      submitLockedRef.current = true;
+      try {
+        onDelete();
+      } catch (deleteCallError) {
+        submitLockedRef.current = false;
+        throw deleteCallError;
+      }
+    }
   };
   return (
-    <ModalFrame title={`Configure ${agent.name}`} description="Edit this runtime’s identity, model route, exact complexity, and availability." onClose={onClose}>
+    <ModalFrame title={`Configure ${agent.name}`} description="Edit this runtime’s identity, model route, exact complexity, and availability." blocked={pending || deletePending} onClose={onClose}>
       <form onSubmit={submit} noValidate>
         <div className="b2-agent-modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, padding: '20px' }}>
           <div style={{ gridColumn: '1 / -1' }}>
-            <label htmlFor="configure-agent-name" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Name</label>
-            <input ref={nameRef} className="b2-agent-focus" id="configure-agent-name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} aria-invalid={touched && !draft.name.trim()} aria-describedby={touched && !draft.name.trim() ? 'configure-agent-name-error' : undefined} style={fieldStyle} />
-            {touched && !draft.name.trim() && <FieldError id="configure-agent-name-error">Enter an agent name.</FieldError>}
+            <label htmlFor={`${formId}-name`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Name</label>
+            <input ref={nameRef} className="b2-agent-focus" id={`${formId}-name`} value={draft.name} disabled={pending || deletePending} onChange={(event) => setDraft({ ...draft, name: event.target.value })} aria-invalid={touched && !draft.name.trim()} aria-describedby={touched && !draft.name.trim() ? `${formId}-name-error` : undefined} style={fieldStyle} />
+            {touched && !draft.name.trim() && <FieldError id={`${formId}-name-error`}>Enter an agent name.</FieldError>}
           </div>
           <div>
-            <label htmlFor="configure-agent-model" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Model</label>
-            <select ref={modelRef} className="b2-agent-focus" id="configure-agent-model" value={draft.modelId} onChange={(event) => setDraft({ ...draft, modelId: event.target.value })} disabled={busy} aria-invalid={touched && !draft.modelId} aria-describedby={touched && !draft.modelId ? 'configure-agent-model-error' : undefined} style={fieldStyle}>
-              {!modelOptions.length && <option value="">No model available</option>}
+            <label htmlFor={`${formId}-model`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Model</label>
+            <select ref={modelRef} className="b2-agent-focus" id={`${formId}-model`} value={draft.modelId} onChange={(event) => setDraft({ ...draft, modelId: event.target.value })} disabled={busy || pending || deletePending || !modelsReady} aria-invalid={touched && !draft.modelId} aria-describedby={touched && !draft.modelId ? `${formId}-model-error` : undefined} style={fieldStyle}>
+              <option value="">{modelOptions.length ? 'Select a ready model' : 'No model available'}</option>
               {modelOptions.map((model) => <option key={model.model_id} value={model.model_id}>{model.name} · {providerLabel(model.provider)}{model.status !== 'ready' ? ` · ${model.status}` : ''}</option>)}
             </select>
-            {touched && !draft.modelId && <FieldError id="configure-agent-model-error">Select a ready model.</FieldError>}
+            {touched && !draft.modelId && <FieldError id={`${formId}-model-error`}>Select a ready model.</FieldError>}
           </div>
           <div>
-            <label htmlFor="configure-agent-complexity" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Exact complexity</label>
-            <select className="b2-agent-focus" id="configure-agent-complexity" value={draft.complexity} onChange={(event) => setDraft({ ...draft, complexity: event.target.value as Complexity })} disabled={busy} style={fieldStyle}>
+            <label htmlFor={`${formId}-complexity`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Exact complexity</label>
+            <select className="b2-agent-focus" id={`${formId}-complexity`} value={draft.complexity} onChange={(event) => setDraft({ ...draft, complexity: event.target.value as Complexity })} disabled={busy || pending || deletePending} style={fieldStyle}>
               {COMPLEXITIES.map((item) => <option key={item.id} value={item.id}>{item.label} ({item.id})</option>)}
             </select>
           </div>
           <label style={{ gridColumn: '1 / -1', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10, cursor: busy ? 'not-allowed' : 'pointer' }}>
-            <input className="b2-agent-focus" type="checkbox" checked={draft.enabled} disabled={busy} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} style={{ width: 20, height: 20 }} />
+            <input className="b2-agent-focus" type="checkbox" checked={draft.enabled} disabled={busy || pending || deletePending} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} style={{ width: 20, height: 20 }} />
             <span><strong>Enabled</strong><span style={{ display: 'block', color: 'var(--fg-muted)', fontSize: 12, marginTop: 2 }}>Enabled runtimes may claim exact-complexity work when their model is ready.</span></span>
           </label>
           {busy && <div role="status" style={{ gridColumn: '1 / -1', color: 'var(--fg-muted)', fontSize: 12.5 }}>This agent is busy. Its model, complexity, enabled state, and deletion become available when the current todo finishes.</div>}
+          {!modelsReady && <div role="status" style={{ gridColumn: '1 / -1', color: 'var(--fg-muted)', fontSize: 12.5 }}>Refreshing registered models…</div>}
           {error && <div role="alert" style={{ gridColumn: '1 / -1', color: 'var(--destructive)', fontSize: 13 }}>{error}</div>}
           {deleteError && <div role="alert" style={{ gridColumn: '1 / -1', color: 'var(--destructive)', fontSize: 13 }}>{deleteError}</div>}
         </div>
@@ -402,7 +557,6 @@ export interface TodoActions {
   stop: (id: string) => void;
   remove: (id: string) => void;
   rerun: (id: string) => void;
-  continue: (id: string, text: string) => void;
   add: (opts: {
     title: string;
     assign: string;
@@ -420,20 +574,42 @@ interface MenuItem {
 }
 
 // ── controlled overflow menu ──────────────────────────────────────────────────
-function DotsMenu({ open, onToggle, items }: { open: boolean; onToggle: () => void; items: MenuItem[] }) {
+function DotsMenu({ open, onToggle, items, disabled = false }: { open: boolean; onToggle: () => void; items: MenuItem[]; disabled?: boolean }) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  useEffect(() => {
+    if (!open) return;
+    const focusTimer = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus());
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      onToggle();
+      requestAnimationFrame(() => triggerRef.current?.focus());
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      cancelAnimationFrame(focusTimer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onToggle, open]);
+  const closeAndRestore = () => {
+    onToggle();
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  };
   return (
-    <div style={{ position: 'relative', flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
-      <button className="b2-agent-focus" onClick={onToggle} aria-label="Todo actions" aria-expanded={open} title="Todo actions" style={{ width: 44, height: 44, borderRadius: 8, border: '1px solid ' + (open ? 'var(--border-strong)' : 'transparent'), background: open ? 'var(--surface-2)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      <button ref={triggerRef} className="b2-agent-focus" onClick={onToggle} disabled={disabled} aria-label="Todo actions" aria-haspopup="menu" aria-controls={open ? menuId : undefined} aria-expanded={open} title="Todo actions" style={{ width: 44, height: 44, borderRadius: 8, border: '1px solid ' + (open ? 'var(--border-strong)' : 'transparent'), background: open ? 'var(--surface-2)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1 }}>
         <Icon name="more" size={16} color="var(--fg-muted)" />
       </button>
       {open && (
         <Fragment>
-          <div onClick={onToggle} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />
-          <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 60, width: 238, background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 11, boxShadow: '0 18px 50px rgba(0,0,0,0.5)', padding: 6 }}>
+          <div aria-hidden="true" onClick={closeAndRestore} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />
+          <div ref={menuRef} id={menuId} role="menu" aria-label="Todo actions" style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 60, width: 238, background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 11, boxShadow: '0 18px 50px rgba(0,0,0,0.5)', padding: 6 }}>
             {items.map((it, i) => (
               <Fragment key={i}>
-                {it.divider && <div style={{ height: 1, background: 'var(--border)', margin: '5px 4px' }} />}
-                <button className="b2-agent-focus" onClick={() => { onToggle(); it.onClick && it.onClick(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', minHeight: 44, padding: '8px 9px', borderRadius: 8, border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 500, color: it.danger ? 'var(--destructive)' : 'var(--fg)' }}
+                {it.divider && <div role="separator" style={{ height: 1, background: 'var(--border)', margin: '5px 4px' }} />}
+                <button role="menuitem" className="b2-agent-focus" onClick={() => { closeAndRestore(); it.onClick?.(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', minHeight: 44, padding: '8px 9px', borderRadius: 8, border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 500, color: it.danger ? 'var(--destructive)' : 'var(--fg)' }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
                   <Icon name={it.icon!} size={14} color={it.danger ? 'var(--destructive)' : 'var(--fg-muted)'} /> {it.label}
                 </button>
@@ -456,7 +632,7 @@ export function RosterCard({
   a: Agent;
   todo: Todo | null;
   onOpen: (id: string) => void;
-  onConfigure: (agent: Agent) => void;
+  onConfigure?: (agent: Agent) => void;
 }) {
   const working = a.status === 'busy';
   const off = a.status === 'offline';
@@ -474,7 +650,7 @@ export function RosterCard({
             {statusText}
           </div>
         </div>
-        <button className="b2-agent-focus" onClick={() => onConfigure(a)} aria-label={`Configure ${a.name}`} title={`Configure ${a.name}`} style={iconBtn()}><Icon name="sliders" size={16} color="var(--fg-muted)" /></button>
+        {onConfigure && <button className="b2-agent-focus" onClick={() => onConfigure(a)} aria-label={`Configure ${a.name}`} title={`Configure ${a.name}`} style={iconBtn()}><Icon name="sliders" size={16} color="var(--fg-muted)" /></button>}
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <span style={agChip()}><Icon name="cpu" size={11} /> {a.modelName ?? 'Model unknown'} · {providerLabel(a.modelProvider)}</span>
@@ -489,8 +665,10 @@ export function RosterCard({
           <Icon name={!a.enabled || a.modelStatus !== 'ready' ? 'alert' : 'clock'} size={14} />
           {!a.enabled
             ? 'Unavailable while this runtime is disabled.'
-            : a.modelStatus && a.modelStatus !== 'ready'
-              ? `Unavailable while the configured model is ${a.modelStatus}.`
+            : a.modelStatus !== 'ready'
+              ? a.modelStatus
+                ? `Unavailable while the configured model is ${a.modelStatus}.`
+                : 'Unavailable because configured model status is unknown.'
               : `Waiting for queued ${a.complexity} work.`}
         </div>
       )}
@@ -516,17 +694,18 @@ function rowMenu(t: Todo, actions: TodoActions): MenuItem[] {
   ];
 }
 
-export function TodoRow({ t, agent, menuOpen, onMenu, actions }: { t: Todo; agent?: Agent | null; menuOpen: boolean; onMenu: (id: string | null) => void; actions: TodoActions }) {
+export function TodoRow({ t, agent, menuOpen, onMenu, actions, actionPending, actionsDisabled = false }: { t: Todo; agent?: Agent | null; menuOpen: boolean; onMenu: (id: string | null) => void; actions: TodoActions; actionPending?: string | null; actionsDisabled?: boolean }) {
   const status = todoStatusView(t.status);
-  const assignedName = t.agentName ?? agent?.name ?? null;
+  const assignedName = todoAgentDisplayName(t, agent);
   const isPriorityQueued = t.priority && t.status === 'queued';
   return (
-    <div className="b2-todo-row" onClick={() => actions.open(t.id)} style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '13px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer', background: isPriorityQueued ? 'var(--warning-soft)' : 'transparent', borderLeft: '2px solid ' + (isPriorityQueued ? 'var(--warning)' : 'transparent') }}
+    <div className="b2-todo-row" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px 4px 4px', borderBottom: '1px solid var(--border)', background: isPriorityQueued ? 'var(--warning-soft)' : 'transparent', borderLeft: '2px solid ' + (isPriorityQueued ? 'var(--warning)' : 'transparent') }}
       onMouseEnter={(e) => { if (!isPriorityQueued) e.currentTarget.style.background = 'var(--surface-2)'; }} onMouseLeave={(e) => { if (!isPriorityQueued) e.currentTarget.style.background = 'transparent'; }}>
-      <span style={{ width: 22, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
-        {status.spin ? <span className="b2-spin" style={{ display: 'flex' }}><Icon name={status.icon} size={16} color={status.tone} /></span> : <Icon name={status.icon} size={16} color={status.tone} />}
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <button className="b2-agent-focus" onClick={() => actions.open(t.id)} aria-label={`Open ${t.title}`} style={{ display: 'flex', alignItems: 'center', gap: 13, flex: 1, minWidth: 0, minHeight: 56, padding: '9px 8px', border: 'none', borderRadius: 8, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer' }}>
+        <span style={{ width: 22, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+          {status.spin ? <span className="b2-spin" style={{ display: 'flex' }}><Icon name={status.icon} size={16} color={status.tone} /></span> : <Icon name={status.icon} size={16} color={status.tone} />}
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {isPriorityQueued && <PriorityBadge />}
           <span style={{ fontSize: 13.5, fontWeight: 600, color: t.status === 'done' ? 'var(--fg-muted)' : 'var(--fg)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
@@ -542,16 +721,18 @@ export function TodoRow({ t, agent, menuOpen, onMenu, actions }: { t: Todo; agen
           {t.status === 'queued' && <span style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>Durable wait for an enabled {t.complexity} agent while matches are busy or offline.</span>}
           {t.status === 'failed' && t.error && <span style={{ fontSize: 11.5, color: 'var(--destructive)', overflowWrap: 'anywhere' }}>{t.error}</span>}
         </div>
-      </div>
-      {t.status === 'done' && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          <span title="Conversation archived; KV cache flushed from RAM" className="b2-hide-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 22, padding: '0 8px', borderRadius: 6, fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', background: 'var(--surface-2)' }}><Icon name="cpu" size={11} /> memory flushed</span>
+        </div>
+        {t.status === 'done' && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          {t.memoryFlushed && <span title="Conversation archived; KV cache flushed from RAM" className="b2-hide-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 22, padding: '0 8px', borderRadius: 6, fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', background: 'var(--surface-2)' }}><Icon name="cpu" size={11} /> memory flushed</span>}
           <span style={{ fontSize: 11.5, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)' }}>{t.completedLabel}</span>
           <span className="b2-hide-sm" style={{ fontSize: 11.5, color: 'var(--fg-faint)', fontFamily: 'var(--mono-font)', width: 64, textAlign: 'right' }}>{t.tokens}</span>
-        </div>
-      )}
-      {t.status === 'failed' && <span style={{ fontSize: 11.5, color: 'var(--destructive)', fontWeight: 600 }}>{status.label}</span>}
-      <DotsMenu open={menuOpen} onToggle={() => onMenu(menuOpen ? null : t.id)} items={rowMenu(t, actions)} />
+          </span>
+        )}
+        {t.status === 'failed' && <span style={{ fontSize: 11.5, color: 'var(--destructive)', fontWeight: 600 }}>{status.label}</span>}
+        {actionPending && <span role="status" style={{ fontSize: 11.5, color: 'var(--accent)', fontWeight: 600 }}>{actionPending}</span>}
+      </button>
+      <DotsMenu open={menuOpen} onToggle={() => onMenu(menuOpen ? null : t.id)} items={rowMenu(t, actions)} disabled={actionsDisabled} />
     </div>
   );
 }
@@ -579,7 +760,7 @@ function ToolLine({ tool }: { tool: Tool }) {
   );
 }
 
-function MessageBlock({ m, agent }: { m: Message; agent?: Agent | null }) {
+function MessageBlock({ m, agentName }: { m: Message; agentName?: string | null }) {
   if (m.role === 'user') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginBottom: 18 }}>
@@ -594,8 +775,8 @@ function MessageBlock({ m, agent }: { m: Message; agent?: Agent | null }) {
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>{agent ? agent.name[0] : <Icon name="robot" size={13} />}</span>
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{agent ? agent.name : 'Agent'}</span>
+        <span style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>{agentName ? agentName[0] : <Icon name="robot" size={13} />}</span>
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>{agentName ?? 'Agent unknown'}</span>
       </div>
       <div style={{ paddingLeft: 30 }}>
         {(m.tools || []).map((t, i) => <ToolLine key={i} tool={t} />)}
@@ -623,26 +804,65 @@ function DMeta({ label, children }: { label: string; children: ReactNode }) {
 export function ConversationDrawer({
   todoId,
   agentOf,
+  continuationPending,
+  continuationError,
   onClose,
   onContinue,
 }: {
   todoId: string;
   agentOf: (id: string | null) => Agent | null;
+  continuationPending: boolean;
+  continuationError: string | null;
   onClose: () => void;
-  onContinue: (id: string, text: string) => void;
+  onContinue: (id: string, text: string, onSuccess: () => void) => void;
 }) {
-  const { data: todo } = useTodo(todoId);
+  const todoQuery = useTodo(todoId);
+  const todo = todoQuery.data;
   const qc = useQueryClient();
   const [shown, setShown] = useState(false);
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const continuationLockedRef = useRef(false);
+  const blockedRef = useRef(continuationPending);
+  const closeRef = useRef(onClose);
+  const continuationId = useId();
+  useEffect(() => { blockedRef.current = continuationPending; }, [continuationPending]);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
+  useEffect(() => { if (!continuationPending) continuationLockedRef.current = false; }, [continuationPending]);
 
   useEffect(() => {
-    const r = requestAnimationFrame(() => setShown(true));
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', k);
-    return () => { cancelAnimationFrame(r); document.removeEventListener('keydown', k); };
-  }, [onClose]);
+    const restoreApplicationRoot = isolateApplicationRoot();
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter((element) => element.getClientRects().length > 0);
+    const showTimer = requestAnimationFrame(() => {
+      setShown(true);
+      (focusable()[0] ?? dialogRef.current)?.focus();
+    });
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (!blockedRef.current) closeRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const elements = focusable();
+      if (!elements.length) { event.preventDefault(); dialogRef.current?.focus(); return; }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      cancelAnimationFrame(showTimer);
+      document.removeEventListener('keydown', onKey);
+      restoreApplicationRoot();
+      previousFocusRef.current?.focus();
+    };
+  }, []);
 
   useEffect(() => {
     if (!todo || todo.status !== 'running') return;
@@ -658,45 +878,55 @@ export function ConversationDrawer({
     if (el) el.scrollTop = el.scrollHeight;
   }, [todo?.messages]);
 
-  if (!todo) return null;
-
-  const agent = agentOf(todo.agentId);
-  const running = todo.status === 'running';
-  const done = todo.status === 'done';
-  const queued = todo.status === 'queued';
-  const failed = todo.status === 'failed';
-  const status = todoStatusView(todo.status);
+  const agent = todo ? agentOf(todo.agentId) : null;
+  const actorName = todo ? todoAgentDisplayName(todo, agent) : null;
+  const running = todo?.status === 'running';
+  const done = todo?.status === 'done';
+  const queued = todo?.status === 'queued';
+  const failed = todo?.status === 'failed';
+  const terminal = todo ? canContinueTodo(todo.status) : false;
+  const status = todo ? todoStatusView(todo.status) : null;
   const send = () => {
     const text = draft.trim();
-    if (!text) return;
-    onContinue(todoId, text);
-    setDraft('');
+    if (!text || !terminal || continuationPending || continuationLockedRef.current) return;
+    continuationLockedRef.current = true;
+    try {
+      onContinue(todoId, text, () => setDraft(''));
+    } catch (continueCallError) {
+      continuationLockedRef.current = false;
+      throw continueCallError;
+    }
   };
+  const requestClose = () => { if (!blockedRef.current) closeRef.current(); };
 
   return createPortal(
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '5vh 20px' }}>
-      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(8,9,12,0.5)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', opacity: shown ? 1 : 0, transition: 'opacity .2s' }} />
-      <div role="dialog" aria-modal="true" aria-label={`Todo: ${todo.title}`} style={{ position: 'relative', width: 'min(640px, 94vw)', maxHeight: '90vh', background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 28px 80px rgba(0,0,0,0.55)', display: 'flex', flexDirection: 'column', transform: shown ? 'none' : 'translateY(12px) scale(0.98)', opacity: shown ? 1 : 0, transition: 'transform .24s cubic-bezier(.32,.72,0,1), opacity .2s' }}>
+      <div className="b2-dialog-backdrop" aria-hidden="true" onClick={requestClose} style={{ position: 'absolute', inset: 0, background: 'rgba(8,9,12,0.5)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', opacity: shown ? 1 : 0, transition: 'opacity .2s', cursor: continuationPending ? 'wait' : 'default' }} />
+      <div ref={dialogRef} tabIndex={-1} className="b2-conversation-drawer" role="dialog" aria-modal="true" aria-label={todo ? `Todo: ${todo.title}` : 'Todo conversation'} style={{ position: 'relative', width: 'min(640px, 94vw)', maxHeight: '90vh', minHeight: 220, background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 28px 80px rgba(0,0,0,0.55)', display: 'flex', flexDirection: 'column', transform: shown ? 'none' : 'translateY(12px) scale(0.98)', opacity: shown ? 1 : 0, transition: 'transform .24s cubic-bezier(.32,.72,0,1), opacity .2s' }}>
         {/* header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <span style={{ position: 'relative', flexShrink: 0 }}>
-            <Av name={agent ? agent.name : 'Q'} size={36} />
+            <Av name={actorName ?? 'Q'} size={36} />
             <span style={{ position: 'absolute', right: -1, bottom: -1, width: 11, height: 11, borderRadius: '50%', border: '2px solid var(--surface)', background: running ? 'var(--success)' : done ? 'var(--fg-faint)' : 'var(--warning)' }} />
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--fg)', fontFamily: 'var(--display-font)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{todo.title}</div>
+            <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--fg)', fontFamily: 'var(--display-font)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{todo?.title ?? 'Todo conversation'}</div>
             <div style={{ fontSize: 11.5, marginTop: 1, display: 'flex', alignItems: 'center', gap: 6, color: running ? 'var(--success)' : 'var(--fg-muted)' }}>
-              {running && <Fragment><span className="b2-spin" style={{ display: 'flex' }}><Icon name="loader" size={11} color="var(--success)" /></span> Running · {agent && agent.name}</Fragment>}
-              {done && <Fragment><Icon name="check" size={12} color="var(--fg-muted)" /> Completed {todo.completedLabel} · {agent && agent.name}</Fragment>}
-              {queued && <Fragment><Icon name="clock" size={12} color="var(--warning)" /> Queued{todo.priority ? ' · high priority' : ''}</Fragment>}
-              {failed && <Fragment><Icon name="alert" size={12} color="var(--destructive)" /> Failed{todo.completedLabel ? ` · ${todo.completedLabel}` : ''}</Fragment>}
+              {todoQuery.isPending && <Fragment><span className="b2-spin" style={{ display: 'flex' }}><Icon name="loader" size={11} /></span> Loading transcript…</Fragment>}
+              {todoQuery.isError && <Fragment><Icon name="alert" size={12} color="var(--destructive)" /> Transcript unavailable</Fragment>}
+              {running && <Fragment><span className="b2-spin" style={{ display: 'flex' }}><Icon name="loader" size={11} color="var(--success)" /></span> Running · {actorName ?? 'agent unknown'}</Fragment>}
+              {done && todo && <Fragment><Icon name="check" size={12} color="var(--fg-muted)" /> Completed {todo.completedLabel} · {actorName ?? 'agent unknown'}</Fragment>}
+              {queued && todo && <Fragment><Icon name="clock" size={12} color="var(--warning)" /> Queued{todo.priority ? ' · high priority' : ''}</Fragment>}
+              {failed && todo && <Fragment><Icon name="alert" size={12} color="var(--destructive)" /> Failed{todo.completedLabel ? ` · ${todo.completedLabel}` : ''}</Fragment>}
             </div>
           </div>
-          <button className="b2-agent-focus" onClick={onClose} aria-label="Close todo conversation" style={iconBtn()}><Icon name="x" size={16} color="var(--fg-muted)" /></button>
+          <button className="b2-agent-focus" onClick={requestClose} disabled={continuationPending} aria-label="Close todo conversation" style={{ ...iconBtn(), opacity: continuationPending ? 0.45 : 1 }}><Icon name="x" size={16} color="var(--fg-muted)" /></button>
         </div>
         {/* body */}
         <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
-          <div style={{ marginBottom: 16 }}>
+          {todoQuery.isPending && <div role="status" style={{ padding: '28px 8px', textAlign: 'center', color: 'var(--fg-muted)' }}>Loading the durable transcript…</div>}
+          {todoQuery.isError && <div role="alert" style={{ padding: 16, border: '1px solid var(--destructive)', borderRadius: 10, color: 'var(--destructive)', lineHeight: 1.5 }}>Could not load this todo: {todoQuery.error instanceof Error ? todoQuery.error.message : 'Request failed.'}<div style={{ marginTop: 12 }}><button className="b2-agent-focus" onClick={() => todoQuery.refetch()} style={agBtnGhost()}><Icon name="refresh" size={14} /> Retry</button></div></div>}
+          {todo && <Fragment><div style={{ marginBottom: 16 }}>
             <DMeta label="Requested by"><Av name={todo.by} size={18} /> {todo.by} <AccessTag user={todo.by} level={accessOf(todo.by)} /></DMeta>
             <DMeta label="Complexity"><span style={agChip('var(--accent)')}>{todo.complexity}</span></DMeta>
             <DMeta label="Assigned agent">{todo.agentName ?? agent?.name ?? 'Unknown'}</DMeta>
@@ -709,23 +939,24 @@ export function ConversationDrawer({
               <div style={{ fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.5 }}>Durably queued for an enabled {todo.complexity} agent. It will wait safely while matching agents are busy or offline and will run with {todo.by}’s access.</div>
             </div>
           )}
-          {failed && todo.error && <div role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 13px', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--destructive)', marginBottom: 16, color: 'var(--destructive)', fontSize: 12.5, lineHeight: 1.5 }}><Icon name="alert" size={15} style={{ flexShrink: 0, marginTop: 1 }} /><span><strong>{status.label}:</strong> {todo.error}</span></div>}
-          {todo.messages.map((m, i) => <MessageBlock key={i} m={m} agent={agent} />)}
+          {failed && todo.error && status && <div role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 13px', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--destructive)', marginBottom: 16, color: 'var(--destructive)', fontSize: 12.5, lineHeight: 1.5 }}><Icon name="alert" size={15} style={{ flexShrink: 0, marginTop: 1 }} /><span><strong>{status.label}:</strong> {todo.error}</span></div>}
+          {todo.messages.map((m, i) => <MessageBlock key={i} m={m} agentName={actorName} />)}</Fragment>}
         </div>
         {/* composer */}
-        <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg)', padding: '12px 16px 14px' }}>
+        {todo && terminal && <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg)', padding: '12px 16px 14px' }}>
           <div style={{ border: '1px solid var(--border-strong)', borderRadius: 12, background: 'var(--surface)', overflow: 'hidden' }}>
-            <label htmlFor="todo-continuation" style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Continuation instruction</label>
-            <textarea id="todo-continuation" className="b2-agent-focus" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }} rows={2}
-              placeholder={done || failed ? 'Continue this task…' : 'Reply or add a follow-up instruction…'}
-              style={{ width: '100%', resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13.5, lineHeight: 1.5, padding: '12px 13px' }} />
+            <label htmlFor={continuationId} style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Continuation instruction</label>
+            <textarea id={continuationId} className="b2-agent-focus" value={draft} disabled={continuationPending} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }} rows={2}
+              placeholder="Continue this task…"
+              style={{ width: '100%', resize: 'none', border: 'none', background: 'transparent', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 13.5, lineHeight: 1.5, padding: '12px 13px' }} />
+            {continuationError && <div role="alert" style={{ padding: '8px 12px 0', color: 'var(--destructive)', fontSize: 12.5 }}>{continuationError}</div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderTop: '1px solid var(--border)' }}>
               <Icon name="atSign" size={15} color="var(--fg-muted)" />
               <span style={{ fontSize: 11, color: 'var(--fg-faint)' }}>re-queues with the full history</span>
-              <button className="b2-agent-focus" onClick={send} disabled={!draft.trim()} style={{ ...agBtnPrimary(), marginLeft: 'auto', opacity: draft.trim() ? 1 : 0.5, cursor: draft.trim() ? 'pointer' : 'not-allowed' }}><Icon name="plus" size={14} color="#fff" /> Add to queue</button>
+              <button className="b2-agent-focus" onClick={send} disabled={!draft.trim() || continuationPending} style={{ ...agBtnPrimary(), marginLeft: 'auto', opacity: draft.trim() && !continuationPending ? 1 : 0.5, cursor: draft.trim() && !continuationPending ? 'pointer' : 'not-allowed' }}><Icon className={continuationPending ? 'b2-spin' : undefined} name={continuationPending ? 'loader' : 'plus'} size={14} color="#fff" /> {continuationPending ? 'Continuing…' : 'Add to queue'}</button>
             </div>
           </div>
-        </div>
+        </div>}
       </div>
     </div>,
     document.body,
@@ -752,21 +983,27 @@ export function AddTodoModal({
   }) => void;
 }) {
   const { workspaceId } = useWorkspace();
-  const { data: wsOverview } = useWorkspacesOverview();
-  const workspaces = wsOverview?.workspaces ?? [];
+  const workspaceQuery = useWorkspacesOverview();
+  const workspaces = workspaceQuery.data?.workspaces ?? [];
   const [text, setText] = useState('');
   const [ws, setWs] = useState(workspaceId ?? '');
   const [assign, setAssign] = useState('any');
   const [complexity, setComplexity] = useState<Complexity>('medium');
   const [touched, setTouched] = useState(false);
+  const formId = useId();
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLSelectElement>(null);
+  const submitLockedRef = useRef(false);
   useEffect(() => { titleRef.current?.focus(); }, []);
   useEffect(() => {
-    if (ws) return;
-    if (workspaceId) setWs(workspaceId);
-    else if (workspaces[0]) setWs(workspaces[0].workspace_id);
-  }, [workspaceId, workspaces, ws]);
+    if (!workspaceQuery.isSuccess) return;
+    setWs((current) => {
+      if (workspaces.some((workspace) => workspace.workspace_id === current)) return current;
+      if (workspaceId && workspaces.some((workspace) => workspace.workspace_id === workspaceId)) return workspaceId;
+      return workspaces[0]?.workspace_id ?? '';
+    });
+  }, [workspaceId, workspaceQuery.isSuccess, workspaces]);
+  useEffect(() => { if (!pending) submitLockedRef.current = false; }, [pending]);
   const eligibleAgents = eligibleAgentsForComplexity(agents, complexity);
   useEffect(() => {
     if (
@@ -777,41 +1014,50 @@ export function AddTodoModal({
       setAssign('any');
     }
   }, [agents, assign, complexity]);
-  const canSubmit = canSubmitTodo({ title: text, workspaceId: ws, complexity, pending });
+  const workspaceReady = workspaceQuery.isSuccess && workspaces.length > 0;
+  const canSubmit = canSubmitTodo({ title: text, workspaceId: ws, complexity, pending, workspaceReady });
   const submit = (event?: React.FormEvent) => {
     event?.preventDefault();
     setTouched(true);
     if (!text.trim()) { titleRef.current?.focus(); return; }
     if (!ws) { workspaceRef.current?.focus(); return; }
-    if (!canSubmit) return;
-    onAdd({ title: text.trim(), assign, complexity, workspaceId: ws });
+    if (!canSubmit || submitLockedRef.current) return;
+    submitLockedRef.current = true;
+    try {
+      onAdd({ title: text.trim(), assign, complexity, workspaceId: ws });
+    } catch (submitError) {
+      submitLockedRef.current = false;
+      throw submitError;
+    }
   };
   return (
-    <ModalFrame title="Add todo" description="Queue durable work for an enabled agent with the exact selected complexity." onClose={onClose}>
+    <ModalFrame title="Add todo" description="Queue durable work for an enabled agent with the exact selected complexity." blocked={Boolean(pending)} onClose={onClose}>
       <form onSubmit={submit} noValidate>
         <div style={{ padding: '20px' }}>
-          <label htmlFor="todo-title" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Todo</label>
-          <textarea ref={titleRef} id="todo-title" className="b2-agent-focus" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); submit(); } }} rows={3} aria-invalid={touched && !text.trim()} aria-describedby={touched && !text.trim() ? 'todo-title-error' : undefined} placeholder="What should an agent do?" style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.5, minHeight: 96 }} />
-          {touched && !text.trim() && <FieldError id="todo-title-error">Describe the todo.</FieldError>}
+          <label htmlFor={`${formId}-title`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Todo</label>
+          <textarea ref={titleRef} id={`${formId}-title`} className="b2-agent-focus" value={text} disabled={pending} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); submit(); } }} rows={3} aria-invalid={touched && !text.trim()} aria-describedby={touched && !text.trim() ? `${formId}-title-error` : undefined} placeholder="What should an agent do?" style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.5, minHeight: 96 }} />
+          {touched && !text.trim() && <FieldError id={`${formId}-title-error`}>Describe the todo.</FieldError>}
           <div className="b2-agent-modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
             <div>
-              <label htmlFor="todo-workspace" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Workspace</label>
-              <select ref={workspaceRef} id="todo-workspace" className="b2-agent-focus" value={ws} onChange={(event) => setWs(event.target.value)} aria-invalid={touched && !ws} aria-describedby={touched && !ws ? 'todo-workspace-error' : undefined} style={fieldStyle}>
-                <option value="">Select a workspace</option>
+              <label htmlFor={`${formId}-workspace`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Workspace</label>
+              <select ref={workspaceRef} id={`${formId}-workspace`} className="b2-agent-focus" value={ws} onChange={(event) => setWs(event.target.value)} disabled={Boolean(pending) || !workspaceReady} aria-invalid={touched && !ws} aria-describedby={touched && !ws ? `${formId}-workspace-error` : undefined} style={fieldStyle}>
+                <option value="">{workspaceQuery.isPending ? 'Loading workspaces…' : workspaceQuery.isError ? 'Workspaces unavailable' : workspaces.length ? 'Select a workspace' : 'No accessible workspaces'}</option>
                 {workspaces.map((workspace) => <option key={workspace.workspace_id} value={workspace.workspace_id}>{workspace.name} · {workspace.role}</option>)}
-                {!workspaces.length && workspaceId && <option value={workspaceId}>Current workspace</option>}
               </select>
-              {touched && !ws && <FieldError id="todo-workspace-error">Select a workspace.</FieldError>}
+              {touched && !ws && workspaceReady && <FieldError id={`${formId}-workspace-error`}>Select a workspace.</FieldError>}
+              {workspaceQuery.isPending && <div role="status" style={{ marginTop: 7, color: 'var(--fg-muted)', fontSize: 12 }}>Loading accessible workspaces…</div>}
+              {workspaceQuery.isError && <div role="alert" style={{ marginTop: 7, color: 'var(--destructive)', fontSize: 12, lineHeight: 1.5 }}>Could not load workspaces: {workspaceQuery.error instanceof Error ? workspaceQuery.error.message : 'Request failed.'} <button className="b2-agent-focus" type="button" onClick={() => workspaceQuery.refetch()} style={{ ...agBtnGhost(), marginTop: 8 }}>Retry</button></div>}
+              {workspaceQuery.isSuccess && workspaces.length === 0 && <div role="status" style={{ marginTop: 7, color: 'var(--fg-muted)', fontSize: 12 }}>No accessible workspace is available for this todo.</div>}
             </div>
             <div>
-              <label htmlFor="todo-complexity" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Exact complexity</label>
-              <select id="todo-complexity" className="b2-agent-focus" value={complexity} onChange={(event) => setComplexity(event.target.value as Complexity)} style={fieldStyle}>
+              <label htmlFor={`${formId}-complexity`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Exact complexity</label>
+              <select id={`${formId}-complexity`} className="b2-agent-focus" value={complexity} disabled={pending} onChange={(event) => setComplexity(event.target.value as Complexity)} style={fieldStyle}>
                 {COMPLEXITIES.map((item) => <option key={item.id} value={item.id}>{item.label} ({item.id})</option>)}
               </select>
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
-              <label htmlFor="todo-assignment" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Preferred agent (optional)</label>
-              <select id="todo-assignment" className="b2-agent-focus" value={assign} onChange={(event) => setAssign(event.target.value)} style={fieldStyle}>
+              <label htmlFor={`${formId}-assignment`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 7 }}>Preferred agent (optional)</label>
+              <select id={`${formId}-assignment`} className="b2-agent-focus" value={assign} disabled={pending} onChange={(event) => setAssign(event.target.value)} style={fieldStyle}>
                 <option value="any">Any enabled {complexity} agent</option>
                 {eligibleAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.status} · {agent.modelName ?? 'model unknown'}</option>)}
               </select>

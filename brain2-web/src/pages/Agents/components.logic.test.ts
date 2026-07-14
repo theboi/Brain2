@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import type { ModelConfig, ModelProvider } from '@/lib/types';
 import {
   agentUpdateChanges,
+  canContinueTodo,
   canCreateAgent,
+  canManageAgents,
   canSubmitTodo,
   eligibleAgentModels,
+  revalidateAgentModelSelection,
+  RosterCard,
+  TodoRow,
+  todoAgentDisplayName,
   todoStatusView,
 } from './components';
-import type { Agent } from './data';
+import type { Agent, Todo } from './data';
 
 function model(provider: ModelProvider, status: ModelConfig['status'] = 'ready'): ModelConfig {
   return {
@@ -55,6 +63,24 @@ describe('canCreateAgent', () => {
   });
 });
 
+describe('live permissions and selections', () => {
+  it('matches backend manage_agents tenant roles', () => {
+    expect(canManageAgents('owner')).toBe(true);
+    expect(canManageAgents('admin')).toBe(true);
+    expect(canManageAgents('member')).toBe(false);
+    expect(canManageAgents(undefined)).toBe(false);
+  });
+
+  it('clears a selection that disappears while preserving an existing paused binding', () => {
+    const ready = model('ollama');
+    const paused = model('anthropic', 'paused');
+    expect(revalidateAgentModelSelection(ready.model_id, [ready], null)).toBe(ready.model_id);
+    expect(revalidateAgentModelSelection(ready.model_id, [], null)).toBe('');
+    expect(revalidateAgentModelSelection(paused.model_id, [paused], paused.model_id)).toBe(paused.model_id);
+    expect(revalidateAgentModelSelection(paused.model_id, [], paused.model_id)).toBe('');
+  });
+});
+
 describe('agent configuration changes', () => {
   it('omits an unchanged paused model from unrelated edits', () => {
     const current: Agent = {
@@ -75,6 +101,53 @@ describe('todo status view', () => {
       icon: 'alert', label: 'Failed', spin: false,
     });
   });
+
+  it('allows continuation only after a terminal result', () => {
+    expect(canContinueTodo('done')).toBe(true);
+    expect(canContinueTodo('failed')).toBe(true);
+    expect(canContinueTodo('queued')).toBe(false);
+    expect(canContinueTodo('running')).toBe(false);
+  });
+
+  it('preserves deleted-agent attribution from the todo snapshot', () => {
+    const todo = { agentName: 'Deleted analyst' } as Todo;
+    expect(todoAgentDisplayName(todo, null)).toBe('Deleted analyst');
+  });
+
+  it('treats a null model status as unavailable', () => {
+    const agent: Agent = {
+      id: 'a1', name: 'Analyst', modelId: 'm1', modelName: 'Mystery model',
+      modelProvider: 'ollama', modelStatus: null, complexity: 'hard', enabled: true,
+      status: 'offline', taskId: null, lastHeartbeat: null, todoSummary: null,
+    };
+    const html = renderToStaticMarkup(createElement(RosterCard, {
+      a: agent, todo: null, onOpen: () => undefined,
+    }));
+    expect(html).toContain('configured model status is unknown');
+    expect(html).not.toContain('Waiting for queued');
+  });
+
+  it('renders failed rows as keyboard buttons with a semantic action menu', () => {
+    const todo: Todo = {
+      id: 't1', workspace_id: 'ws1', title: 'Failed audit', by: 'u1',
+      priority: false, status: 'failed', complexity: 'hard', error: 'Provider failed',
+      assignedAgentId: 'a1', agentId: 'a1', agentName: 'Deleted analyst',
+      modelId: 'm1', modelName: 'Local model', modelProvider: 'ollama',
+      conversationId: 'c1', runs: [], messages: [],
+    };
+    const actions = {
+      open: () => undefined, priority: () => undefined, stop: () => undefined,
+      remove: () => undefined, rerun: () => undefined,
+      add: () => undefined,
+    };
+    const html = renderToStaticMarkup(createElement(TodoRow, {
+      t: todo, menuOpen: true, onMenu: () => undefined, actions,
+    }));
+    expect(html).toContain('aria-label="Open Failed audit"');
+    expect(html).toContain('role="menu"');
+    expect(html).toContain('role="menuitem"');
+    expect(html).toContain('Deleted analyst');
+  });
 });
 
 describe('canSubmitTodo', () => {
@@ -92,5 +165,6 @@ describe('canSubmitTodo', () => {
     expect(canSubmitTodo({ title: 'Task', workspaceId: '', complexity: 'hard' })).toBe(false);
     expect(canSubmitTodo({ title: 'Task', workspaceId: 'ws1', complexity: 'extreme' })).toBe(false);
     expect(canSubmitTodo({ title: 'Task', workspaceId: 'ws1', complexity: 'hard', pending: true })).toBe(false);
+    expect(canSubmitTodo({ title: 'Task', workspaceId: 'ws1', complexity: 'hard', workspaceReady: false })).toBe(false);
   });
 });
