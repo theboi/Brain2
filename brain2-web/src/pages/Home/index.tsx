@@ -10,19 +10,20 @@
  *       Sources + Queries tiles     Wiki pages by project (bars)
  *       Token stacked area
  *
- * Modals: IngestModal, ActivityModal, AddAgentModal
+ * Modals: IngestModal, ActivityModal
  */
 import { useEffect, useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { Panel, MoreLink, SectionLabel } from '@/components/ui/Panel';
 import { StackedArea } from '@/components/charts/StackedArea';
 import { BarsH } from '@/components/charts/BarsH';
-import { AgentCard, AddAgentTile } from '@/components/dashboard/AgentCard';
+import { AgentCard } from '@/components/dashboard/AgentCard';
+import { liveAgentCard } from '@/components/dashboard/liveAgentCard';
 import { StatTile, Legend } from '@/components/dashboard/StatTile';
 import { ActivityPanel } from '@/components/dashboard/ActivityPanel';
 import { WikiHealth } from '@/components/dashboard/WikiHealth';
 import { QuickActions } from '@/components/dashboard/QuickActions';
-import { ActivityModal, AddAgentModal } from '@/components/home/HomeModals';
+import { ActivityModal } from '@/components/home/HomeModals';
 import { IngestModal } from '@/pages/Sources/IngestModal';
 import { useMedia, MOBILE_QUERY } from '@/hooks/useMedia';
 import { useMe } from '@/hooks/me';
@@ -35,16 +36,15 @@ import {
   useStatsLlmTokens,
   useStatsWikiByProject,
 } from '@/hooks/useStats';
-import { useWorkers } from '@/hooks/useAgents';
+import { useAgents } from '@/hooks/useAgents';
 import { useActivity } from '@/hooks/useActivity';
 import { agentAvailability } from '@/lib/agentAvailability';
 import { bucketsToSeries, pivotTokenSeries, seriesDelta } from '@/lib/stats';
 import { eventToActivityItem } from '@/lib/activity';
 import { resolveActiveProjectId } from '@/lib/vaultSelection';
-import { WIKI_HEALTH, QUICK_ACTIONS, type Agent as DashboardAgent } from '@/lib/mockData';
-import type { Agent as LiveAgent } from '@/pages/Agents/data';
+import { WIKI_HEALTH, QUICK_ACTIONS } from '@/lib/mockData';
 
-type ModalId = 'ingest' | 'activity' | 'addAgent' | null;
+type ModalId = 'ingest' | 'activity' | null;
 
 // ── Hero Band ────────────────────────────────────────────────────────────────
 function HeroBand({ onIngest, name, stats }: { onIngest: () => void; name: string; stats: { label: string; value: string }[] }) {
@@ -100,24 +100,6 @@ const tokenLegend = () => [
   { label: 'Tokens out', color: TOKEN_COLORS[1] },
 ];
 
-function dashboardAgent(agent: LiveAgent): DashboardAgent {
-  const busy = agent.status === 'busy';
-  const offline = agent.status === 'offline';
-  return {
-    id: agent.id,
-    name: agent.name,
-    model: busy ? 'Worker assigned' : 'Auto model pool',
-    provider: 'Agents queue',
-    status: busy ? 'active' : offline ? 'error' : 'idle',
-    statusLabel: busy ? 'running todo' : offline ? 'offline' : 'idle',
-    last: busy ? 'now' : 'available',
-    msgs: 0,
-    cost: offline ? 'offline' : 'live',
-    spark: busy ? [1, 3, 4, 5, 7, 6, 8, 9, 10] : [1, 1, 2, 1, 2, 1, 1, 2, 1],
-    note: busy && agent.taskId ? `todo ${agent.taskId.slice(0, 8)}` : undefined,
-  };
-}
-
 // ── Page ─────────────────────────────────────────────────────────────────────
 export function HomePage() {
   const isMobile = useMedia(MOBILE_QUERY);
@@ -131,7 +113,8 @@ export function HomePage() {
   const tokensQuery = useStatsLlmTokens(30, canViewTokenStats);
   const wikiByProjectQuery = useStatsWikiByProject();
   const activityQuery = useActivity(25);
-  const { data: agents = [] } = useWorkers();
+  const agentsQuery = useAgents();
+  const agents = agentsQuery.data ?? [];
   const { data: projects = [], isSuccess: projectsLoaded } = useProjects(workspaceId);
 
   useEffect(() => {
@@ -142,9 +125,9 @@ export function HomePage() {
   const overview = overviewQuery.data;
   const name = me?.display_name?.trim() || 'there';
   const availability = agentAvailability(agents);
-  const dashboardAgents = agents.map(dashboardAgent);
+  const dashboardAgents = agents.map(liveAgentCard);
   const heroStats = [
-    { label: 'agents online', value: String(availability.online) },
+    { label: 'agents online', value: agentsQuery.isSuccess ? String(availability.online) : '—' },
     { label: 'sources', value: (overview?.sources_total ?? 0).toLocaleString() },
     { label: 'wiki pages', value: (overview?.wiki_pages_total ?? 0).toLocaleString() },
     { label: 'queries today', value: String(overview?.queries_today ?? 0) },
@@ -202,12 +185,74 @@ export function HomePage() {
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)',
+                    gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(220px, 1fr))',
                     gap: isMobile ? 10 : 14,
                   }}
                 >
                   {dashboardAgents.map((a) => <AgentCard key={a.id} agent={a} />)}
-                  {!dashboardAgents.length && (
+                  {agentsQuery.isPending && (
+                    <div
+                      style={{
+                        minHeight: 120,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        textAlign: 'center',
+                        padding: 16,
+                        border: '1px solid var(--border)',
+                        borderRadius: 12,
+                        background: 'var(--surface)',
+                        color: 'var(--fg-faint)',
+                        fontSize: 12.5,
+                        lineHeight: 1.4,
+                      }}
+                      role="status"
+                    >
+                      Loading configured agents…
+                    </div>
+                  )}
+                  {agentsQuery.isError && (
+                    <div
+                      style={{
+                        minHeight: 120,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 10,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        textAlign: 'center',
+                        padding: 16,
+                        border: '1px solid var(--destructive)',
+                        borderRadius: 12,
+                        background: 'var(--surface)',
+                        color: 'var(--fg-muted)',
+                        fontSize: 12.5,
+                        lineHeight: 1.4,
+                      }}
+                      role="alert"
+                    >
+                      <span>Configured agents could not be loaded.</span>
+                      <button
+                        type="button"
+                        onClick={() => agentsQuery.refetch()}
+                        style={{
+                          minHeight: 34,
+                          padding: '0 13px',
+                          borderRadius: 8,
+                          border: '1px solid var(--border)',
+                          background: 'var(--surface-2)',
+                          color: 'var(--fg)',
+                          fontFamily: 'var(--ui-font)',
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {agentsQuery.isSuccess && !dashboardAgents.length && (
                     <div
                       style={{
                         minHeight: 120,
@@ -224,10 +269,9 @@ export function HomePage() {
                         lineHeight: 1.4,
                       }}
                     >
-                      No live workers registered yet.
+                      No configured agents yet. Use Manage agents to create one.
                     </div>
                   )}
-                  <AddAgentTile onClick={() => setModal('addAgent')} />
                 </div>
               </div>
 
@@ -276,7 +320,6 @@ export function HomePage() {
       {/* Modals */}
       {modal === 'ingest'   && <IngestModal open onClose={() => setModal(null)} />}
       {modal === 'activity' && <ActivityModal events={events} onClose={() => setModal(null)} />}
-      {modal === 'addAgent' && <AddAgentModal onClose={() => setModal(null)} />}
     </>
   );
 }
