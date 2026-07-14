@@ -105,7 +105,7 @@ export function useCreateSchedule(projectId: string | null) {
 
 export function useAgents() {
   return useQuery({
-    queryKey: ['models'],
+    queryKey: qk.reportModels(),
     queryFn: () => ops<{ models: RawModelRow[] }>('models:list', {})
       .then((r) => r.models.map((model) => ({
         agent_id: model.model_id,

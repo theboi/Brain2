@@ -3,9 +3,11 @@ import {
   ModelFormValidationError,
   acquireMutationLock,
   backendModelFieldErrors,
+  modelRowActionsDisabled,
   modelCreatePayload,
   modelUpdatePayload,
   releaseMutationLock,
+  shouldCloseMissingModelForm,
 } from './modelsLogic';
 
 describe('modelCreatePayload', () => {
@@ -162,6 +164,21 @@ describe('mutation guards and backend field errors', () => {
     expect(backendModelFieldErrors('api_key is required for anthropic')).toEqual({
       key: 'api_key is required for anthropic',
     });
+  });
+
+  it('disables conflicting row actions while create/edit forms are open', () => {
+    expect(modelRowActionsDisabled(null, 'm1', false)).toBe(false);
+    expect(modelRowActionsDisabled('create', 'm1', false)).toBe(true);
+    expect(modelRowActionsDisabled('m1', 'm1', false)).toBe(true);
+    expect(modelRowActionsDisabled('m2', 'm1', false)).toBe(false);
+    expect(modelRowActionsDisabled(null, 'm1', true)).toBe(true);
+  });
+
+  it('closes only a settled edit whose row disappeared', () => {
+    expect(shouldCloseMissingModelForm('m1', ['m2'], true)).toBe(true);
+    expect(shouldCloseMissingModelForm('m1', ['m1'], true)).toBe(false);
+    expect(shouldCloseMissingModelForm('create', [], true)).toBe(false);
+    expect(shouldCloseMissingModelForm('m1', [], false)).toBe(false);
   });
 });
 

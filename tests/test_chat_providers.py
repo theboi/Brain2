@@ -33,14 +33,14 @@ def test_builds_ollama_from_exact_saved_endpoint():
     created = make_models_create(store, secrets)(
         RequestContext("t1", "u1", "owner"),
         {"name": "Local", "provider": "ollama", "model": "llama3",
-         "ollama_base_url": " http://workstation:11434/// "},
+         "ollama_base_url": " http://localhost:11434/// "},
     )
     row = store._conn.execute(
         "SELECT * FROM models WHERE model_id=?", (created["model_id"],)
     ).fetchone()
     with patch("brain2.chat_providers.OllamaProvider") as cls:
         build_provider("t1", row, secrets, accessed_by="u1")
-    cls.assert_called_once_with(base_url="http://workstation:11434", model="llama3")
+    cls.assert_called_once_with(base_url="http://localhost:11434", model="llama3")
 
 
 @pytest.mark.parametrize("provider,class_name", [

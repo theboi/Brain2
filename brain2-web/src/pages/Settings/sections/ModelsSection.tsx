@@ -14,10 +14,12 @@ import type { ModelConfig, ModelProvider, RuntimeModelProvider } from '@/lib/typ
 import {
   acquireMutationLock,
   backendModelFieldErrors,
+  modelRowActionsDisabled,
   ModelFormValidationError,
   modelCreatePayload,
   modelUpdatePayload,
   releaseMutationLock,
+  shouldCloseMissingModelForm,
   type ModelFormErrors,
   type ModelFormValues,
 } from './modelsLogic';
@@ -153,6 +155,17 @@ export function ModelsSection() {
     resetForm();
     setFormMode(null);
   };
+
+  useEffect(() => {
+    const queryReady = !modelsQuery.isPending && !modelsQuery.isError;
+    if (shouldCloseMissingModelForm(
+      formMode,
+      models.map((model) => model.model_id),
+      queryReady,
+    )) {
+      closeForm();
+    }
+  }, [formMode, models, modelsQuery.isError, modelsQuery.isPending]);
 
   const openCreate = () => {
     resetForm();
@@ -489,7 +502,12 @@ export function ModelsSection() {
         const testing = testingId === model.model_id;
         const removing = removingId === model.model_id;
         const statusChanging = statusId === model.model_id;
-        const rowActionPending = isSaving || testingId !== null || removingId !== null || statusId !== null;
+        const mutationPending = isSaving || testingId !== null || removingId !== null || statusId !== null;
+        const rowActionPending = modelRowActionsDisabled(
+          formMode,
+          model.model_id,
+          mutationPending,
+        );
         return (
           <div key={model.model_id} style={{ padding: '14px 0', borderBottom: index === models.length - 1 ? 'none' : '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>

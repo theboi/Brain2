@@ -168,6 +168,27 @@ export function backendModelFieldErrors(message: string): ModelFormErrors {
   return {};
 }
 
+export type ModelFormMode = 'create' | string | null;
+
+export function modelRowActionsDisabled(
+  formMode: ModelFormMode,
+  modelId: string,
+  mutationPending: boolean,
+): boolean {
+  return mutationPending || formMode === 'create' || formMode === modelId;
+}
+
+export function shouldCloseMissingModelForm(
+  formMode: ModelFormMode,
+  modelIds: string[],
+  queryReady: boolean,
+): boolean {
+  return queryReady
+    && formMode !== null
+    && formMode !== 'create'
+    && !modelIds.includes(formMode);
+}
+
 function providerLabel(provider: Exclude<RuntimeModelProvider, 'ollama'>): string {
   return provider === 'anthropic' ? 'Anthropic' : 'OpenRouter';
 }

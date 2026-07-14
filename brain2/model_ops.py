@@ -9,6 +9,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import socket
 import uuid
 from urllib.parse import urlparse
 
@@ -29,6 +30,7 @@ _METADATA_IPS = {
     ipaddress.ip_address("100.100.100.200"),
     ipaddress.ip_address("fd00:ec2::254"),
 }
+_DEFAULT_OLLAMA_HOSTS = {"localhost", "localhost.localdomain"}
 
 
 def _max_concurrency(value) -> int:
@@ -78,12 +80,19 @@ def _local_endpoint(provider: str, value):
         address = ipaddress.ip_address(host)
     except ValueError:
         address = None
-    if address is not None and not address.is_loopback and (
-        address in _METADATA_IPS
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_unspecified
-        or address.is_reserved
+    alternate_address = None
+    if address is None:
+        try:
+            alternate_address = ipaddress.ip_address(socket.inet_aton(host))
+        except OSError:
+            pass
+    checked_address = address or alternate_address
+    if checked_address is not None and not checked_address.is_loopback and (
+        checked_address in _METADATA_IPS
+        or checked_address.is_link_local
+        or checked_address.is_multicast
+        or checked_address.is_unspecified
+        or checked_address.is_reserved
     ):
         raise Conflict(
             "ollama_base_url must not target link-local, multicast, "
@@ -98,6 +107,12 @@ def _local_endpoint(provider: str, value):
     if allowed_hosts and host not in allowed_hosts:
         raise Conflict(
             "ollama_base_url host is not permitted by "
+            "BRAIN2_OLLAMA_ALLOWED_HOSTS"
+        )
+    if not allowed_hosts and address is None and host not in _DEFAULT_OLLAMA_HOSTS:
+        raise Conflict(
+            "ollama_base_url hostname is not allowed by default; use localhost, "
+            "a literal IP address, or add the exact hostname to "
             "BRAIN2_OLLAMA_ALLOWED_HOSTS"
         )
     return endpoint
@@ -339,18 +354,43 @@ def make_models_set_status(store, target_status: str):
     def handler(ctx, params):
         with store.transaction() as cx:
             row = cx.execute(
-                "SELECT model_id FROM models WHERE tenant_id=? AND model_id=?",
+                "SELECT model_id,status FROM models "
+                "WHERE tenant_id=? AND model_id=?",
                 (ctx.tenant_id, params["model_id"]),
             ).fetchone()
             if row is None:
                 raise NotFound(f"model {params['model_id']!r} not found")
             if target_status == "disabled":
                 _guard_model_reference(store, ctx.tenant_id, params["model_id"])
-            cx.execute(
-                "UPDATE models SET status=?, updated_at=? "
-                "WHERE tenant_id=? AND model_id=?",
-                (target_status, _now(), ctx.tenant_id, params["model_id"]),
-            )
+            expected_status = {
+                "paused": "ready",
+                "ready": "paused",
+            }.get(target_status)
+            if expected_status is not None:
+                if row["status"] != expected_status:
+                    raise Conflict(
+                        "model status transition requires "
+                        f"{expected_status} -> {target_status}; "
+                        f"current status is {row['status']}"
+                    )
+                cursor = cx.execute(
+                    "UPDATE models SET status=?, updated_at=? "
+                    "WHERE tenant_id=? AND model_id=? AND status=?",
+                    (
+                        target_status, _now(), ctx.tenant_id,
+                        params["model_id"], expected_status,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise Conflict(
+                        "model status changed before the transition completed"
+                    )
+            else:
+                cx.execute(
+                    "UPDATE models SET status=?, updated_at=? "
+                    "WHERE tenant_id=? AND model_id=?",
+                    (target_status, _now(), ctx.tenant_id, params["model_id"]),
+                )
         return {"model_id": params["model_id"], "status": target_status}
 
     return handler

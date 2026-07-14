@@ -40,7 +40,7 @@ def test_create_and_list_model():
             "provider": "ollama",
             "model": "llama3.3",
             "param_count": "70B",
-            "ollama_base_url": "http://workstation-1:11434",
+            "ollama_base_url": "http://localhost:11434",
         },
     )
     assert out["name"] == "llama3.3 70B"
@@ -118,11 +118,11 @@ def test_ollama_create_normalizes_endpoint_and_capacity():
     s, sm = _store_secrets()
     created = make_models_create(s, sm)(
         _ctx(), {"name": " Local ", "provider": "ollama", "model": " llama3 ",
-                 "ollama_base_url": " http://box:11434/// ",
+                 "ollama_base_url": " http://192.168.1.20:11434/// ",
                  "max_concurrency": "3"})
     assert created["name"] == "Local"
     assert created["model"] == "llama3"
-    assert created["ollama_base_url"] == "http://box:11434"
+    assert created["ollama_base_url"] == "http://192.168.1.20:11434"
     assert created["max_concurrency"] == 3
     assert "secret_key" not in created and "api_key" not in created
 
@@ -154,6 +154,11 @@ def test_ollama_rejects_invalid_url(endpoint):
     "http://240.0.0.1:11434",
     "http://metadata.google.internal:11434",
     "http://instance-data.ec2.internal:11434",
+    "http://2130706433:11434",
+    "http://0x7f000001:11434",
+    "http://0177.0.0.1:11434",
+    "http://127.0.0.1.nip.io:11434",
+    "http://ollama.lan:11434",
 ])
 def test_ollama_rejects_unsafe_server_targets(endpoint):
     s, sm = _store_secrets()
@@ -166,10 +171,10 @@ def test_ollama_rejects_unsafe_server_targets(endpoint):
 @pytest.mark.parametrize("endpoint", [
     "http://127.0.0.1:11434",
     "http://localhost:11434",
+    "http://localhost.localdomain:11434",
     "http://192.168.1.20:11434",
     "http://10.23.4.5:11434",
     "http://[::1]:11434",
-    "http://ollama.lan:11434",
 ])
 def test_ollama_allows_loopback_private_and_lan_targets(endpoint):
     s, sm = _store_secrets()
@@ -181,7 +186,7 @@ def test_ollama_allows_loopback_private_and_lan_targets(endpoint):
 
 def test_ollama_optional_host_allowlist_restricts_deployments(monkeypatch):
     monkeypatch.setenv(
-        "BRAIN2_OLLAMA_ALLOWED_HOSTS", "ollama.internal, 10.0.0.5"
+        "BRAIN2_OLLAMA_ALLOWED_HOSTS", "ollama.lan, 10.0.0.5"
     )
     s, sm = _store_secrets()
     create = make_models_create(s, sm)
@@ -189,14 +194,28 @@ def test_ollama_optional_host_allowlist_restricts_deployments(monkeypatch):
         create(
             _ctx(), {"name": "Blocked", "provider": "ollama", "model": "x",
                      "ollama_base_url": "http://box:11434"})
+    with pytest.raises(Conflict, match="BRAIN2_OLLAMA_ALLOWED_HOSTS"):
+        create(
+            _ctx(), {"name": "Unlisted IP", "provider": "ollama", "model": "x",
+                     "ollama_base_url": "http://10.0.0.6:11434"})
     allowed = create(
         _ctx(), {"name": "Allowed", "provider": "ollama", "model": "x",
-                 "ollama_base_url": "http://ollama.internal:11434/"})
+                 "ollama_base_url": "http://ollama.lan:11434/"})
     private = create(
         _ctx(), {"name": "Private", "provider": "ollama", "model": "x",
                  "ollama_base_url": "http://10.0.0.5:11434"})
-    assert allowed["ollama_base_url"] == "http://ollama.internal:11434"
+    assert allowed["ollama_base_url"] == "http://ollama.lan:11434"
     assert private["ollama_base_url"] == "http://10.0.0.5:11434"
+
+
+@pytest.mark.parametrize("host", ["169.254.169.254", "2852039166"])
+def test_ollama_allowlist_cannot_enable_blocked_literal_or_alias(monkeypatch, host):
+    monkeypatch.setenv("BRAIN2_OLLAMA_ALLOWED_HOSTS", host)
+    s, sm = _store_secrets()
+    with pytest.raises(Conflict, match="ollama_base_url"):
+        make_models_create(s, sm)(
+            _ctx(), {"name": "Metadata", "provider": "ollama", "model": "x",
+                     "ollama_base_url": f"http://{host}:11434"})
 
 
 @pytest.mark.parametrize("endpoint", [
@@ -237,13 +256,13 @@ def test_update_normalizes_and_persists_fields_and_replaces_cloud_key():
     s, sm = _store_secrets()
     local = make_models_create(s, sm)(
         _ctx(), {"name": "Local", "provider": "ollama", "model": "old",
-                 "ollama_base_url": "http://old:11434"})
+                 "ollama_base_url": "http://10.0.0.1:11434"})
     updated = make_models_update(s, sm)(
         _ctx(), {"model_id": local["model_id"], "name": " New ",
-                 "model": " llama3 ", "ollama_base_url": " http://new:11434/ ",
+                 "model": " llama3 ", "ollama_base_url": " http://10.0.0.2:11434/ ",
                  "max_concurrency": 4})
     assert (updated["name"], updated["model"]) == ("New", "llama3")
-    assert updated["ollama_base_url"] == "http://new:11434"
+    assert updated["ollama_base_url"] == "http://10.0.0.2:11434"
     assert updated["max_concurrency"] == 4
 
     cloud = make_models_create(s, sm)(
@@ -266,7 +285,7 @@ def test_update_rejects_invalid_fields(params):
     s, sm = _store_secrets()
     created = make_models_create(s, sm)(
         _ctx(), {"name": "Local", "provider": "ollama", "model": "x",
-                 "ollama_base_url": "http://box:11434"})
+                 "ollama_base_url": "http://localhost:11434"})
     with pytest.raises(Conflict):
         make_models_update(s, sm)(_ctx(), {"model_id": created["model_id"], **params})
 
@@ -291,8 +310,8 @@ def test_update_requires_effective_ollama_endpoint_for_legacy_row():
             _ctx(), {"model_id": model_id, "name": "Renamed"})
     updated = make_models_update(s, sm)(
         _ctx(), {"model_id": model_id, "name": "Renamed",
-                 "ollama_base_url": " http://legacy:11434/ "})
-    assert updated["ollama_base_url"] == "http://legacy:11434"
+                 "ollama_base_url": " http://localhost:11434/ "})
+    assert updated["ollama_base_url"] == "http://localhost:11434"
 
 
 @pytest.mark.parametrize("provider", ["anthropic", "openrouter"])
@@ -337,6 +356,35 @@ def test_referenced_model_cannot_be_disabled_or_deleted_but_can_be_paused():
             _ctx(), {"model_id": created["model_id"]})
     assert make_models_set_status(s, "paused")(
         _ctx(), {"model_id": created["model_id"]})["status"] == "paused"
+
+
+def test_pause_and_resume_require_exact_current_status():
+    s, sm = _store_secrets()
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": "Stub", "provider": "stub", "model": "x"})
+    pause = make_models_set_status(s, "paused")
+    resume = make_models_set_status(s, "ready")
+
+    assert pause(_ctx(), {"model_id": created["model_id"]})["status"] == "paused"
+    with pytest.raises(Conflict, match="ready.*paused"):
+        pause(_ctx(), {"model_id": created["model_id"]})
+    assert resume(_ctx(), {"model_id": created["model_id"]})["status"] == "ready"
+    with pytest.raises(Conflict, match="paused.*ready"):
+        resume(_ctx(), {"model_id": created["model_id"]})
+
+
+def test_disabled_model_cannot_be_resumed_and_remains_absent():
+    s, sm = _store_secrets()
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": "Stub", "provider": "stub", "model": "x"})
+    resume = make_models_set_status(s, "ready")
+    make_models_delete(s)(_ctx(), {"model_id": created["model_id"]})
+
+    with pytest.raises(Conflict, match="paused.*ready"):
+        resume(_ctx(), {"model_id": created["model_id"]})
+    assert created["model_id"] not in {
+        model["model_id"] for model in make_models_list(s)(_ctx(), {})["models"]
+    }
 
 
 def test_deleted_agent_does_not_block_model_disable():
@@ -404,7 +452,7 @@ def test_create_rejects_legacy_provider(provider):
 
 @pytest.mark.parametrize("provider,extra", [
     ("stub", {}),
-    ("ollama", {"ollama_base_url": "http://box:11434"}),
+    ("ollama", {"ollama_base_url": "http://localhost:11434"}),
 ])
 def test_non_keyed_provider_rejects_api_key_on_create_and_update(provider, extra):
     s, sm = _store_secrets()

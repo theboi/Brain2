@@ -35,6 +35,7 @@ export const qk = {
     ['sources', pid, sourceId, 'diff', version] as const,
   reports: (pid: string | null) => ['reports', pid] as const,
   modelRegistry: () => ['model-registry'] as const,
+  reportModels: () => ['models'] as const,
   schedules: () => ['schedules'] as const,
   scheduleOccurrences: (start: string, end: string) =>
     ['schedule-occurrences', start, end] as const,
@@ -72,4 +73,11 @@ export const qk = {
 
 export function invalidateTodoQueries(client: QueryClient) {
   return client.invalidateQueries({ queryKey: qk.todosRoot() });
+}
+
+export function invalidateModelQueries(client: QueryClient) {
+  return Promise.all([
+    client.invalidateQueries({ queryKey: qk.modelRegistry() }),
+    client.invalidateQueries({ queryKey: qk.reportModels() }),
+  ]);
 }
