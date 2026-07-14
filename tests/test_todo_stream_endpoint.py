@@ -34,7 +34,9 @@ def _client(tmp_path, monkeypatch):
 
 
 def test_owner_of_todo_can_stream(tmp_path, monkeypatch):
-    _s, client, tid, t1, _t3 = _client(tmp_path, monkeypatch)
+    s, client, tid, t1, _t3 = _client(tmp_path, monkeypatch)
+    s._conn.execute("UPDATE todos SET status='done' WHERE todo_id=?", (tid,))
+    s._conn.commit()
     r = client.get(f"/api/v1/todos/{tid}/stream", headers={"Authorization": f"Bearer {t1}"})
     assert r.status_code == 200
     assert "text/event-stream" in r.headers["content-type"]
@@ -49,7 +51,7 @@ def test_stranger_is_forbidden(tmp_path, monkeypatch):
 def test_stream_never_exposes_private_run_token(tmp_path, monkeypatch):
     s, client, tid, token, _ = _client(tmp_path, monkeypatch)
     s._conn.execute(
-        "UPDATE todos SET status='running',run_token='private-token' WHERE todo_id=?",
+        "UPDATE todos SET status='failed',run_token='private-token' WHERE todo_id=?",
         (tid,),
     )
     s._conn.commit()
@@ -64,7 +66,7 @@ def test_stream_tails_late_linked_messages_and_failed_status(tmp_path, monkeypat
     s, client, tid, token, _ = _client(tmp_path, monkeypatch)
 
     def complete_later():
-        time.sleep(0.05)
+        time.sleep(3.0)
         cid = uuid.uuid4().hex
         now = "2026-07-14T00:00:00+00:00"
         with s.transaction() as cx:
@@ -75,7 +77,7 @@ def test_stream_tails_late_linked_messages_and_failed_status(tmp_path, monkeypat
             )
             cx.execute("UPDATE todos SET conversation_id=?,status='running' WHERE todo_id=?",
                        (cid, tid))
-        time.sleep(0.05)
+        time.sleep(0.2)
         from brain2.chat_ops import insert_assistant_message
         insert_assistant_message(s, conversation_id=cid, content="Error: provider down")
         with s.transaction() as cx:
@@ -88,8 +90,9 @@ def test_stream_tails_late_linked_messages_and_failed_status(tmp_path, monkeypat
         f"/api/v1/todos/{tid}/stream",
         headers={"Authorization": f"Bearer {token}"},
     )
-    thread.join(timeout=2)
+    thread.join(timeout=5)
     assert response.status_code == 200
+    assert ": keepalive" in response.text
     assert response.text.count('"content": "Error: provider down"') == 1
     assert '"status": "running"' in response.text
     assert '"status": "failed"' in response.text

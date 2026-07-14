@@ -676,10 +676,10 @@ def create_app(actx: AppContext) -> FastAPI:
             import time
             seen_messages = set()
             previous_status = None
-            idle_polls = 0
-            # A finite idle bound keeps synchronous test/CLI consumers from
-            # hanging forever while still giving newly linked runs time to emit.
-            while idle_polls < 100:
+            active_conversation_id = None
+            message_rowid = 0
+            polls_since_event = 0
+            while True:
                 current = actx.store.get_todo(ctx.tenant_id, todo_id)
                 if current is None:
                     if previous_status != "gone":
@@ -688,18 +688,23 @@ def create_app(actx: AppContext) -> FastAPI:
                 emitted = False
                 conversation_id = current.get("conversation_id")
                 if conversation_id:
+                    if conversation_id != active_conversation_id:
+                        active_conversation_id = conversation_id
+                        message_rowid = 0
                     rows = actx.store._conn.execute(
-                        "SELECT * FROM messages WHERE conversation_id=? "
-                        "ORDER BY created_at,rowid",
-                        (conversation_id,),
+                        "SELECT rowid AS _stream_rowid,* FROM messages "
+                        "WHERE conversation_id=? AND rowid>? ORDER BY rowid",
+                        (conversation_id, message_rowid),
                     ).fetchall()
                     for row in rows:
+                        message_rowid = max(message_rowid, row["_stream_rowid"])
                         if row["message_id"] in seen_messages:
                             continue
                         seen_messages.add(row["message_id"])
                         emitted = True
                         yield "event: message\n" + _sse(
-                            {k: row[k] for k in row.keys()}
+                            {k: row[k] for k in row.keys()
+                             if k != "_stream_rowid"}
                         )
                 status = current["status"]
                 if status != previous_status:
@@ -711,8 +716,11 @@ def create_app(actx: AppContext) -> FastAPI:
                     emitted = True
                 if status in {"done", "failed"}:
                     return
-                idle_polls = 0 if emitted else idle_polls + 1
-                time.sleep(0.02)
+                polls_since_event = 0 if emitted else polls_since_event + 1
+                if polls_since_event >= 10:
+                    yield ": keepalive\n\n"
+                    polls_since_event = 0
+                time.sleep(0.1)
 
         return StreamingResponse(_events(), media_type="text/event-stream")
 

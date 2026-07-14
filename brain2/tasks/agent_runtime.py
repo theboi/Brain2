@@ -39,6 +39,13 @@ def _same_run(current: dict | None, todo: dict) -> bool:
     )
 
 
+def _assert_run_owned(store, tenant_id: str, todo: dict) -> dict:
+    current = store.get_todo(tenant_id, todo["todo_id"])
+    if not _same_run(current, todo) or current.get("cancel_requested"):
+        raise Conflict("todo run identity no longer matches")
+    return current
+
+
 def _sanitized_error(exc_or_message) -> str:
     text = str(exc_or_message or "model execution failed")
     text = " ".join(text.replace("\x00", "").split())
@@ -81,6 +88,7 @@ def _ready_agent_model(store, tenant_id: str, model_id: str):
 
 def _ensure_conversation(store, tenant_id: str, todo: dict, model_id: str) -> str:
     """Create/link the first conversation under the claiming generation."""
+    _assert_run_owned(store, tenant_id, todo)
     if todo.get("conversation_id"):
         return todo["conversation_id"]
     conversation_id = uuid.uuid4().hex
@@ -113,6 +121,13 @@ def _ensure_conversation(store, tenant_id: str, todo: dict, model_id: str) -> st
         ).rowcount
         if updated != 1:
             raise Conflict("todo conversation link constraint violation")
+        cx.execute(
+            "UPDATE todo_runs SET conversation_id=? WHERE tenant_id=? "
+            "AND todo_id=? AND run_token=? AND runtime_agent_id=? "
+            "AND status='running'",
+            (conversation_id, tenant_id, todo["todo_id"], todo["run_token"],
+             todo["assigned_agent_id"]),
+        )
     return conversation_id
 
 
@@ -128,6 +143,11 @@ def _history(store, conversation_id: str) -> list[dict]:
 def _cancel_requested(store, tenant_id: str, todo: dict) -> bool:
     current = store.get_todo(tenant_id, todo["todo_id"])
     return bool(_same_run(current, todo) and current.get("cancel_requested"))
+
+
+def _should_stop(store, tenant_id: str, todo: dict) -> bool:
+    current = store.get_todo(tenant_id, todo["todo_id"])
+    return not _same_run(current, todo) or bool(current.get("cancel_requested"))
 
 
 def _requeue_if_cancelled(store, tenant_id: str, todo: dict) -> bool:
@@ -169,6 +189,7 @@ def run_agent_todo(actx, tenant_id: str, todo: dict) -> None:
     conversation_id = todo.get("conversation_id")
     total_in = total_out = 0
     try:
+        _assert_run_owned(store, tenant_id, todo)
         agent = _resolve_claiming_agent(store, tenant_id, todo)
         conversation_id = _ensure_conversation(
             store, tenant_id, todo, agent["model_id"]
@@ -188,8 +209,10 @@ def run_agent_todo(actx, tenant_id: str, todo: dict) -> None:
         if newest_user is None:
             raise RuntimeError("continued conversation has no user message")
         user_text = newest_user["content"]
+        _assert_run_owned(store, tenant_id, todo)
         ctx = _requester_ctx(store, tenant_id, todo["requester_user_id"])
         model_row = _ready_agent_model(store, tenant_id, agent["model_id"])
+        _assert_run_owned(store, tenant_id, todo)
 
         from brain2.chat import run_turn
         done_payload = None
@@ -197,7 +220,7 @@ def run_agent_todo(actx, tenant_id: str, todo: dict) -> None:
         for event_type, payload in run_turn(
             store, actx.operations, actx.secrets, ctx, conversation_id,
             model_row, user_text, persist_user_message=False,
-            stop_check=lambda: _cancel_requested(store, tenant_id, todo),
+            stop_check=lambda: _should_stop(store, tenant_id, todo),
             history=history, runtime_guard=_runtime_guard(tenant_id, todo),
         ):
             if event_type == "done":
@@ -206,6 +229,8 @@ def run_agent_todo(actx, tenant_id: str, todo: dict) -> None:
                 total_out = int(payload.get("tokens_out") or 0)
             elif event_type == "error":
                 run_error = payload.get("message") or "model execution failed"
+                total_in = int(payload.get("tokens_in") or total_in)
+                total_out = int(payload.get("tokens_out") or total_out)
 
         if _requeue_if_cancelled(store, tenant_id, todo):
             return
@@ -238,8 +263,15 @@ def run_agent_todo(actx, tenant_id: str, todo: dict) -> None:
                 (total_in + total_out) or None,
             )
         except Conflict:
-            # A stale generation or finish/stop race owns no further mutation.
-            logger.info("todo %s generation no longer owns outcome", todo["todo_id"])
+            # Cancellation may win after an error transcript but before finish.
+            try:
+                if not _requeue_if_cancelled(store, tenant_id, todo):
+                    logger.info(
+                        "todo %s generation no longer owns outcome", todo["todo_id"]
+                    )
+            except Conflict:
+                logger.info("todo %s cancellation race resolved elsewhere",
+                            todo["todo_id"])
 
 
 class AgentRuntimeSupervisor:
@@ -250,6 +282,7 @@ class AgentRuntimeSupervisor:
         self.executor = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="brain2-agent"
         )
+        self.max_workers = max_workers
         self.running: dict[tuple[str, str], Future] = {}
         self._claims: dict[tuple[str, str], dict] = {}
         self._closed = False
@@ -282,8 +315,17 @@ class AgentRuntimeSupervisor:
         did_work = False
         for tenant_id in self.actx.store.list_tenant_ids():
             for agent in self.actx.store.list_agents(tenant_id):
+                if len(self.running) >= self.max_workers:
+                    return did_work
                 key = (tenant_id, agent["agent_id"])
                 if not agent["enabled"] or key in self.running:
+                    continue
+                if agent.get("model_status") != "ready":
+                    if agent["status"] != "offline":
+                        self.actx.store.agent_heartbeat(
+                            tenant_id, agent["agent_id"], now, status="offline",
+                            current_todo_id=None,
+                        )
                     continue
                 if agent["status"] == "offline":
                     self.actx.store.agent_heartbeat(
@@ -317,6 +359,27 @@ class AgentRuntimeSupervisor:
     def close(self) -> None:
         if self._closed:
             return
-        self.executor.shutdown(wait=True)
-        self._reap()
         self._closed = True
+        store = self.actx.store
+        for key, future in list(self.running.items()):
+            tenant_id, agent_id = key
+            todo = self._claims[key]
+            current = store.get_todo(tenant_id, todo["todo_id"])
+            if _same_run(current, todo) and not current.get("cancel_requested"):
+                try:
+                    store.request_todo_stop(
+                        tenant_id, todo["todo_id"], run_token=todo["run_token"],
+                        agent_id=agent_id,
+                    )
+                except Conflict:
+                    pass
+            if future.cancel():
+                try:
+                    store.requeue_cancelled_todo(
+                        tenant_id, todo["todo_id"], run_token=todo["run_token"],
+                        agent_id=agent_id,
+                    )
+                except Conflict:
+                    pass
+        self.executor.shutdown(wait=True, cancel_futures=True)
+        self._reap()

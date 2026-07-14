@@ -90,6 +90,7 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
     """
     from brain2.chat_ops import (insert_user_message, insert_assistant_message,
                                   insert_tool_message)
+    total_in = total_out = 0
     if persist_user_message:
         user_message_id = insert_user_message(
             store, conversation_id=conversation_id, content=user_text,
@@ -98,7 +99,8 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
     try:
         provider = build_provider(ctx.tenant_id, agent_row, secrets)
     except Exception as exc:
-        yield ("error", {"message": str(exc)})
+        yield ("error", {"message": str(exc), "tokens_in": total_in,
+                         "tokens_out": total_out})
         return
 
     allowlist = []
@@ -115,21 +117,22 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
     history = [dict(message) for message in history] if history is not None else []
     if persist_user_message or not history:
         history.append({"role": "user", "content": user_text})
-    total_in = total_out = 0
     started = time.monotonic()
     final_assistant_text = ""
     final_msg_id = None
 
     for turn in range(_MAX_TURNS):
         if stop_check():
-            yield ("error", {"message": "stopped"})
-            break
+            yield ("error", {"message": "stopped", "tokens_in": total_in,
+                             "tokens_out": total_out})
+            return
         system, transcript = _build_prompt(
             history, agent_row["system_prompt"], tools, preamble=persona)
         try:
             resp = complete_once(provider, transcript, system=system)
         except Exception as exc:
-            yield ("error", {"message": f"provider failed: {exc}"})
+            yield ("error", {"message": f"provider failed: {exc}",
+                             "tokens_in": total_in, "tokens_out": total_out})
             return
 
         total_in += resp.input_tokens
@@ -143,7 +146,8 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
             yield ("token", {"text": ch})
 
         if stop_check():
-            yield ("error", {"message": "stopped"})
+            yield ("error", {"message": "stopped", "tokens_in": total_in,
+                             "tokens_out": total_out})
             return
 
         tool_calls = list(_TOOL_LINE_RE.finditer(text))
@@ -187,7 +191,8 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
                     result = {"error": str(exc)}
             yield ("tool_call_result", {"name": name, "result": result})
             if stop_check():
-                yield ("error", {"message": "stopped"})
+                yield ("error", {"message": "stopped", "tokens_in": total_in,
+                                 "tokens_out": total_out})
                 return
             tool_text = json.dumps(result)[:4000]
             insert_tool_message(store, conversation_id=conversation_id,
@@ -195,13 +200,9 @@ def run_turn(store, operations, secrets, ctx: RequestContext,
                                 content=tool_text, runtime_guard=runtime_guard)
             history.append({"role": "tool", "content": f"{name} -> {tool_text}"})
     else:
-        # Hit the turn limit without a final assistant message — emit what we have.
-        if not final_msg_id:
-            final_assistant_text = "(turn limit reached)"
-            final_msg_id = insert_assistant_message(
-                store, conversation_id=conversation_id, content=final_assistant_text,
-                tokens_in=0, tokens_out=0, parent_message_id=user_message_id,
-                runtime_guard=runtime_guard)
+        yield ("error", {"message": "tool turn limit reached",
+                         "tokens_in": total_in, "tokens_out": total_out})
+        return
 
     latency_ms = int((time.monotonic() - started) * 1000)
     yield ("done", {"tokens_in": total_in, "tokens_out": total_out,

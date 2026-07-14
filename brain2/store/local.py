@@ -1554,6 +1554,14 @@ class LocalStore:
                 )
                 if r["current_todo_id"]:
                     cx.execute(
+                        "UPDATE todo_runs SET status='stale',completed_at=? "
+                        "WHERE tenant_id=? AND todo_id=? AND status='running' "
+                        "AND run_token=(SELECT run_token FROM todos WHERE tenant_id=? "
+                        "AND todo_id=? AND status='running')",
+                        (now_iso, r["tenant_id"], r["current_todo_id"],
+                         r["tenant_id"], r["current_todo_id"]),
+                    )
+                    cx.execute(
                         "UPDATE todos SET status='queued', assigned_agent_id=NULL, "
                         "memory_flushed=0, started_at=NULL, completed_at=NULL, "
                         "tokens_total=NULL, cost_total=NULL, error=NULL, "
@@ -1735,6 +1743,13 @@ class LocalStore:
                 "SELECT * FROM todos WHERE tenant_id=? AND todo_id=?",
                 (tenant_id, todo_id),
             ).fetchone()
+            cx.execute(
+                "INSERT INTO todo_runs(run_token,tenant_id,todo_id,runtime_agent_id,"
+                "model_id,conversation_id,status,started_at) "
+                "VALUES (?,?,?,?,?,?,'running',?)",
+                (run_token, tenant_id, todo_id, agent_id, agent["model_id"],
+                 claimed["conversation_id"], now),
+            )
         return dict(claimed)
 
     def finish_todo(self, tenant_id: str, todo_id: str, *, status: str,
@@ -1765,6 +1780,15 @@ class LocalStore:
             ).rowcount
             if updated != 1:
                 raise Conflict("todo finish constraint violation")
+            cx.execute(
+                "UPDATE todo_runs SET status=?,conversation_id=COALESCE(?,conversation_id),"
+                "tokens_total=?,cost_total=?,error=?,completed_at=? "
+                "WHERE tenant_id=? AND todo_id=? AND run_token=? "
+                "AND runtime_agent_id=? AND status='running'",
+                (status, conversation_id, tokens_total, cost_total,
+                 error if status == "failed" else None, now, tenant_id, todo_id,
+                 run_token, agent_id),
+            )
             if row["assigned_agent_id"]:
                 agent_updated = cx.execute(
                     "UPDATE agents SET status='idle', current_todo_id=NULL, updated_at=? "
@@ -1822,6 +1846,12 @@ class LocalStore:
             ).rowcount
             if updated != 1:
                 raise Conflict("cancelled todo requeue constraint violation")
+            cx.execute(
+                "UPDATE todo_runs SET status='cancelled',completed_at=? "
+                "WHERE tenant_id=? AND todo_id=? AND run_token=? "
+                "AND runtime_agent_id=? AND status='running'",
+                (now, tenant_id, todo_id, run_token, agent_id),
+            )
             if row["assigned_agent_id"]:
                 agent_updated = cx.execute(
                     "UPDATE agents SET status='idle', current_todo_id=NULL, "
@@ -1845,6 +1875,25 @@ class LocalStore:
             ).rowcount
             if updated != 1:
                 raise Conflict("todo run identity no longer matches")
+            cx.execute(
+                "UPDATE todo_runs SET conversation_id=? WHERE tenant_id=? "
+                "AND todo_id=? AND run_token=? AND runtime_agent_id=? "
+                "AND status='running'",
+                (conversation_id, tenant_id, todo_id, run_token, agent_id),
+            )
+
+    def list_todo_runs(self, tenant_id: str, todo_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT r.*,a.name AS agent_name,m.name AS model_name,"
+            "m.provider AS model_provider FROM todo_runs r "
+            "LEFT JOIN agents a ON a.tenant_id=r.tenant_id "
+            "AND a.agent_id=r.runtime_agent_id "
+            "LEFT JOIN models m ON m.tenant_id=r.tenant_id "
+            "AND m.model_id=r.model_id "
+            "WHERE r.tenant_id=? AND r.todo_id=? ORDER BY r.started_at,r.rowid",
+            (tenant_id, todo_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def append_todo_user_message(self, tenant_id: str, todo_id: str, text: str) -> None:
         """Continue: append a user message to the linked conversation + requeue."""

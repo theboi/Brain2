@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from brain2.app_context import build_app_context
 from brain2.context import RequestContext
 from brain2.model_ops import make_models_create
+from brain2.llm.providers import CompletionResponse
 from brain2.secrets import SecretManager
 from brain2.store.local import LocalStore
 from brain2.tasks.agent_runtime import AgentRuntimeSupervisor, run_agent_todo
@@ -364,3 +365,241 @@ def test_stale_generation_cannot_write_or_finalize_after_reclaim():
     assert all(row["content"] != "stale" for row in rows)
     current = s.get_todo("t1", todo_id)
     assert current["status"] == "running" and current["run_token"] == claimed["run_token"]
+
+
+def test_continuation_records_both_agent_model_generations_and_reports_latest():
+    actx, s, model1 = _actx()
+    model2 = make_models_create(s, actx.secrets)(
+        RequestContext("t1", "mem1", "member"),
+        {"name": "second-model", "provider": "stub", "model": "second"},
+    )["model_id"]
+    first = _worker(s, model1, "First")
+    second = _worker(s, model2, "Second")
+    for agent_id in (first, second):
+        s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="one",
+                            complexity="medium", preferred_agent_id=first)
+    seen = []
+
+    def successful(*args, **kwargs):
+        seen.append(args[5]["model_id"])
+        mid = insert_assistant_message(args[0], conversation_id=args[4], content="ok",
+                                       runtime_guard=kwargs["runtime_guard"])
+        yield "done", {"tokens_in": 1, "tokens_out": 1,
+                       "assistant_message_id": mid, "text": "ok"}
+
+    with patch("brain2.chat.run_turn", successful):
+        supervisor = _supervisor(actx)
+        supervisor.tick(); supervisor.drain()
+        s._conn.execute("UPDATE todos SET preferred_agent_id=? WHERE todo_id=?",
+                        (second, todo_id)); s._conn.commit()
+        s.append_todo_user_message("t1", todo_id, "two")
+        supervisor.tick(); supervisor.drain(); supervisor.close()
+    assert seen == [model1, model2]
+    conversation = s._conn.execute(
+        "SELECT runtime_agent_id,model_id,agent_id FROM conversations "
+        "WHERE conversation_id=(SELECT conversation_id FROM todos WHERE todo_id=?)",
+        (todo_id,),
+    ).fetchone()
+    assert tuple(conversation) == (first, model1, model1)
+    runs = s._conn.execute(
+        "SELECT runtime_agent_id,model_id,status FROM todo_runs WHERE todo_id=? "
+        "ORDER BY started_at,rowid", (todo_id,),
+    ).fetchall()
+    assert [(r["runtime_agent_id"], r["model_id"], r["status"]) for r in runs] == [
+        (first, model1, "done"), (second, model2, "done")
+    ]
+    from brain2.todo_ops import make_todos_get
+    visible = make_todos_get(s)(
+        RequestContext("t1", "mem1", "member"), {"todo_id": todo_id}
+    )["todo"]
+    assert visible["agent_id"] == second and visible["model_id"] == model2
+    assert [run["model_id"] for run in visible["runs"]] == [model1, model2]
+
+
+def test_nonready_model_agent_stays_offline():
+    actx, s, model_id = _actx()
+    agent_id = _worker(s, model_id, "Paused")
+    s._conn.execute("UPDATE models SET status='paused' WHERE model_id=?", (model_id,))
+    s._conn.commit()
+    supervisor = _supervisor(actx)
+    assert supervisor.tick() is False
+    supervisor.close()
+    agent = s.get_agent("t1", agent_id)
+    assert agent["status"] == "offline" and agent["last_heartbeat"] is None
+
+
+def test_max_workers_one_does_not_overclaim_second_agent():
+    actx, s, model_id = _actx()
+    s._conn.execute("UPDATE models SET max_concurrency=2 WHERE model_id=?", (model_id,))
+    first = _worker(s, model_id, "First"); second = _worker(s, model_id, "Second")
+    for agent_id in (first, second): s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    s.create_todo("t1", "ws1", "mem1", title="one", complexity="medium")
+    second_todo = s.create_todo("t1", "ws1", "mem1", title="two", complexity="medium")
+    entered = threading.Event(); release = threading.Event()
+
+    def blocking(*args, **kwargs):
+        entered.set(); release.wait(timeout=3)
+        mid = insert_assistant_message(args[0], conversation_id=args[4], content="ok",
+                                       runtime_guard=kwargs["runtime_guard"])
+        yield "done", {"tokens_in": 1, "tokens_out": 1,
+                       "assistant_message_id": mid, "text": "ok"}
+
+    with patch("brain2.chat.run_turn", blocking):
+        supervisor = _supervisor(actx, max_workers=1)
+        supervisor.tick(); assert entered.wait(timeout=3)
+        assert len(supervisor.running) == 1
+        assert s.get_todo("t1", second_todo)["status"] == "queued"
+        release.set(); supervisor.drain(); supervisor.close()
+
+
+def test_obsolete_continuation_never_enters_run_turn():
+    actx, s, model_id = _actx()
+    old = _worker(s, model_id, "Old"); new = _worker(s, model_id, "New")
+    for agent_id in (old, new): s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="x", complexity="medium",
+                            preferred_agent_id=old)
+    cid = "existing"
+    now = _now()
+    s._conn.execute("INSERT INTO conversations(conversation_id,tenant_id,agent_id,user_id,title,"
+                    "created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+                    (cid, "t1", model_id, "mem1", "x", now, now))
+    s._conn.execute("UPDATE todos SET conversation_id=? WHERE todo_id=?", (cid, todo_id))
+    s._conn.commit()
+    from brain2.chat_ops import insert_user_message
+    insert_user_message(s, conversation_id=cid, content="continued")
+    claimed = s.claim_todo_for_agent("t1", old)
+    s.sweep_stale_agents("9999-01-01T00:00:00+00:00", stale_seconds=0)
+    s._conn.execute("UPDATE todos SET preferred_agent_id=? WHERE todo_id=?", (new, todo_id))
+    s._conn.execute("UPDATE agents SET status='idle' WHERE agent_id=?", (new,))
+    s._conn.commit(); fresh = s.claim_todo_for_agent("t1", new)
+    with patch("brain2.chat.run_turn") as turn:
+        run_agent_todo(actx, "t1", claimed)
+    turn.assert_not_called()
+    assert s.get_todo("t1", todo_id)["run_token"] == fresh["run_token"]
+    assert [row["content"] for row in s._conn.execute(
+        "SELECT content FROM messages WHERE conversation_id=?", (cid,)
+    )] == ["continued"]
+    stale_run = next(run for run in s.list_todo_runs("t1", todo_id)
+                     if run["run_token"] == claimed["run_token"])
+    assert stale_run["status"] == "stale" and stale_run["tokens_total"] is None
+
+
+def test_partial_failure_usage_is_persisted_on_todo_and_run():
+    actx, s, model_id = _actx()
+    agent_id = _worker(s, model_id, "Usage")
+    s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="usage",
+                            complexity="medium")
+
+    def partial_failure(*args, **kwargs):
+        yield "error", {"message": "provider failed: down",
+                        "tokens_in": 4, "tokens_out": 5}
+
+    with patch("brain2.chat.run_turn", partial_failure):
+        supervisor = _supervisor(actx)
+        supervisor.tick(); supervisor.drain(); supervisor.close()
+    todo = s.get_todo("t1", todo_id)
+    run = s.list_todo_runs("t1", todo_id)[0]
+    assert todo["status"] == "failed" and todo["tokens_total"] == 9
+    assert run["status"] == "failed" and run["tokens_total"] == 9
+
+
+def test_four_tool_turn_limit_fails_todo_with_usage_and_error_transcript():
+    actx, s, model_id = _actx()
+    agent_id = _worker(s, model_id, "Limit")
+    s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="loop",
+                            complexity="medium")
+    response = CompletionResponse(
+        text='TOOL_CALL: missing {"x": 1}', input_tokens=2,
+        output_tokens=3, model="stub",
+    )
+    with patch("brain2.chat.complete_once", side_effect=[response] * 4):
+        supervisor = _supervisor(actx)
+        supervisor.tick(); supervisor.drain(); supervisor.close()
+    todo = s.get_todo("t1", todo_id)
+    contents = [row["content"] for row in s._conn.execute(
+        "SELECT content FROM messages WHERE conversation_id=? ORDER BY created_at,rowid",
+        (todo["conversation_id"],),
+    )]
+    assert todo["status"] == "failed" and todo["tokens_total"] == 20
+    assert contents[-1] == "Error: tool turn limit reached"
+    assert "(turn limit reached)" not in contents
+
+
+def test_failure_stop_race_requeues_and_releases_agent():
+    actx, s, model_id = _actx()
+    agent_id = _worker(s, model_id, "Race")
+    s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="race",
+                            complexity="medium")
+    original_finish = s.finish_todo
+
+    def racing_finish(tenant_id, claimed_todo_id, **kwargs):
+        if kwargs["status"] == "failed":
+            current = s.get_todo(tenant_id, claimed_todo_id)
+            s.request_todo_stop(
+                tenant_id, claimed_todo_id, run_token=current["run_token"],
+                agent_id=current["assigned_agent_id"],
+            )
+        return original_finish(tenant_id, claimed_todo_id, **kwargs)
+
+    def failed(*args, **kwargs):
+        yield "error", {"message": "down", "tokens_in": 1, "tokens_out": 2}
+
+    with patch.object(s, "finish_todo", racing_finish), patch(
+        "brain2.chat.run_turn", failed
+    ):
+        supervisor = _supervisor(actx)
+        supervisor.tick(); supervisor.drain(); supervisor.close()
+    assert s.get_todo("t1", todo_id)["status"] == "queued"
+    assert s.get_agent("t1", agent_id)["status"] == "idle"
+    assert s.list_todo_runs("t1", todo_id)[0]["status"] == "cancelled"
+
+
+def test_close_requests_stop_and_cleans_owned_generation():
+    actx, s, model_id = _actx()
+    agent_id = _worker(s, model_id, "Closing")
+    s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="close",
+                            complexity="medium")
+    entered = threading.Event()
+
+    def cooperative(*args, **kwargs):
+        entered.set()
+        deadline = time.monotonic() + 3
+        while not kwargs["stop_check"]() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        yield "error", {"message": "stopped", "tokens_in": 0, "tokens_out": 0}
+
+    with patch("brain2.chat.run_turn", cooperative):
+        supervisor = _supervisor(actx)
+        supervisor.tick(); assert entered.wait(timeout=2)
+        supervisor.close()
+    assert supervisor.running == {}
+    assert s.get_todo("t1", todo_id)["status"] == "queued"
+    assert s.get_agent("t1", agent_id)["status"] == "idle"
+    assert s.list_todo_runs("t1", todo_id)[0]["status"] == "cancelled"
+
+
+def test_execution_context_is_exact_requester_permissions():
+    actx, s, model_id = _actx()
+    agent_id = _worker(s, model_id, "Requester")
+    s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    s.create_todo("t1", "ws1", "mem1", title="scope", complexity="medium")
+    seen = []
+
+    def capture(*args, **kwargs):
+        seen.append(args[3])
+        mid = insert_assistant_message(args[0], conversation_id=args[4], content="ok",
+                                       runtime_guard=kwargs["runtime_guard"])
+        yield "done", {"tokens_in": 1, "tokens_out": 1,
+                       "assistant_message_id": mid, "text": "ok"}
+
+    with patch("brain2.chat.run_turn", capture):
+        supervisor = _supervisor(actx)
+        supervisor.tick(); supervisor.drain(); supervisor.close()
+    assert [(ctx.tenant_id, ctx.user_id, ctx.tenant_role) for ctx in seen] == [
+        ("t1", "mem1", "member")
+    ]

@@ -62,13 +62,21 @@ def _with_model(store, todo: dict) -> dict:
     """Attach truthful resolved/selected model metadata to a todo response."""
     model_id = None
     agent = None
-    if todo.get("assigned_agent_id"):
+    runs = store.list_todo_runs(todo["tenant_id"], todo["todo_id"])
+    latest_run = runs[-1] if runs else None
+    runtime_agent_id = (
+        latest_run["runtime_agent_id"] if latest_run
+        else todo.get("assigned_agent_id")
+    )
+    if runtime_agent_id:
         agent = store._conn.execute(
             "SELECT agent_id, name, model_id FROM agents "
             "WHERE tenant_id=? AND agent_id=?",
-            (todo["tenant_id"], todo["assigned_agent_id"]),
+            (todo["tenant_id"], runtime_agent_id),
         ).fetchone()
-    if todo.get("conversation_id"):
+    if latest_run:
+        model_id = latest_run["model_id"]
+    elif todo.get("conversation_id"):
         conversation = store._conn.execute(
             "SELECT model_id FROM conversations WHERE tenant_id=? AND conversation_id=?",
             (todo["tenant_id"], todo["conversation_id"]),
@@ -85,11 +93,21 @@ def _with_model(store, todo: dict) -> dict:
         ).fetchone()
     result = dict(todo)
     result.pop("run_token", None)
-    result["agent_id"] = agent["agent_id"] if agent else None
-    result["agent_name"] = agent["name"] if agent else None
-    result["model_id"] = model["model_id"] if model else None
-    result["model_name"] = model["name"] if model else None
-    result["model_provider"] = model["provider"] if model else None
+    result["agent_id"] = runtime_agent_id
+    result["agent_name"] = agent["name"] if agent else (
+        latest_run["agent_name"] if latest_run else None
+    )
+    result["model_id"] = model_id
+    result["model_name"] = model["name"] if model else (
+        latest_run["model_name"] if latest_run else None
+    )
+    result["model_provider"] = model["provider"] if model else (
+        latest_run["model_provider"] if latest_run else None
+    )
+    result["runs"] = [
+        {key: value for key, value in run.items() if key != "run_token"}
+        for run in runs
+    ]
     return result
 
 
