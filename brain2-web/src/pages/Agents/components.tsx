@@ -603,23 +603,50 @@ export function nextMenuItemIndex(current: number, count: number, key: string): 
   return null;
 }
 
+export function menuDismissalForKey(key: string, _shiftKey = false): 'preserve-focus' | 'restore-trigger' | null {
+  if (key === 'Tab') return 'preserve-focus';
+  if (key === 'Escape') return 'restore-trigger';
+  return null;
+}
+
 // ── controlled overflow menu ──────────────────────────────────────────────────
 function DotsMenu({ open, onToggle, items, disabled = false }: { open: boolean; onToggle: () => void; items: MenuItem[]; disabled?: boolean }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const onToggleRef = useRef(onToggle);
+  const tabCloseFrameRef = useRef<number | null>(null);
   onToggleRef.current = onToggle;
   const menuId = useId();
+  const cancelScheduledTabClose = () => {
+    if (tabCloseFrameRef.current == null) return;
+    cancelAnimationFrame(tabCloseFrameRef.current);
+    tabCloseFrameRef.current = null;
+  };
+  const closeWithoutRestore = () => {
+    cancelScheduledTabClose();
+    onToggleRef.current();
+  };
   useEffect(() => {
     if (!open) return;
     const focusTimer = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus());
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      const dismissal = menuDismissalForKey(event.key, event.shiftKey);
+      if (dismissal === 'restore-trigger') {
         event.preventDefault();
         onToggleRef.current();
         requestAnimationFrame(() => triggerRef.current?.focus());
         return;
       }
+      if (dismissal === 'preserve-focus') {
+        cancelScheduledTabClose();
+        // Let the browser choose the normal forward/backward tab target first.
+        tabCloseFrameRef.current = requestAnimationFrame(() => {
+          tabCloseFrameRef.current = null;
+          onToggleRef.current();
+        });
+        return;
+      }
+      if (!menuRef.current?.contains(document.activeElement)) return;
       const menuItems = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
       const current = menuItems.indexOf(document.activeElement as HTMLButtonElement);
       const next = nextMenuItemIndex(current, menuItems.length, event.key);
@@ -630,15 +657,22 @@ function DotsMenu({ open, onToggle, items, disabled = false }: { open: boolean; 
     document.addEventListener('keydown', onKey);
     return () => {
       cancelAnimationFrame(focusTimer);
+      cancelScheduledTabClose();
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
   const closeAndRestore = () => {
-    onToggle();
+    cancelScheduledTabClose();
+    onToggleRef.current();
     requestAnimationFrame(() => triggerRef.current?.focus());
   };
   return (
-    <div style={{ position: 'relative', flexShrink: 0 }}>
+    <div onBlur={(event) => {
+      if (!open) return;
+      const next = event.relatedTarget;
+      if (next instanceof Node && event.currentTarget.contains(next)) return;
+      closeWithoutRestore();
+    }} style={{ position: 'relative', flexShrink: 0 }}>
       <button ref={triggerRef} className="b2-agent-focus" onClick={onToggle} disabled={disabled} aria-label="Todo actions" aria-haspopup="menu" aria-controls={open ? menuId : undefined} aria-expanded={open} title="Todo actions" style={{ width: 44, height: 44, borderRadius: 8, border: '1px solid ' + (open ? 'var(--border-strong)' : 'transparent'), background: open ? 'var(--surface-2)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1 }}>
         <Icon name="more" size={16} color="var(--fg-muted)" />
       </button>
@@ -649,7 +683,7 @@ function DotsMenu({ open, onToggle, items, disabled = false }: { open: boolean; 
             {items.map((it, i) => (
               <Fragment key={i}>
                 {it.divider && <div role="separator" style={{ height: 1, background: 'var(--border)', margin: '5px 4px' }} />}
-                <button role="menuitem" className="b2-agent-focus" onClick={() => { closeAndRestore(); it.onClick?.(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', minHeight: 44, padding: '8px 9px', borderRadius: 8, border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 500, color: it.danger ? 'var(--destructive)' : 'var(--fg)' }}
+                <button role="menuitem" tabIndex={-1} className="b2-agent-focus" onClick={() => { closeAndRestore(); it.onClick?.(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', minHeight: 44, padding: '8px 9px', borderRadius: 8, border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--ui-font)', fontSize: 12.5, fontWeight: 500, color: it.danger ? 'var(--destructive)' : 'var(--fg)' }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
                   <Icon name={it.icon!} size={14} color={it.danger ? 'var(--destructive)' : 'var(--fg-muted)'} /> {it.label}
                 </button>

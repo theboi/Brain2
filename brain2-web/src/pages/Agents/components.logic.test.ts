@@ -10,6 +10,7 @@ import {
   canManageAgents,
   canSubmitTodo,
   eligibleAgentModels,
+  menuDismissalForKey,
   nextMenuItemIndex,
   revalidateAgentModelSelection,
   RosterCard,
@@ -123,6 +124,13 @@ describe('overflow menu keyboard navigation', () => {
     expect(nextMenuItemIndex(1, 3, 'Escape')).toBeNull();
     expect(nextMenuItemIndex(-1, 0, 'ArrowDown')).toBeNull();
   });
+
+  it('distinguishes Tab dismissal from Escape focus restoration', () => {
+    expect(menuDismissalForKey('Tab', false)).toBe('preserve-focus');
+    expect(menuDismissalForKey('Tab', true)).toBe('preserve-focus');
+    expect(menuDismissalForKey('Escape')).toBe('restore-trigger');
+    expect(menuDismissalForKey('ArrowDown')).toBeNull();
+  });
 });
 
 describe('todo status view', () => {
@@ -197,7 +205,7 @@ describe('todo status view', () => {
     }));
     expect(html).toContain('aria-label="Open Failed audit"');
     expect(html).toContain('role="menu"');
-    expect(html).toContain('role="menuitem"');
+    expect(html).toContain('role="menuitem" tabindex="-1"');
     expect(html).toContain('Deleted analyst');
   });
 
