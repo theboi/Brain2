@@ -93,7 +93,7 @@ def test_0046_backfills_latest_recoverable_generation_preferring_assigned_agent_
     assert usage == {"done": 13, "running": None}
 
 
-def test_0046_backfill_falls_back_to_conversation_pair_when_agent_unavailable():
+def test_0046_terminal_backfill_uses_conversation_runtime_but_not_its_first_model():
     store = LocalStore(":memory:")
     with TemporaryDirectory() as raw_dir:
         old_dir = Path(raw_dir)
@@ -118,11 +118,11 @@ def test_0046_backfill_falls_back_to_conversation_pair_when_agent_unavailable():
         (SQLITE_MIGRATIONS_DIR / "0046_todo_runs.sql").read_text()
     )
     row = store._conn.execute("SELECT * FROM todo_runs").fetchone()
-    assert row["runtime_agent_id"] == "a1" and row["model_id"] == "m1"
-    assert row["attribution_complete"] == 1
+    assert row["runtime_agent_id"] == "a1" and row["model_id"] is None
+    assert row["attribution_complete"] == 0
 
 
-def test_terminal_backfill_uses_matching_conversation_model_after_agent_rebind():
+def test_terminal_backfill_does_not_claim_first_model_after_same_agent_rebind():
     store = LocalStore(":memory:")
     with TemporaryDirectory() as raw_dir:
         old_dir = Path(raw_dir)
@@ -155,4 +155,4 @@ def test_terminal_backfill_uses_matching_conversation_model_after_agent_rebind()
     )
     row = store._conn.execute("SELECT * FROM todo_runs").fetchone()
     assert row["runtime_agent_id"] == "a1"
-    assert row["model_id"] == "m1" and row["attribution_complete"] == 1
+    assert row["model_id"] is None and row["attribution_complete"] == 0
