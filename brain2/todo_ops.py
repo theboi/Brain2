@@ -64,27 +64,35 @@ def _with_model(store, todo: dict) -> dict:
     agent = None
     runs = store.list_todo_runs(todo["tenant_id"], todo["todo_id"])
     latest_run = runs[-1] if runs else None
-    runtime_agent_id = (
-        latest_run["runtime_agent_id"] if latest_run
-        else todo.get("assigned_agent_id")
-    )
+    runtime_agent_id = latest_run["runtime_agent_id"] if latest_run else None
+    if latest_run:
+        model_id = latest_run["model_id"]
+    assigned_agent = None
+    if not latest_run and todo.get("assigned_agent_id"):
+        assigned_agent = store._conn.execute(
+            "SELECT agent_id,name,model_id FROM agents "
+            "WHERE tenant_id=? AND agent_id=?",
+            (todo["tenant_id"], todo["assigned_agent_id"]),
+        ).fetchone()
+        if assigned_agent and assigned_agent["model_id"]:
+            runtime_agent_id = assigned_agent["agent_id"]
+            model_id = assigned_agent["model_id"]
+    conversation = None
+    if not latest_run and not model_id and todo.get("conversation_id"):
+        conversation = store._conn.execute(
+            "SELECT runtime_agent_id,model_id,agent_id FROM conversations "
+            "WHERE tenant_id=? AND conversation_id=?",
+            (todo["tenant_id"], todo["conversation_id"]),
+        ).fetchone()
+        if conversation:
+            model_id = conversation["model_id"] or conversation["agent_id"]
+            runtime_agent_id = conversation["runtime_agent_id"]
     if runtime_agent_id:
         agent = store._conn.execute(
             "SELECT agent_id, name, model_id FROM agents "
             "WHERE tenant_id=? AND agent_id=?",
             (todo["tenant_id"], runtime_agent_id),
         ).fetchone()
-    if latest_run:
-        model_id = latest_run["model_id"]
-    elif todo.get("conversation_id"):
-        conversation = store._conn.execute(
-            "SELECT model_id FROM conversations WHERE tenant_id=? AND conversation_id=?",
-            (todo["tenant_id"], todo["conversation_id"]),
-        ).fetchone()
-        if conversation:
-            model_id = conversation["model_id"]
-    if not model_id and agent:
-        model_id = agent["model_id"]
     model = None
     if model_id:
         model = store._conn.execute(

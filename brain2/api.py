@@ -663,7 +663,8 @@ def create_app(actx: AppContext) -> FastAPI:
         return {"stopped": True}
 
     @app.get("/api/v1/todos/{todo_id}/stream")
-    def todo_stream(todo_id: str, ctx: RequestContext = Depends(_auth)):
+    async def todo_stream(todo_id: str, request: Request,
+                          ctx: RequestContext = Depends(_auth)):
         from brain2.auth.authorize import authorize as _authz
         _authz(actx.store, ctx, "use_agents")
         todo = actx.store.get_todo(ctx.tenant_id, todo_id)
@@ -672,18 +673,25 @@ def create_app(actx: AppContext) -> FastAPI:
         ):
             raise HTTPException(status_code=403, detail="not permitted")
 
-        def _events():
-            import time
+        async def _events():
+            import asyncio
             seen_messages = set()
             previous_status = None
             active_conversation_id = None
             message_rowid = 0
             polls_since_event = 0
             while True:
+                if await request.is_disconnected():
+                    return
                 current = actx.store.get_todo(ctx.tenant_id, todo_id)
                 if current is None:
                     if previous_status != "gone":
                         yield "event: status\n" + _sse({"status": "gone"})
+                    return
+                viewer = actx.store.get_user(ctx.tenant_id, ctx.user_id)
+                if viewer is None or not actx.store.can_see_todo(
+                    ctx.tenant_id, ctx.user_id, viewer.role, current
+                ):
                     return
                 emitted = False
                 conversation_id = current.get("conversation_id")
@@ -720,7 +728,7 @@ def create_app(actx: AppContext) -> FastAPI:
                 if polls_since_event >= 10:
                     yield ": keepalive\n\n"
                     polls_since_event = 0
-                time.sleep(0.1)
+                await asyncio.sleep(0.1)
 
         return StreamingResponse(_events(), media_type="text/event-stream")
 

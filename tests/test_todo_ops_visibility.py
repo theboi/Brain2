@@ -161,6 +161,33 @@ def test_failed_completion_is_visible_with_historical_conversation_model():
     assert visible["model_id"] == model_id and visible["model_name"] == "Runtime"
 
 
+def test_preledger_fallback_never_pairs_assigned_agent_with_conversation_model():
+    s = _store()
+    first = s.list_agents("t1")[0]
+    second_model = make_models_create(s, SecretManager(s, b"0" * 32))(
+        _ctx("owner1", "owner"),
+        {"name": "Second model", "provider": "ollama", "model": "second",
+         "ollama_base_url": "http://localhost:11434"},
+    )
+    second = s.create_agent("t1", "Second", second_model["model_id"], "medium")
+    todo = _create(s)
+    now = "2026-07-14T00:00:00+00:00"
+    with s.transaction() as cx:
+        cx.execute(
+            "INSERT INTO conversations(conversation_id,tenant_id,agent_id,user_id,title,"
+            "created_at,updated_at,runtime_agent_id,model_id) "
+            "VALUES ('legacy','t1',?,'mem1','x',?,?,?,?)",
+            (first["model_id"], now, now, first["agent_id"], first["model_id"]),
+        )
+        cx.execute(
+            "UPDATE todos SET status='done',assigned_agent_id=?,conversation_id='legacy' "
+            "WHERE todo_id=?", (second["agent_id"], todo["todo_id"]),
+        )
+    visible = make_todos_get(s)(_ctx("mem1"), {"todo_id": todo["todo_id"]})["todo"]
+    assert visible["agent_id"] == second["agent_id"]
+    assert visible["model_id"] == second_model["model_id"]
+
+
 def test_stop_only_requests_cooperative_cancellation():
     s = _store()
     agent = s.list_agents("t1")[0]

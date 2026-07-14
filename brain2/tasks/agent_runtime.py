@@ -150,12 +150,13 @@ def _should_stop(store, tenant_id: str, todo: dict) -> bool:
     return not _same_run(current, todo) or bool(current.get("cancel_requested"))
 
 
-def _requeue_if_cancelled(store, tenant_id: str, todo: dict) -> bool:
+def _requeue_if_cancelled(store, tenant_id: str, todo: dict,
+                          tokens_total: int | None = None) -> bool:
     if not _cancel_requested(store, tenant_id, todo):
         return False
     store.requeue_cancelled_todo(
         tenant_id, todo["todo_id"], run_token=todo["run_token"],
-        agent_id=todo["assigned_agent_id"],
+        agent_id=todo["assigned_agent_id"], tokens_total=tokens_total,
     )
     return True
 
@@ -167,7 +168,7 @@ def _persist_failure(store, tenant_id: str, todo: dict,
     if not _same_run(current, todo):
         return
     if current.get("cancel_requested"):
-        _requeue_if_cancelled(store, tenant_id, todo)
+        _requeue_if_cancelled(store, tenant_id, todo, tokens_total)
         return
     if conversation_id:
         from brain2.chat_ops import insert_assistant_message
@@ -188,6 +189,7 @@ def run_agent_todo(actx, tenant_id: str, todo: dict) -> None:
     store = actx.store
     conversation_id = todo.get("conversation_id")
     total_in = total_out = 0
+    usage_known = False
     try:
         _assert_run_owned(store, tenant_id, todo)
         agent = _resolve_claiming_agent(store, tenant_id, todo)
@@ -225,14 +227,17 @@ def run_agent_todo(actx, tenant_id: str, todo: dict) -> None:
         ):
             if event_type == "done":
                 done_payload = payload
+                usage_known = True
                 total_in = int(payload.get("tokens_in") or 0)
                 total_out = int(payload.get("tokens_out") or 0)
             elif event_type == "error":
                 run_error = payload.get("message") or "model execution failed"
+                usage_known = "tokens_in" in payload or "tokens_out" in payload
                 total_in = int(payload.get("tokens_in") or total_in)
                 total_out = int(payload.get("tokens_out") or total_out)
 
-        if _requeue_if_cancelled(store, tenant_id, todo):
+        known_tokens = total_in + total_out if usage_known else None
+        if _requeue_if_cancelled(store, tenant_id, todo, known_tokens):
             return
         if run_error:
             raise RuntimeError(run_error)
@@ -260,18 +265,26 @@ def run_agent_todo(actx, tenant_id: str, todo: dict) -> None:
         try:
             _persist_failure(
                 store, tenant_id, todo, conversation_id, message,
-                (total_in + total_out) or None,
+                total_in + total_out if usage_known else None,
             )
         except Conflict:
             # Cancellation may win after an error transcript but before finish.
             try:
-                if not _requeue_if_cancelled(store, tenant_id, todo):
+                if not _requeue_if_cancelled(
+                    store, tenant_id, todo,
+                    total_in + total_out if usage_known else None,
+                ):
                     logger.info(
                         "todo %s generation no longer owns outcome", todo["todo_id"]
                     )
             except Conflict:
                 logger.info("todo %s cancellation race resolved elsewhere",
                             todo["todo_id"])
+    finally:
+        store.record_todo_run_usage(
+            tenant_id, todo["run_token"],
+            total_in + total_out if usage_known else None,
+        )
 
 
 class AgentRuntimeSupervisor:

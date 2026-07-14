@@ -97,3 +97,39 @@ def test_stream_tails_late_linked_messages_and_failed_status(tmp_path, monkeypat
     assert '"status": "running"' in response.text
     assert '"status": "failed"' in response.text
     assert '"error": "provider down"' in response.text
+
+
+def test_stream_stops_before_secret_after_access_revocation(tmp_path, monkeypatch):
+    s, client, tid, _owner_token, viewer_token = _client(tmp_path, monkeypatch)
+    s.add_workspace_member("t1", "ws1", "mem3", "admin")
+    cid = uuid.uuid4().hex
+    now = "2026-07-14T00:00:00+00:00"
+    with s.transaction() as cx:
+        cx.execute(
+            "INSERT INTO conversations(conversation_id,tenant_id,agent_id,user_id,title,"
+            "created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            (cid, "t1", "model", "mem1", "x", now, now),
+        )
+        cx.execute("UPDATE todos SET conversation_id=?,status='running' WHERE todo_id=?",
+                   (cid, tid))
+
+    def revoke_then_write():
+        time.sleep(0.2)
+        with s.transaction() as cx:
+            cx.execute("DELETE FROM workspace_members WHERE tenant_id='t1' "
+                       "AND workspace_id='ws1' AND user_id='mem3'")
+        time.sleep(0.2)
+        from brain2.chat_ops import insert_assistant_message
+        insert_assistant_message(s, conversation_id=cid, content="TOP SECRET")
+        with s.transaction() as cx:
+            cx.execute("UPDATE todos SET status='failed' WHERE todo_id=?", (tid,))
+
+    thread = threading.Thread(target=revoke_then_write)
+    thread.start()
+    response = client.get(
+        f"/api/v1/todos/{tid}/stream",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    thread.join(timeout=2)
+    assert response.status_code == 200
+    assert "TOP SECRET" not in response.text

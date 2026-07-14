@@ -555,7 +555,8 @@ def test_failure_stop_race_requeues_and_releases_agent():
         supervisor.tick(); supervisor.drain(); supervisor.close()
     assert s.get_todo("t1", todo_id)["status"] == "queued"
     assert s.get_agent("t1", agent_id)["status"] == "idle"
-    assert s.list_todo_runs("t1", todo_id)[0]["status"] == "cancelled"
+    raced_run = s.list_todo_runs("t1", todo_id)[0]
+    assert raced_run["status"] == "cancelled" and raced_run["tokens_total"] == 3
 
 
 def test_close_requests_stop_and_cleans_owned_generation():
@@ -603,3 +604,51 @@ def test_execution_context_is_exact_requester_permissions():
     assert [(ctx.tenant_id, ctx.user_id, ctx.tenant_role) for ctx in seen] == [
         ("t1", "mem1", "member")
     ]
+
+
+def test_cancelled_generation_preserves_known_usage():
+    actx, s, model_id = _actx()
+    agent_id = _worker(s, model_id, "CancelUsage")
+    s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="cancel usage",
+                            complexity="medium")
+
+    def cancelling(*args, **kwargs):
+        current = s.get_todo("t1", todo_id)
+        s.request_todo_stop("t1", todo_id, run_token=current["run_token"],
+                            agent_id=agent_id)
+        yield "error", {"message": "stopped", "tokens_in": 4, "tokens_out": 6}
+
+    with patch("brain2.chat.run_turn", cancelling):
+        supervisor = _supervisor(actx)
+        supervisor.tick(); supervisor.drain(); supervisor.close()
+    run = s.list_todo_runs("t1", todo_id)[0]
+    assert run["status"] == "cancelled" and run["tokens_total"] == 10
+
+
+def test_stale_generation_late_usage_updates_only_its_ledger_row():
+    actx, s, model_id = _actx()
+    old = _worker(s, model_id, "OldUsage"); new = _worker(s, model_id, "NewUsage")
+    for agent_id in (old, new): s.worker_heartbeat("t1", agent_id, _now(), status="idle")
+    todo_id = s.create_todo("t1", "ws1", "mem1", title="usage", complexity="medium",
+                            preferred_agent_id=old)
+    entered = threading.Event(); release = threading.Event()
+
+    def late_usage(*args, **kwargs):
+        entered.set(); release.wait(timeout=3)
+        yield "error", {"message": "stopped", "tokens_in": 3, "tokens_out": 4}
+
+    with patch("brain2.chat.run_turn", late_usage):
+        supervisor = _supervisor(actx)
+        supervisor.tick(); assert entered.wait(timeout=2)
+        old_claim = s.get_todo("t1", todo_id)
+        s.sweep_stale_agents("9999-01-01T00:00:00+00:00", stale_seconds=0)
+        s._conn.execute("UPDATE todos SET preferred_agent_id=? WHERE todo_id=?", (new, todo_id))
+        s._conn.execute("UPDATE agents SET status='idle' WHERE agent_id=?", (new,))
+        s._conn.commit(); fresh = s.claim_todo_for_agent("t1", new)
+        release.set(); supervisor.drain(); supervisor.close()
+    runs = {run["run_token"]: run for run in s.list_todo_runs("t1", todo_id)}
+    assert runs[old_claim["run_token"]]["status"] == "stale"
+    assert runs[old_claim["run_token"]]["tokens_total"] == 7
+    assert runs[fresh["run_token"]]["status"] == "running"
+    assert runs[fresh["run_token"]]["tokens_total"] is None

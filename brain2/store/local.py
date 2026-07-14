@@ -1824,7 +1824,8 @@ class LocalStore:
                 raise Conflict("todo run identity no longer matches")
 
     def requeue_cancelled_todo(self, tenant_id: str, todo_id: str, *,
-                               run_token: str, agent_id: str) -> None:
+                               run_token: str, agent_id: str,
+                               tokens_total: int | None = None) -> None:
         now = _now_iso()
         with self.transaction(immediate=True) as cx:
             row = cx.execute(
@@ -1847,10 +1848,13 @@ class LocalStore:
             if updated != 1:
                 raise Conflict("cancelled todo requeue constraint violation")
             cx.execute(
-                "UPDATE todo_runs SET status='cancelled',completed_at=? "
+                "UPDATE todo_runs SET status='cancelled',completed_at=?,"
+                "tokens_total=CASE WHEN ? IS NULL THEN tokens_total "
+                "WHEN tokens_total IS NULL OR tokens_total<? THEN ? ELSE tokens_total END "
                 "WHERE tenant_id=? AND todo_id=? AND run_token=? "
                 "AND runtime_agent_id=? AND status='running'",
-                (now, tenant_id, todo_id, run_token, agent_id),
+                (now, tokens_total, tokens_total, tokens_total,
+                 tenant_id, todo_id, run_token, agent_id),
             )
             if row["assigned_agent_id"]:
                 agent_updated = cx.execute(
@@ -1863,6 +1867,20 @@ class LocalStore:
                     raise Conflict(
                         "cancelled todo agent release constraint violation"
                     )
+
+    def record_todo_run_usage(self, tenant_id: str, run_token: str,
+                              tokens_total: int | None) -> bool:
+        """Update only the exact ledger generation, never the shared todo row."""
+        if tokens_total is None:
+            return False
+        with self.transaction(immediate=True) as cx:
+            updated = cx.execute(
+                "UPDATE todo_runs SET tokens_total=CASE "
+                "WHEN tokens_total IS NULL OR tokens_total<? THEN ? ELSE tokens_total END "
+                "WHERE tenant_id=? AND run_token=?",
+                (tokens_total, tokens_total, tenant_id, run_token),
+            ).rowcount
+        return updated == 1
 
     def set_todo_conversation(self, tenant_id: str, todo_id: str,
                               conversation_id: str, *, run_token: str,
