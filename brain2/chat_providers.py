@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from brain2.errors import LLMError
+from brain2.errors import Conflict, LLMError
 from brain2.llm.providers import (AnthropicProvider, CompletionRequest,
                                    CompletionResponse, GeminiProvider,
                                    OllamaProvider, OpenRouterProvider, ServiceClass)
+from brain2.model_endpoint_policy import normalize_ollama_base_url
 
 
 @dataclass
@@ -35,7 +36,10 @@ def build_provider(tenant_id: str, model_row, secrets, *,
         return StubProvider(canned_text=os.environ.get(
             "BRAIN2_STUB_TEXT", "stub: ok"))
     if p == "ollama":
-        base = model_row["ollama_base_url"] or "http://localhost:11434"
+        try:
+            base = normalize_ollama_base_url(model_row["ollama_base_url"])
+        except Conflict as exc:
+            raise LLMError(str(exc)) from exc
         return OllamaProvider(base_url=base, model=model)
     if p == "anthropic":
         if not model_row["secret_key"]:
