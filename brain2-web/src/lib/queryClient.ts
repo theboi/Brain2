@@ -45,6 +45,8 @@ export const qk = {
   activity: (limit: number) => ['activity', limit] as const,
   auditEvents: (limit: number) => ['audit-events', limit] as const,
   report: (id: string) => ['reports', 'one', id] as const,
+  // Keep the historical query key while exposing the configured-agent name.
+  agents: () => ['workers'] as const,
   workers: () => ['workers'] as const,
   todos: (status: string | null = null) => ['todos', status] as const,
   todo: (id: string) => ['todo', id] as const,

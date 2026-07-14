@@ -5,8 +5,14 @@ import type { LiveTodo, Worker } from '@/lib/types';
 const W: Worker = {
   agent_id: 'a1',
   name: 'Terra',
+  model_id: 'm1',
+  model_name: 'Team Sonnet',
+  model_provider: 'anthropic',
+  complexity: 'hard',
+  enabled: true,
   status: 'busy',
   current_todo_id: 't1',
+  last_heartbeat: '2026-07-14T10:00:00Z',
   todo_summary: { todo_id: 't1', title: 'Audit page' },
 };
 
@@ -16,46 +22,109 @@ const T: LiveTodo = {
   workspace_id: 'ws1',
   requester_user_id: 'u1',
   title: 'Audit page',
+  complexity: 'hard',
   priority: 1,
-  status: 'running',
+  status: 'failed',
   assigned_agent_id: 'a1',
   preferred_agent_id: null,
-  model_pref: 'auto',
-  model_name: 'Team Sonnet',
-  model_provider: 'anthropic',
+  model_pref: 'legacy-auto',
   conversation_id: 'c1',
   memory_flushed: 0,
-  tokens_total: null,
+  tokens_total: 0,
   cost_total: null,
+  error: 'Provider unavailable',
+  cancel_requested: 0,
   created_at: '2026-06-15T10:00:00Z',
   started_at: '2026-06-15T10:00:01Z',
-  completed_at: null,
+  completed_at: '2026-06-15T10:00:02Z',
+  agent_id: 'a1',
+  agent_name: 'Terra',
+  model_id: 'm1',
+  model_name: 'Team Sonnet',
+  model_provider: 'anthropic',
+  runs: [{
+    tenant_id: 'x',
+    todo_id: 't1',
+    runtime_agent_id: 'a1',
+    agent_name: 'Terra',
+    model_id: 'm1',
+    model_name: 'Team Sonnet',
+    model_provider: 'anthropic',
+    attribution_complete: 1,
+    conversation_id: 'c1',
+    status: 'failed',
+    tokens_total: 0,
+    cost_total: null,
+    error: 'Provider unavailable',
+    started_at: '2026-06-15T10:00:01Z',
+    completed_at: '2026-06-15T10:00:02Z',
+  }],
 };
 
 describe('mapWorker', () => {
-  it('maps status busy->busy and carries taskId', () => {
-    const agent = mapWorker(W);
-    expect(agent.id).toBe('a1');
-    expect(agent.name).toBe('Terra');
-    expect(agent.status).toBe('busy');
-    expect(agent.taskId).toBe('t1');
+  it('maps the configured agent and model contract', () => {
+    expect(mapWorker(W)).toMatchObject({
+      id: 'a1',
+      name: 'Terra',
+      modelId: 'm1',
+      modelName: 'Team Sonnet',
+      modelProvider: 'anthropic',
+      complexity: 'hard',
+      enabled: true,
+      status: 'busy',
+      taskId: 't1',
+      lastHeartbeat: '2026-07-14T10:00:00Z',
+      todoSummary: { todo_id: 't1', title: 'Audit page' },
+    });
+  });
+
+  it('preserves a valid disabled value', () => {
+    expect(mapWorker({ ...W, enabled: false }).enabled).toBe(false);
   });
 });
 
 describe('mapTodo', () => {
-  it('maps priority>0 to boolean and keeps status', () => {
-    const todo = mapTodo(T, []);
-    expect(todo.id).toBe('t1');
-    expect(todo.priority).toBe(true);
-    expect(todo.status).toBe('running');
-    expect(todo.agentId).toBe('a1');
-    expect(todo.model).toBe('Team Sonnet');
-    expect(todo.modelProvider).toBe('anthropic');
+  it('maps failed status, error, complexity, attribution, and run history', () => {
+    expect(mapTodo(T, [])).toMatchObject({
+      id: 't1',
+      priority: true,
+      status: 'failed',
+      complexity: 'hard',
+      error: 'Provider unavailable',
+      assignedAgentId: 'a1',
+      agentId: 'a1',
+      agentName: 'Terra',
+      modelId: 'm1',
+      modelName: 'Team Sonnet',
+      modelProvider: 'anthropic',
+      conversationId: 'c1',
+      tokens: '0 tok',
+      runs: T.runs,
+    });
   });
 
-  it('maps done todo memory flush', () => {
-    const todo = mapTodo({ ...T, status: 'done', memory_flushed: 1, priority: 0 }, []);
-    expect(todo.memoryFlushed).toBe(true);
-    expect(todo.priority).toBe(false);
+  it('maps queued, running, done, and failed without collapsing valid zeroes', () => {
+    expect((['queued', 'running', 'done', 'failed'] as const).map((status) =>
+      mapTodo({ ...T, status, priority: 0, memory_flushed: 0 }, []).status,
+    )).toEqual(['queued', 'running', 'done', 'failed']);
+    expect(mapTodo({ ...T, priority: 0, memory_flushed: 0 }, [])).toMatchObject({
+      priority: false,
+      memoryFlushed: false,
+      tokens: '0 tok',
+    });
+  });
+
+  it('keeps partial legacy model attribution unknown', () => {
+    const todo = mapTodo({
+      ...T,
+      model_id: null,
+      model_name: null,
+      model_provider: null,
+      runs: [{ ...T.runs[0], model_id: null, model_name: null, model_provider: null, attribution_complete: 0 }],
+    }, []);
+    expect(todo.modelId).toBeNull();
+    expect(todo.modelName).toBeNull();
+    expect(todo.modelProvider).toBeNull();
+    expect(todo.runs[0].attribution_complete).toBe(0);
   });
 });

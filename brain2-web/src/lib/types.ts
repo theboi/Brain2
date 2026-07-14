@@ -202,25 +202,57 @@ export interface WorkspacesOverview {
   workspaces: OverviewWorkspace[];
 }
 
+export type Complexity = 'simple' | 'medium' | 'hard' | 'complex';
+export type RuntimeModelProvider = 'anthropic' | 'ollama' | 'openrouter';
+
 export interface ModelConfig {
   model_id: string;
+  tenant_id: string;
   name: string;
-  provider: 'anthropic' | 'gemini' | 'ollama' | 'openai' | 'openrouter' | 'stub';
+  provider: RuntimeModelProvider;
   model: string;
   param_count: string | null;
   system_prompt: string;
   tool_allowlist: string[];
   fallback_model: string | null;
   ollama_base_url: string | null;
+  max_concurrency: number;
   status: 'ready' | 'paused' | 'disabled';
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Worker {
   agent_id: string;
   name: string;
+  model_id: string;
+  model_name: string;
+  model_provider: RuntimeModelProvider;
+  complexity: Complexity;
+  enabled: boolean;
   status: 'idle' | 'busy' | 'offline';
   current_todo_id: string | null;
+  last_heartbeat: string | null;
   todo_summary: { todo_id: string; title: string } | null;
+}
+
+export interface TodoRun {
+  tenant_id: string;
+  todo_id: string;
+  runtime_agent_id: string;
+  agent_name: string | null;
+  model_id: string | null;
+  model_name: string | null;
+  model_provider: RuntimeModelProvider | null;
+  attribution_complete: 0 | 1;
+  conversation_id: string | null;
+  status: 'running' | 'done' | 'failed' | 'cancelled' | 'stale';
+  tokens_total: number | null;
+  cost_total: string | null;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
 }
 
 export interface LiveTodo {
@@ -229,27 +261,44 @@ export interface LiveTodo {
   workspace_id: string;
   requester_user_id: string;
   title: string;
+  complexity: Complexity;
   priority: number;
-  status: 'queued' | 'running' | 'done';
+  status: 'queued' | 'running' | 'done' | 'failed';
   assigned_agent_id: string | null;
   preferred_agent_id: string | null;
+  /** Legacy output-only field. New todo mutations must not send model_pref. */
   model_pref: string | null;
-  model_name?: string | null;
-  model_provider?: ModelConfig['provider'] | null;
   conversation_id: string | null;
   memory_flushed: number;
   tokens_total: number | null;
   cost_total: string | null;
+  error: string | null;
+  cancel_requested: number;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  agent_id: string | null;
+  agent_name: string | null;
+  model_id: string | null;
+  model_name: string | null;
+  model_provider: RuntimeModelProvider | null;
+  runs: TodoRun[];
 }
 
 export interface TodoMessage {
-  role: 'user' | 'assistant' | 'tool';
+  message_id: string;
+  conversation_id: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
-  tool_name?: string | null;
-  created_at?: string;
+  tool_calls_json: string | null;
+  tool_call_id: string | null;
+  tool_name: string | null;
+  tokens_in: number;
+  tokens_out: number;
+  cost_micros: number;
+  latency_ms: number;
+  parent_message_id: string | null;
+  created_at: string;
 }
 
 export interface OrgGraphResponse {
