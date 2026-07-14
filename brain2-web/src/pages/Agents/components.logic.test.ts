@@ -14,6 +14,7 @@ function model(provider: ModelProvider, status: ModelConfig['status'] = 'ready')
     tool_allowlist: [],
     fallback_model: null,
     ollama_base_url: null,
+    has_api_key: provider === 'anthropic' || provider === 'openrouter',
     max_concurrency: 1,
     status,
     created_by: null,

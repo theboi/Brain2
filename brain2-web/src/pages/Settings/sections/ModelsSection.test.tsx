@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { ModelConfig, ModelProvider } from '@/lib/types';
+import componentSource from './ModelsSection.tsx?raw';
 
 const mutate = vi.fn();
 const reset = vi.fn();
@@ -16,6 +17,7 @@ function model(overrides: Partial<ModelConfig> & { provider: ModelProvider }): M
     tool_allowlist: [],
     fallback_model: null,
     ollama_base_url: null,
+    has_api_key: false,
     max_concurrency: 1,
     status: 'ready',
     created_by: null,
@@ -39,6 +41,13 @@ vi.mock('@/hooks/useModels', () => ({
         provider: 'anthropic',
         name: 'Cloud Claude',
         model: 'claude-sonnet-4-5',
+        has_api_key: true,
+      }),
+      model({
+        provider: 'openrouter',
+        name: 'Cloud missing key',
+        model: 'open/model',
+        has_api_key: false,
       }),
       model({
         provider: 'openai',
@@ -55,6 +64,8 @@ vi.mock('@/hooks/useModels', () => ({
   useUpdateModel: () => ({ mutate, reset, isPending: false, isError: false }),
   useDeleteModel: () => ({ mutate, reset, isPending: false, isError: false }),
   useTestModel: () => ({ mutate, reset, isPending: false, isError: false }),
+  usePauseModel: () => ({ mutate, reset, isPending: false, isError: false }),
+  useResumeModel: () => ({ mutate, reset, isPending: false, isError: false }),
 }));
 
 import { ModelsSection } from './ModelsSection';
@@ -71,10 +82,23 @@ describe('ModelsSection', () => {
     expect(html).toContain('Concurrency: 2');
     expect(html).toContain('Cloud Claude');
     expect(html).toContain('Anthropic');
+    expect(html).toContain('API key saved · secret hidden');
+    expect(html).toContain('Cloud missing key');
+    expect(html).toContain('API key required');
     expect(html).toContain('Readable legacy model');
     expect(html).toContain('OpenAI · Legacy');
     expect(html).toContain('aria-label="Test Local Qwen"');
     expect(html).toContain('aria-label="Remove Local Qwen"');
+    expect(html).toContain('aria-label="Pause Local Qwen"');
+    expect(html).toContain('aria-label="Resume Readable legacy model"');
     expect(html).not.toContain('stored-api-key');
+  });
+
+  it('uses keyboard-submit and visible focus semantics for model fields', () => {
+    expect(componentSource).toContain('<form');
+    expect(componentSource).toContain('onSubmit=');
+    expect(componentSource).toContain('type="submit"');
+    expect(componentSource.match(/className="b2-model-field"/g)?.length).toBe(6);
+    expect(componentSource).not.toContain("outline: 'none'");
   });
 });

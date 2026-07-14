@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   ModelFormValidationError,
+  acquireMutationLock,
+  backendModelFieldErrors,
   modelCreatePayload,
   modelUpdatePayload,
+  releaseMutationLock,
 } from './modelsLogic';
 
 describe('modelCreatePayload', () => {
@@ -71,6 +74,12 @@ describe('modelCreatePayload', () => {
     ['localhost:11434', 'Local endpoint must be a valid HTTP or HTTPS URL.'],
     ['file:///tmp/ollama.sock', 'Local endpoint must be a valid HTTP or HTTPS URL.'],
     ['http://user:password@localhost:11434', 'Local endpoint must not include credentials.'],
+    [String.raw`http://localhost\@metadata.google.internal:11434`, 'Local endpoint must be a valid HTTP or HTTPS URL.'],
+    [String.raw`http://localhost:11434\api`, 'Local endpoint must be a valid HTTP or HTTPS URL.'],
+    ['http://localhost:11434?api_key=secret', 'Local endpoint must not include a query or fragment.'],
+    ['http://localhost:11434#secret', 'Local endpoint must not include a query or fragment.'],
+    ['HTTP://localhost:11434', 'Local endpoint must start with http:// or https://.'],
+    ['http://localhost:70000', 'Local endpoint must be a valid HTTP or HTTPS URL.'],
   ])('rejects unsafe local endpoint %j at the endpoint field', (endpoint, message) => {
     expectValidation(
       () => modelCreatePayload({
@@ -100,7 +109,7 @@ describe('modelUpdatePayload', () => {
     expect(modelUpdatePayload('model-1', {
       provider: 'anthropic', name: 'Claude', model: 'claude-sonnet-4-5',
       endpoint: '', key: ' ', concurrency: '1',
-    })).toEqual({
+    }, true)).toEqual({
       model_id: 'model-1',
       name: 'Claude',
       model: 'claude-sonnet-4-5',
@@ -112,12 +121,46 @@ describe('modelUpdatePayload', () => {
     expect(modelUpdatePayload('model-1', {
       provider: 'openrouter', name: 'Router', model: 'open/model',
       endpoint: '', key: ' replacement ', concurrency: '4',
-    })).toEqual({
+    }, true)).toEqual({
       model_id: 'model-1',
       name: 'Router',
       model: 'open/model',
       api_key: 'replacement',
       max_concurrency: 4,
+    });
+  });
+
+  it('requires a cloud key when the backend reports none is saved', () => {
+    expectValidation(
+      () => modelUpdatePayload('model-1', {
+        provider: 'anthropic', name: 'Claude', model: 'claude-sonnet-4-5',
+        endpoint: '', key: '', concurrency: '1',
+      }, false),
+      { key: 'API key is required for Anthropic.' },
+    );
+  });
+});
+
+describe('mutation guards and backend field errors', () => {
+  it('acquires synchronously so rapid duplicate actions dispatch once', () => {
+    const lock = { current: false };
+    let calls = 0;
+    const dispatch = () => {
+      if (!acquireMutationLock(lock)) return;
+      calls += 1;
+    };
+
+    dispatch();
+    dispatch();
+    expect(calls).toBe(1);
+    releaseMutationLock(lock);
+    dispatch();
+    expect(calls).toBe(2);
+  });
+
+  it('associates backend key validation with the key field', () => {
+    expect(backendModelFieldErrors('api_key is required for anthropic')).toEqual({
+      key: 'api_key is required for anthropic',
     });
   });
 });

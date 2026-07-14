@@ -34,6 +34,7 @@ export const qk = {
   sourceDiff: (pid: string, sourceId: string, version: number) =>
     ['sources', pid, sourceId, 'diff', version] as const,
   reports: (pid: string | null) => ['reports', pid] as const,
+  modelRegistry: () => ['model-registry'] as const,
   schedules: () => ['schedules'] as const,
   scheduleOccurrences: (start: string, end: string) =>
     ['schedule-occurrences', start, end] as const,

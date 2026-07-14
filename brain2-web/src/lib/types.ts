@@ -217,6 +217,7 @@ export interface ModelConfig {
   tool_allowlist: string[];
   fallback_model: string | null;
   ollama_base_url: string | null;
+  has_api_key: boolean;
   max_concurrency: number;
   status: 'ready' | 'paused' | 'disabled';
   created_by: string | null;

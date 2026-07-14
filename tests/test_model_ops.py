@@ -80,10 +80,29 @@ def test_cloud_model_requires_key_and_strips_fields(provider):
     created = make_models_create(s, sm)(
         _ctx(), {"name": " M ", "provider": provider, "model": " x ", "api_key": " secret "})
     assert created["name"] == "M" and created["model"] == "x"
+    assert created["has_api_key"] is True
     assert "secret_key" not in created and "api_key" not in created
     row = s._conn.execute("SELECT secret_key FROM models WHERE model_id=?", (created["model_id"],)).fetchone()
     assert sm.retrieve("t1", row["secret_key"], accessed_by="u1") == b"secret"
     assert "secret" not in str(make_models_list(s)(_ctx(), {}))
+
+
+def test_model_dto_exposes_only_safe_key_presence():
+    s, sm = _store_secrets()
+    local = make_models_create(s, sm)(
+        _ctx(), {"name": "Local", "provider": "ollama", "model": "qwen",
+                 "ollama_base_url": "http://127.0.0.1:11434"})
+    cloud = make_models_create(s, sm)(
+        _ctx(), {"name": "Cloud", "provider": "anthropic", "model": "claude",
+                 "api_key": "never-return-this"})
+
+    assert local["has_api_key"] is False
+    assert cloud["has_api_key"] is True
+    for model in make_models_list(s)(_ctx(), {})["models"]:
+        assert isinstance(model["has_api_key"], bool)
+        assert "secret_key" not in model
+        assert "api_key" not in model
+        assert "never-return-this" not in str(model)
 
 
 @pytest.mark.parametrize("endpoint", [None, "", "   "])
@@ -119,6 +138,83 @@ def test_ollama_rejects_invalid_url(endpoint):
         make_models_create(s, sm)(
             _ctx(), {"name": "Local", "provider": "ollama", "model": "x",
                      "ollama_base_url": endpoint})
+
+
+@pytest.mark.parametrize("endpoint", [
+    "HTTP://box:11434",
+    r"http://box\evil:11434",
+    r"http://box:11434\api",
+    "http://box:11434?api_key=secret",
+    "http://box:11434#secret",
+    "http://box:11434?",
+    "http://box:11434#",
+    "http://169.254.169.254/latest/meta-data",
+    "http://224.0.0.1:11434",
+    "http://0.0.0.0:11434",
+    "http://240.0.0.1:11434",
+    "http://metadata.google.internal:11434",
+    "http://instance-data.ec2.internal:11434",
+])
+def test_ollama_rejects_unsafe_server_targets(endpoint):
+    s, sm = _store_secrets()
+    with pytest.raises(Conflict, match="ollama_base_url"):
+        make_models_create(s, sm)(
+            _ctx(), {"name": "Local", "provider": "ollama", "model": "x",
+                     "ollama_base_url": endpoint})
+
+
+@pytest.mark.parametrize("endpoint", [
+    "http://127.0.0.1:11434",
+    "http://localhost:11434",
+    "http://192.168.1.20:11434",
+    "http://10.23.4.5:11434",
+    "http://[::1]:11434",
+    "http://ollama.lan:11434",
+])
+def test_ollama_allows_loopback_private_and_lan_targets(endpoint):
+    s, sm = _store_secrets()
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": "Local", "provider": "ollama", "model": "x",
+                 "ollama_base_url": endpoint})
+    assert created["ollama_base_url"] == endpoint
+
+
+def test_ollama_optional_host_allowlist_restricts_deployments(monkeypatch):
+    monkeypatch.setenv(
+        "BRAIN2_OLLAMA_ALLOWED_HOSTS", "ollama.internal, 10.0.0.5"
+    )
+    s, sm = _store_secrets()
+    create = make_models_create(s, sm)
+    with pytest.raises(Conflict, match="BRAIN2_OLLAMA_ALLOWED_HOSTS"):
+        create(
+            _ctx(), {"name": "Blocked", "provider": "ollama", "model": "x",
+                     "ollama_base_url": "http://box:11434"})
+    allowed = create(
+        _ctx(), {"name": "Allowed", "provider": "ollama", "model": "x",
+                 "ollama_base_url": "http://ollama.internal:11434/"})
+    private = create(
+        _ctx(), {"name": "Private", "provider": "ollama", "model": "x",
+                 "ollama_base_url": "http://10.0.0.5:11434"})
+    assert allowed["ollama_base_url"] == "http://ollama.internal:11434"
+    assert private["ollama_base_url"] == "http://10.0.0.5:11434"
+
+
+@pytest.mark.parametrize("endpoint", [
+    "http://169.254.169.254/latest/meta-data",
+    "http://private-box:11434?api_key=secret",
+])
+def test_ollama_update_rejects_unsafe_target_atomically(endpoint):
+    s, sm = _store_secrets()
+    created = make_models_create(s, sm)(
+        _ctx(), {"name": "Original", "provider": "ollama", "model": "qwen",
+                 "ollama_base_url": "http://127.0.0.1:11434"})
+    with pytest.raises(Conflict, match="ollama_base_url"):
+        make_models_update(s, sm)(
+            _ctx(), {"model_id": created["model_id"], "name": "Changed",
+                     "ollama_base_url": endpoint})
+    saved = make_models_get(s)(_ctx(), {"model_id": created["model_id"]})
+    assert saved["name"] == "Original"
+    assert saved["ollama_base_url"] == "http://127.0.0.1:11434"
 
 
 def test_max_concurrency_defaults_to_one():
@@ -203,11 +299,13 @@ def test_update_requires_effective_ollama_endpoint_for_legacy_row():
 def test_update_requires_effective_cloud_key_for_legacy_row(provider):
     s, sm = _store_secrets()
     model_id = _insert_legacy_invalid_model(s, provider)
+    assert make_models_get(s)(_ctx(), {"model_id": model_id})["has_api_key"] is False
     with pytest.raises(Conflict, match="api_key is required"):
         make_models_update(s, sm)(
             _ctx(), {"model_id": model_id, "name": "Renamed"})
     updated = make_models_update(s, sm)(
         _ctx(), {"model_id": model_id, "api_key": " replacement "})
+    assert updated["has_api_key"] is True
     assert "secret_key" not in updated and "api_key" not in updated
     row = s._conn.execute(
         "SELECT secret_key FROM models WHERE model_id=?", (model_id,)

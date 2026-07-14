@@ -69,8 +69,9 @@ export function modelCreatePayload(values: ModelFormValues): ModelCreatePayload 
 export function modelUpdatePayload(
   modelId: string,
   values: ModelFormValues,
+  hasApiKey: boolean,
 ): ModelUpdatePayload {
-  const common = validateCommon(values, false);
+  const common = validateCommon(values, values.provider !== 'ollama' && !hasApiKey);
   if (values.provider === 'ollama') {
     return {
       model_id: modelId,
@@ -118,6 +119,19 @@ function validatedEndpoint(value: string): string {
 function endpointErrors(value: string): ModelFormErrors {
   const endpoint = value.trim().replace(/\/+$/, '');
   if (!endpoint) return { endpoint: 'Local endpoint is required for Ollama.' };
+  if (/^https?:\/\//i.test(endpoint) && !/^https?:\/\//.test(endpoint)) {
+    return { endpoint: 'Local endpoint must start with http:// or https://.' };
+  }
+  if (!/^https?:\/\//.test(endpoint) || endpoint.includes('\\')) {
+    return { endpoint: 'Local endpoint must be a valid HTTP or HTTPS URL.' };
+  }
+  if (endpoint.includes('?') || endpoint.includes('#')) {
+    return { endpoint: 'Local endpoint must not include a query or fragment.' };
+  }
+  const authority = endpoint.replace(/^https?:\/\//, '').split('/')[0];
+  if (authority.includes('@')) {
+    return { endpoint: 'Local endpoint must not include credentials.' };
+  }
   let parsed: URL;
   try {
     parsed = new URL(endpoint);
@@ -130,6 +144,27 @@ function endpointErrors(value: string): ModelFormErrors {
   if (parsed.username || parsed.password) {
     return { endpoint: 'Local endpoint must not include credentials.' };
   }
+  return {};
+}
+
+export interface MutationLock {
+  current: boolean;
+}
+
+export function acquireMutationLock(lock: MutationLock): boolean {
+  if (lock.current) return false;
+  lock.current = true;
+  return true;
+}
+
+export function releaseMutationLock(lock: MutationLock): void {
+  lock.current = false;
+}
+
+export function backendModelFieldErrors(message: string): ModelFormErrors {
+  if (/api[_ ]key/i.test(message)) return { key: message };
+  if (/ollama_base_url|endpoint/i.test(message)) return { endpoint: message };
+  if (/max_concurrency|concurrency/i.test(message)) return { concurrency: message };
   return {};
 }
 

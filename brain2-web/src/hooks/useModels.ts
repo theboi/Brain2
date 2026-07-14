@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ops } from '@/lib/api';
+import { qk } from '@/lib/queryClient';
 import type { ModelConfig, RuntimeModelProvider } from '@/lib/types';
 
-const KEY = ['models'] as const;
+export const MODEL_REGISTRY_KEY = qk.modelRegistry();
 
 type CreateModelCommon = {
   name: string;
@@ -26,7 +27,7 @@ export type UpdateModelParams = {
 
 export function useModels() {
   return useQuery({
-    queryKey: KEY,
+    queryKey: MODEL_REGISTRY_KEY,
     queryFn: () => ops<{ models: ModelConfig[] }>('models:list').then((r) => r.models),
   });
 }
@@ -34,16 +35,28 @@ export function useModels() {
 export function useCreateModel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (params: CreateModelParams) => ops<ModelConfig>('models:create', params),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    mutationFn: (params: CreateModelParams) => {
+      const request = cloneAndScrubApiKey(params);
+      return ops<ModelConfig>('models:create', request);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: MODEL_REGISTRY_KEY });
+    },
+    gcTime: 0,
   });
 }
 
 export function useUpdateModel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (params: UpdateModelParams) => ops<ModelConfig>('models:update', params),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    mutationFn: (params: UpdateModelParams) => {
+      const request = cloneAndScrubApiKey(params);
+      return ops<ModelConfig>('models:update', request);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: MODEL_REGISTRY_KEY });
+    },
+    gcTime: 0,
   });
 }
 
@@ -51,7 +64,9 @@ export function useDeleteModel() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (params: { model_id: string }) => ops('models:delete', params),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: MODEL_REGISTRY_KEY });
+    },
   });
 }
 
@@ -60,4 +75,29 @@ export function useTestModel() {
     mutationFn: (params: { model_id: string; prompt?: string }) =>
       ops<{ ok: boolean; text?: string; error?: string }>('models:test', params),
   });
+}
+
+export function usePauseModel() {
+  return useModelStatusMutation('models:pause');
+}
+
+export function useResumeModel() {
+  return useModelStatusMutation('models:resume');
+}
+
+function useModelStatusMutation(operation: 'models:pause' | 'models:resume') {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { model_id: string }) =>
+      ops<{ model_id: string; status: ModelConfig['status'] }>(operation, params),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: MODEL_REGISTRY_KEY });
+    },
+  });
+}
+
+function cloneAndScrubApiKey<T extends { api_key?: string }>(params: T): T {
+  const request = { ...params };
+  delete params.api_key;
+  return request;
 }

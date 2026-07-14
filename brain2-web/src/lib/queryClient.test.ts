@@ -14,3 +14,18 @@ describe('todo query invalidation', () => {
     expect(client.getQueryState(qk.todos('failed'))?.isInvalidated).toBe(true);
   });
 });
+
+describe('model query domains', () => {
+  it('keeps settings registry rows separate from report agent rows', () => {
+    const client = new QueryClient();
+    const registry = [{ model_id: 'm1', name: 'Local', has_api_key: false }];
+    const reportAgents = [{ agent_id: 'm1', name: 'Local' }];
+
+    client.setQueryData(qk.modelRegistry(), registry);
+    client.setQueryData(['models'], reportAgents);
+
+    expect(client.getQueryData(qk.modelRegistry())).toBe(registry);
+    expect(client.getQueryData(['models'])).toBe(reportAgents);
+    expect(qk.modelRegistry()).not.toEqual(['models']);
+  });
+});

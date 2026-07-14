@@ -6,7 +6,9 @@ secret_key.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
 import uuid
 from urllib.parse import urlparse
 
@@ -15,6 +17,18 @@ from brain2.errors import Conflict, NotFound
 _RUNTIME_PROVIDERS = {"anthropic", "ollama", "openrouter"}
 _CREATABLE_PROVIDERS = _RUNTIME_PROVIDERS | {"stub"}
 _KEYED_PROVIDERS = {"anthropic", "openrouter"}
+_METADATA_HOSTS = {
+    "instance-data",
+    "instance-data.ec2.internal",
+    "metadata.aws.internal",
+    "metadata.azure.internal",
+    "metadata.google.internal",
+    "metadata.goog",
+}
+_METADATA_IPS = {
+    ipaddress.ip_address("100.100.100.200"),
+    ipaddress.ip_address("fd00:ec2::254"),
+}
 
 
 def _max_concurrency(value) -> int:
@@ -37,6 +51,10 @@ def _local_endpoint(provider: str, value):
     endpoint = str(value or "").strip().rstrip("/")
     if not endpoint:
         raise Conflict("ollama_base_url is required for ollama")
+    if not endpoint.startswith(("http://", "https://")) or "\\" in endpoint:
+        raise Conflict(
+            "ollama_base_url must be a valid http or https URL"
+        )
     parsed = urlparse(endpoint)
     try:
         parsed.port
@@ -49,8 +67,39 @@ def _local_endpoint(provider: str, value):
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
+        or "?" in endpoint
+        or "#" in endpoint
     ):
         raise Conflict("ollama_base_url must be a valid http or https URL")
+    host = parsed.hostname.lower().rstrip(".")
+    if host in _METADATA_HOSTS:
+        raise Conflict("ollama_base_url must not target a cloud metadata host")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None and not address.is_loopback and (
+        address in _METADATA_IPS
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_unspecified
+        or address.is_reserved
+    ):
+        raise Conflict(
+            "ollama_base_url must not target link-local, multicast, "
+            "unspecified, reserved, or cloud metadata addresses"
+        )
+    configured_hosts = os.environ.get("BRAIN2_OLLAMA_ALLOWED_HOSTS", "")
+    allowed_hosts = {
+        item.strip().lower().rstrip(".")
+        for item in configured_hosts.split(",")
+        if item.strip()
+    }
+    if allowed_hosts and host not in allowed_hosts:
+        raise Conflict(
+            "ollama_base_url host is not permitted by "
+            "BRAIN2_OLLAMA_ALLOWED_HOSTS"
+        )
     return endpoint
 
 
@@ -66,6 +115,7 @@ def _row_to_dict(row) -> dict:
         d["tool_allowlist"] = json.loads(d.get("tool_allowlist") or "[]")
     except Exception:
         d["tool_allowlist"] = []
+    d["has_api_key"] = bool(d.get("secret_key"))
     d.pop("secret_key", None)
     return d
 

@@ -5,14 +5,19 @@ import {
   useCreateModel,
   useDeleteModel,
   useModels,
+  usePauseModel,
+  useResumeModel,
   useTestModel,
   useUpdateModel,
 } from '@/hooks/useModels';
 import type { ModelConfig, ModelProvider, RuntimeModelProvider } from '@/lib/types';
 import {
+  acquireMutationLock,
+  backendModelFieldErrors,
   ModelFormValidationError,
   modelCreatePayload,
   modelUpdatePayload,
+  releaseMutationLock,
   type ModelFormErrors,
   type ModelFormValues,
 } from './modelsLogic';
@@ -42,7 +47,6 @@ function input(extra?: CSSProperties): CSSProperties {
     color: 'var(--fg)',
     fontFamily: 'var(--mono-font)',
     fontSize: 12.5,
-    outline: 'none',
     width: '100%',
     ...extra,
   };
@@ -105,16 +109,25 @@ export function ModelsSection() {
   const updateModel = useUpdateModel();
   const deleteModel = useDeleteModel();
   const testModel = useTestModel();
+  const pauseModel = usePauseModel();
+  const resumeModel = useResumeModel();
   const formId = useId();
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const keyInputRef = useRef<HTMLInputElement>(null);
   const formWasOpen = useRef(false);
+  const saveLock = useRef(false);
+  const testLock = useRef(false);
+  const deleteLock = useRef(false);
+  const statusLock = useRef(false);
   const models = modelsQuery.data ?? [];
   const [formMode, setFormMode] = useState<'create' | string | null>(null);
   const [form, setForm] = useState<ModelFormValues>(EMPTY_FORM);
   const [validation, setValidation] = useState<ModelFormErrors>({});
+  const [editingHasApiKey, setEditingHasApiKey] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [statusId, setStatusId] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; text: string }>>({});
 
@@ -131,6 +144,7 @@ export function ModelsSection() {
   const resetForm = () => {
     setForm({ ...EMPTY_FORM });
     setValidation({});
+    setEditingHasApiKey(false);
     createModel.reset();
     updateModel.reset();
   };
@@ -150,6 +164,12 @@ export function ModelsSection() {
     createModel.reset();
     updateModel.reset();
     setValidation({});
+    setEditingHasApiKey(model.has_api_key);
+    setTestResults((current) => {
+      const next = { ...current };
+      delete next[model.model_id];
+      return next;
+    });
     setForm({
       provider: model.provider,
       name: model.name,
@@ -172,12 +192,36 @@ export function ModelsSection() {
     try {
       if (formMode === 'create') {
         const payload = modelCreatePayload(form);
+        if (!acquireMutationLock(saveLock)) return;
+        if (form.provider !== 'ollama') {
+          if (keyInputRef.current) keyInputRef.current.value = '';
+          setForm((current) => ({ ...current, key: '' }));
+        }
         setValidation({});
-        createModel.mutate(payload, { onSuccess: closeForm });
+        createModel.mutate(payload, {
+          onSuccess: closeForm,
+          onSettled: () => releaseMutationLock(saveLock),
+        });
       } else if (formMode) {
-        const payload = modelUpdatePayload(formMode, form);
+        const modelId = formMode;
+        const payload = modelUpdatePayload(modelId, form, editingHasApiKey);
+        if (!acquireMutationLock(saveLock)) return;
+        if (form.provider !== 'ollama') {
+          if (keyInputRef.current) keyInputRef.current.value = '';
+          setForm((current) => ({ ...current, key: '' }));
+        }
         setValidation({});
-        updateModel.mutate(payload, { onSuccess: closeForm });
+        updateModel.mutate(payload, {
+          onSuccess: () => {
+            setTestResults((current) => {
+              const next = { ...current };
+              delete next[modelId];
+              return next;
+            });
+            closeForm();
+          },
+          onSettled: () => releaseMutationLock(saveLock),
+        });
       }
     } catch (error) {
       if (error instanceof ModelFormValidationError) setValidation(error.errors);
@@ -186,7 +230,7 @@ export function ModelsSection() {
   };
 
   const runTest = (model: ModelConfig) => {
-    if (testingId !== null) return;
+    if (!acquireMutationLock(testLock)) return;
     setTestingId(model.model_id);
     setTestResults((current) => {
       const next = { ...current };
@@ -209,13 +253,16 @@ export function ModelsSection() {
           ...current,
           [model.model_id]: { ok: false, text: errorMessage(error) },
         })),
-        onSettled: () => setTestingId(null),
+        onSettled: () => {
+          releaseMutationLock(testLock);
+          setTestingId(null);
+        },
       },
     );
   };
 
   const remove = (model: ModelConfig) => {
-    if (removingId !== null) return;
+    if (!acquireMutationLock(deleteLock)) return;
     setRemovingId(model.model_id);
     setRowErrors((current) => {
       const next = { ...current };
@@ -229,17 +276,53 @@ export function ModelsSection() {
           ...current,
           [model.model_id]: errorMessage(error),
         })),
-        onSettled: () => setRemovingId(null),
+        onSettled: () => {
+          releaseMutationLock(deleteLock);
+          setRemovingId(null);
+        },
+      },
+    );
+  };
+
+  const setStatus = (model: ModelConfig) => {
+    if (!acquireMutationLock(statusLock)) return;
+    setStatusId(model.model_id);
+    setRowErrors((current) => {
+      const next = { ...current };
+      delete next[model.model_id];
+      return next;
+    });
+    const mutation = model.status === 'ready' ? pauseModel : resumeModel;
+    mutation.mutate(
+      { model_id: model.model_id },
+      {
+        onSuccess: () => setTestResults((current) => {
+          const next = { ...current };
+          delete next[model.model_id];
+          return next;
+        }),
+        onError: (error) => setRowErrors((current) => ({
+          ...current,
+          [model.model_id]: errorMessage(error),
+        })),
+        onSettled: () => {
+          releaseMutationLock(statusLock);
+          setStatusId(null);
+        },
       },
     );
   };
 
   const isSaving = createModel.isPending || updateModel.isPending;
-  const formError = createModel.isError
+  const rawFormError = createModel.isError
     ? errorMessage(createModel.error)
     : updateModel.isError
       ? errorMessage(updateModel.error)
       : null;
+  const backendFieldErrors = rawFormError ? backendModelFieldErrors(rawFormError) : {};
+  const formError = rawFormError && Object.keys(backendFieldErrors).length === 0
+    ? rawFormError
+    : null;
 
   return (
     <SCard
@@ -252,7 +335,13 @@ export function ModelsSection() {
       ) : undefined}
     >
       {formMode !== null && (
-        <div style={{ marginBottom: 16, padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)' }}>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            save();
+          }}
+          style={{ marginBottom: 16, padding: 14, borderRadius: 12, border: '1px solid var(--accent-line)', background: 'var(--accent-soft)' }}
+        >
           <div style={{ marginBottom: 12, fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>
             {formMode === 'create' ? 'Register a model' : 'Edit registered model'}
           </div>
@@ -260,6 +349,7 @@ export function ModelsSection() {
             <Field label="Provider" id={`${formId}-provider`} error={undefined}>
               <select
                 id={`${formId}-provider`}
+                className="b2-model-field"
                 value={form.provider}
                 disabled={formMode !== 'create' || isSaving}
                 onChange={(event) => {
@@ -271,6 +361,8 @@ export function ModelsSection() {
                     key: '',
                   }));
                   setValidation({});
+                  createModel.reset();
+                  updateModel.reset();
                 }}
                 style={input({ fontFamily: 'var(--ui-font)' })}
               >
@@ -283,6 +375,7 @@ export function ModelsSection() {
               <input
                 ref={nameInputRef}
                 id={`${formId}-name`}
+                className="b2-model-field"
                 value={form.name}
                 disabled={isSaving}
                 onChange={(event) => changeForm('name', event.target.value)}
@@ -295,6 +388,7 @@ export function ModelsSection() {
             <Field label="Provider model ID" id={`${formId}-model`} error={validation.model}>
               <input
                 id={`${formId}-model`}
+                className="b2-model-field"
                 value={form.model}
                 disabled={isSaving}
                 onChange={(event) => changeForm('model', event.target.value)}
@@ -305,38 +399,46 @@ export function ModelsSection() {
               />
             </Field>
             {form.provider === 'ollama' ? (
-              <Field label="Local endpoint" id={`${formId}-endpoint`} error={validation.endpoint}>
+              <Field label="Local endpoint" id={`${formId}-endpoint`} error={validation.endpoint ?? backendFieldErrors.endpoint}>
                 <input
                   id={`${formId}-endpoint`}
+                  className="b2-model-field"
                   type="url"
                   value={form.endpoint}
                   disabled={isSaving}
                   onChange={(event) => changeForm('endpoint', event.target.value)}
                   placeholder="http://127.0.0.1:11434"
-                  aria-invalid={Boolean(validation.endpoint)}
-                  aria-describedby={validation.endpoint ? `${formId}-endpoint-error` : undefined}
+                  aria-invalid={Boolean(validation.endpoint ?? backendFieldErrors.endpoint)}
+                  aria-describedby={(validation.endpoint ?? backendFieldErrors.endpoint) ? `${formId}-endpoint-error` : undefined}
                   style={input()}
                 />
               </Field>
             ) : (
-              <Field label={formMode === 'create' ? 'API key' : 'New API key (optional)'} id={`${formId}-key`} error={validation.key}>
+              <Field
+                label={formMode === 'create' || !editingHasApiKey ? 'API key' : 'New API key (optional)'}
+                id={`${formId}-key`}
+                error={validation.key ?? backendFieldErrors.key}
+              >
                 <input
+                  ref={keyInputRef}
                   id={`${formId}-key`}
+                  className="b2-model-field"
                   type="password"
                   autoComplete="off"
                   value={form.key}
                   disabled={isSaving}
                   onChange={(event) => changeForm('key', event.target.value)}
-                  placeholder={formMode === 'create' ? 'Paste API key' : 'Leave blank to keep saved key'}
-                  aria-invalid={Boolean(validation.key)}
-                  aria-describedby={validation.key ? `${formId}-key-error` : undefined}
+                  placeholder={formMode === 'create' || !editingHasApiKey ? 'Paste API key' : 'Leave blank to keep saved key'}
+                  aria-invalid={Boolean(validation.key ?? backendFieldErrors.key)}
+                  aria-describedby={(validation.key ?? backendFieldErrors.key) ? `${formId}-key-error` : undefined}
                   style={input()}
                 />
               </Field>
             )}
-            <Field label="Max concurrency" id={`${formId}-concurrency`} error={validation.concurrency}>
+            <Field label="Max concurrency" id={`${formId}-concurrency`} error={validation.concurrency ?? backendFieldErrors.concurrency}>
               <input
                 id={`${formId}-concurrency`}
+                className="b2-model-field"
                 type="number"
                 min={1}
                 step={1}
@@ -344,20 +446,20 @@ export function ModelsSection() {
                 value={form.concurrency}
                 disabled={isSaving}
                 onChange={(event) => changeForm('concurrency', event.target.value)}
-                aria-invalid={Boolean(validation.concurrency)}
-                aria-describedby={validation.concurrency ? `${formId}-concurrency-error` : undefined}
+                aria-invalid={Boolean(validation.concurrency ?? backendFieldErrors.concurrency)}
+                aria-describedby={(validation.concurrency ?? backendFieldErrors.concurrency) ? `${formId}-concurrency-error` : undefined}
                 style={input()}
               />
             </Field>
           </div>
           {formError && <div role="alert" style={{ ...errorStyle, marginTop: 12 }}>{formError}</div>}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
-            <button type="button" onClick={save} disabled={isSaving} style={{ ...button(true), opacity: isSaving ? 0.6 : 1 }}>
+            <button type="submit" disabled={isSaving} style={{ ...button(true), opacity: isSaving ? 0.6 : 1 }}>
               {isSaving ? 'Saving…' : formMode === 'create' ? 'Register model' : 'Save changes'}
             </button>
             <button type="button" onClick={closeForm} disabled={isSaving} style={{ ...button(), opacity: isSaving ? 0.6 : 1 }}>Cancel</button>
           </div>
-        </div>
+        </form>
       )}
 
       {modelsQuery.isPending && (
@@ -386,6 +488,8 @@ export function ModelsSection() {
         const legacy = !isRuntimeProvider(model.provider);
         const testing = testingId === model.model_id;
         const removing = removingId === model.model_id;
+        const statusChanging = statusId === model.model_id;
+        const rowActionPending = isSaving || testingId !== null || removingId !== null || statusId !== null;
         return (
           <div key={model.model_id} style={{ padding: '14px 0', borderBottom: index === models.length - 1 ? 'none' : '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -403,9 +507,9 @@ export function ModelsSection() {
                 <div style={{ marginTop: 3, fontSize: 11.5, overflowWrap: 'anywhere' }}>
                   {model.provider === 'ollama'
                     ? (model.ollama_base_url || 'Local endpoint unavailable')
-                    : legacy
-                      ? 'Stored legacy registration'
-                      : 'API key saved · secret hidden'}
+                    : model.provider === 'anthropic' || model.provider === 'openrouter'
+                      ? model.has_api_key ? 'API key saved · secret hidden' : 'API key required'
+                      : 'Stored legacy registration'}
                   {' · '}Concurrency: {model.max_concurrency}
                 </div>
               </div>
@@ -417,8 +521,8 @@ export function ModelsSection() {
                   type="button"
                   aria-label={`Test ${model.name}`}
                   onClick={() => runTest(model)}
-                  disabled={testingId !== null || removingId !== null}
-                  style={{ ...button(), opacity: (testingId !== null && !testing) || removingId !== null ? 0.5 : 1 }}
+                  disabled={rowActionPending}
+                  style={{ ...button(), opacity: rowActionPending && !testing ? 0.5 : 1 }}
                 >
                   {testing ? 'Testing…' : 'Test'}
                 </button>
@@ -427,18 +531,31 @@ export function ModelsSection() {
                     type="button"
                     aria-label={`Edit ${model.name}`}
                     onClick={() => openEdit(model)}
-                    disabled={isSaving || testingId !== null || removingId !== null}
-                    style={{ ...button(), opacity: isSaving || testingId !== null || removingId !== null ? 0.5 : 1 }}
+                    disabled={rowActionPending}
+                    style={{ ...button(), opacity: rowActionPending ? 0.5 : 1 }}
                   >
                     Edit
+                  </button>
+                )}
+                {(model.status === 'ready' || model.status === 'paused') && (
+                  <button
+                    type="button"
+                    aria-label={`${model.status === 'ready' ? 'Pause' : 'Resume'} ${model.name}`}
+                    onClick={() => setStatus(model)}
+                    disabled={rowActionPending}
+                    style={{ ...button(), opacity: rowActionPending && !statusChanging ? 0.5 : 1 }}
+                  >
+                    {statusChanging
+                      ? model.status === 'ready' ? 'Pausing…' : 'Resuming…'
+                      : model.status === 'ready' ? 'Pause' : 'Resume'}
                   </button>
                 )}
                 <button
                   type="button"
                   aria-label={`Remove ${model.name}`}
                   onClick={() => remove(model)}
-                  disabled={removingId !== null || testingId !== null}
-                  style={{ ...button(false, true), opacity: (removingId !== null && !removing) || testingId !== null ? 0.5 : 1 }}
+                  disabled={rowActionPending}
+                  style={{ ...button(false, true), opacity: rowActionPending && !removing ? 0.5 : 1 }}
                 >
                   {removing ? 'Removing…' : 'Remove'}
                 </button>
