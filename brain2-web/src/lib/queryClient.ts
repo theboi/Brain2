@@ -1,6 +1,8 @@
 // brain2-web/src/lib/queryClient.ts
 import { QueryClient } from '@tanstack/react-query';
 
+const TODO_ROOT = ['todos'] as const;
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -48,7 +50,8 @@ export const qk = {
   // Keep the historical query key while exposing the configured-agent name.
   agents: () => ['workers'] as const,
   workers: () => ['workers'] as const,
-  todos: (status: string | null = null) => ['todos', status] as const,
+  todosRoot: () => TODO_ROOT,
+  todos: (status: string | null = null) => [...TODO_ROOT, status] as const,
   todo: (id: string) => ['todo', id] as const,
   folders: (pid: string) => ['folders', pid] as const,
   wikiTopicSources: (pid: string, topic: string) =>
@@ -65,3 +68,7 @@ export const qk = {
   orgGraph: () => ['graph', 'org'] as const,
   liveVaultGraph: (pid: string) => ['graph', 'vault', pid] as const,
 };
+
+export function invalidateTodoQueries(client: QueryClient) {
+  return client.invalidateQueries({ queryKey: qk.todosRoot() });
+}

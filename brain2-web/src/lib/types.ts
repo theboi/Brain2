@@ -204,12 +204,13 @@ export interface WorkspacesOverview {
 
 export type Complexity = 'simple' | 'medium' | 'hard' | 'complex';
 export type RuntimeModelProvider = 'anthropic' | 'ollama' | 'openrouter';
+export type ModelProvider = RuntimeModelProvider | 'gemini' | 'openai' | 'stub';
 
 export interface ModelConfig {
   model_id: string;
   tenant_id: string;
   name: string;
-  provider: RuntimeModelProvider;
+  provider: ModelProvider;
   model: string;
   param_count: string | null;
   system_prompt: string;
@@ -226,9 +227,9 @@ export interface ModelConfig {
 export interface Worker {
   agent_id: string;
   name: string;
-  model_id: string;
-  model_name: string;
-  model_provider: RuntimeModelProvider;
+  model_id: string | null;
+  model_name: string | null;
+  model_provider: ModelProvider | null;
   complexity: Complexity;
   enabled: boolean;
   status: 'idle' | 'busy' | 'offline';
@@ -244,7 +245,7 @@ export interface TodoRun {
   agent_name: string | null;
   model_id: string | null;
   model_name: string | null;
-  model_provider: RuntimeModelProvider | null;
+  model_provider: ModelProvider | null;
   attribution_complete: 0 | 1;
   conversation_id: string | null;
   status: 'running' | 'done' | 'failed' | 'cancelled' | 'stale';
@@ -281,7 +282,7 @@ export interface LiveTodo {
   agent_name: string | null;
   model_id: string | null;
   model_name: string | null;
-  model_provider: RuntimeModelProvider | null;
+  model_provider: ModelProvider | null;
   runs: TodoRun[];
 }
 

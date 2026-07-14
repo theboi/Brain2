@@ -1,18 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ops } from '@/lib/api';
-import { qk } from '@/lib/queryClient';
+import { invalidateTodoQueries, qk } from '@/lib/queryClient';
 import type {
   Complexity,
   LiveTodo,
-  RuntimeModelProvider,
+  ModelProvider,
   TodoMessage,
   Worker,
 } from '@/lib/types';
 import type { Agent, Message, Todo } from '@/pages/Agents/data';
 
-function runtimeProvider(value: unknown): RuntimeModelProvider | null {
-  return value === 'anthropic' || value === 'ollama' || value === 'openrouter'
-    ? value
+const MODEL_PROVIDERS: readonly ModelProvider[] = [
+  'anthropic', 'ollama', 'openrouter', 'gemini', 'openai', 'stub',
+];
+
+function responseProvider(value: unknown): ModelProvider | null {
+  return typeof value === 'string'
+    && MODEL_PROVIDERS.includes(value as ModelProvider)
+    ? value as ModelProvider
     : null;
 }
 
@@ -22,7 +27,7 @@ export function mapAgent(worker: Worker): Agent {
     name: worker.name,
     modelId: worker.model_id ?? null,
     modelName: worker.model_name ?? null,
-    modelProvider: runtimeProvider(worker.model_provider),
+    modelProvider: responseProvider(worker.model_provider),
     complexity: worker.complexity,
     enabled: worker.enabled ?? false,
     status: worker.status,
@@ -59,7 +64,7 @@ export function mapMessage(message: TodoMessage): Message {
 }
 
 export function mapTodo(todo: LiveTodo, messages: TodoMessage[]): Todo {
-  const modelProvider = runtimeProvider(todo.model_provider);
+  const modelProvider = responseProvider(todo.model_provider);
   return {
     id: todo.todo_id,
     workspace_id: todo.workspace_id,
@@ -79,7 +84,10 @@ export function mapTodo(todo: LiveTodo, messages: TodoMessage[]): Todo {
     modelProvider,
     model: todo.model_name ?? undefined,
     conversationId: todo.conversation_id ?? null,
-    runs: todo.runs ?? [],
+    runs: (todo.runs ?? []).map((run) => ({
+      ...run,
+      model_provider: responseProvider(run.model_provider),
+    })),
     memoryFlushed: todo.memory_flushed === 1,
     doneAt: todo.completed_at ? Date.parse(todo.completed_at) : undefined,
     completedLabel: todo.completed_at
@@ -128,7 +136,6 @@ export function useTodo(todoId: string | null) {
 
 function invalidateAgentRoster(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: qk.agents() });
-  qc.invalidateQueries({ queryKey: qk.workers() });
 }
 
 function useAgentMutation<V extends object>(name: string) {
@@ -137,7 +144,7 @@ function useAgentMutation<V extends object>(name: string) {
     mutationFn: (params: V) => ops(name, params),
     onSuccess: () => {
       invalidateAgentRoster(qc);
-      qc.invalidateQueries({ queryKey: qk.todos() });
+      invalidateTodoQueries(qc);
     },
   });
 }
@@ -167,7 +174,7 @@ function useTodoMutation<V extends object>(
   return useMutation({
     mutationFn: (params: V) => ops(name, params),
     onSuccess: (_result, variables) => {
-      qc.invalidateQueries({ queryKey: qk.todos() });
+      invalidateTodoQueries(qc);
       invalidateAgentRoster(qc);
       if (invalidateActiveTodo && 'todo_id' in variables) {
         const todoId = variables.todo_id;

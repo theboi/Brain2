@@ -15,6 +15,7 @@ import {
   agBtnGhost, agBtnPrimary, RosterCard, TodoRow, GroupHead,
   ConversationDrawer, AddTodoModal, type TodoActions,
 } from './components';
+import { eligibleAgentsForComplexity } from './logic';
 
 export function AgentsPage() {
   const workersQuery = useWorkers();
@@ -34,7 +35,6 @@ export function AgentsPage() {
 
   const agentOf = (id: string | null) => agents.find((a) => a.id === id) || null;
   const availability = agentAvailability(agents);
-  const onlineCount = agents.filter((agent) => agent.status !== 'offline').length;
   const running = todos.filter((t) => t.status === 'running');
   const queued = todos.filter((t) => t.status === 'queued').sort((a, b) => (b.priority ? 1 : 0) - (a.priority ? 1 : 0));
   const done = todos.filter((t) => t.status === 'done').sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
@@ -56,17 +56,21 @@ export function AgentsPage() {
       createTodo.mutate({
         title: source.title,
         workspace_id: source.workspace_id,
-        model_pref: source.modelPref,
+        complexity: source.complexity,
       });
     },
     continue: (id, text) => continueTodo.mutate({ todo_id: id, text }),
-    add: ({ title, assign, model, workspaceId }) => {
+    add: ({ title, assign, complexity, workspaceId }) => {
+      const eligibleAgents = eligibleAgentsForComplexity(agents, complexity);
+      const preferredAgentId = eligibleAgents.some((agent) => agent.id === assign)
+        ? assign
+        : undefined;
       createTodo.mutate(
         {
           title,
           workspace_id: workspaceId,
-          model_pref: model === 'auto' ? undefined : model,
-          preferred_agent_id: assign === 'any' ? undefined : assign,
+          complexity,
+          preferred_agent_id: preferredAgentId,
         },
         { onSuccess: () => setAdding(false) },
       );
@@ -136,7 +140,7 @@ export function AgentsPage() {
         <div className="b2-show-sm" style={{ display: 'none', height: 'calc(56px + env(safe-area-inset-bottom, 0px))' }} />
       </div>
 
-      {adding && <AddTodoModal agents={agents} freeCount={availability.free} onlineCount={onlineCount} pending={createTodo.isPending} error={createTodo.isError ? errorText(createTodo.error) : null} onClose={() => setAdding(false)} onAdd={actions.add} />}
+      {adding && <AddTodoModal agents={agents} pending={createTodo.isPending} error={createTodo.isError ? errorText(createTodo.error) : null} onClose={() => setAdding(false)} onAdd={actions.add} />}
       {openId && <ConversationDrawer todoId={openId} agentOf={agentOf} onClose={() => setOpenId(null)} onContinue={actions.continue} />}
     </div>
   );

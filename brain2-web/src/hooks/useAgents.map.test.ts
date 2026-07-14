@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { mapTodo, mapWorker } from './useAgents';
-import type { LiveTodo, Worker } from '@/lib/types';
+import type { LiveTodo, ModelProvider, Worker } from '@/lib/types';
+
+const MODEL_PROVIDERS: ModelProvider[] = [
+  'anthropic', 'ollama', 'openrouter', 'gemini', 'openai', 'stub',
+];
 
 const W: Worker = {
   agent_id: 'a1',
@@ -81,6 +85,33 @@ describe('mapWorker', () => {
   it('preserves a valid disabled value', () => {
     expect(mapWorker({ ...W, enabled: false }).enabled).toBe(false);
   });
+
+  it.each(MODEL_PROVIDERS)('preserves the known %s response provider', (provider) => {
+    expect(mapWorker({ ...W, model_provider: provider }).modelProvider).toBe(provider);
+  });
+
+  it('keeps migrated unbound model fields null', () => {
+    expect(mapWorker({
+      ...W,
+      model_id: null,
+      model_name: null,
+      model_provider: null,
+      enabled: false,
+      status: 'offline',
+    })).toMatchObject({
+      modelId: null,
+      modelName: null,
+      modelProvider: null,
+      enabled: false,
+    });
+  });
+
+  it('maps an unknown response provider to null', () => {
+    expect(mapWorker({
+      ...W,
+      model_provider: 'future-provider' as Worker['model_provider'],
+    }).modelProvider).toBeNull();
+  });
 });
 
 describe('mapTodo', () => {
@@ -126,5 +157,28 @@ describe('mapTodo', () => {
     expect(todo.modelName).toBeNull();
     expect(todo.modelProvider).toBeNull();
     expect(todo.runs[0].attribution_complete).toBe(0);
+  });
+
+  it.each(MODEL_PROVIDERS)('preserves the known %s todo and run provider', (provider) => {
+    const todo = mapTodo({
+      ...T,
+      model_provider: provider,
+      runs: [{ ...T.runs[0], model_provider: provider }],
+    }, []);
+    expect(todo.modelProvider).toBe(provider);
+    expect(todo.runs[0].model_provider).toBe(provider);
+  });
+
+  it('maps unknown todo and run providers to null', () => {
+    const todo = mapTodo({
+      ...T,
+      model_provider: 'future-provider' as LiveTodo['model_provider'],
+      runs: [{
+        ...T.runs[0],
+        model_provider: 'future-provider' as LiveTodo['model_provider'],
+      }],
+    }, []);
+    expect(todo.modelProvider).toBeNull();
+    expect(todo.runs[0].model_provider).toBeNull();
   });
 });

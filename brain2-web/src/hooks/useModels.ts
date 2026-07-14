@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ops } from '@/lib/api';
-import type { ModelConfig } from '@/lib/types';
+import type { ModelConfig, RuntimeModelProvider } from '@/lib/types';
 
 const KEY = ['models'] as const;
 
@@ -16,7 +16,7 @@ export function useCreateModel() {
   return useMutation({
     mutationFn: (params: {
       name: string;
-      provider: ModelConfig['provider'];
+      provider: RuntimeModelProvider;
       model: string;
       param_count?: string;
       ollama_base_url?: string;

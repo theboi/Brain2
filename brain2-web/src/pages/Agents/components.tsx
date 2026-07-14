@@ -4,7 +4,6 @@
  */
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from '@/components/ui/Icon';
 import type { IconName } from '@/components/ui/Icon';
@@ -12,11 +11,11 @@ import { MiniMD } from '@/components/browse/MiniMD';
 import { sse } from '@/lib/api';
 import { qk } from '@/lib/queryClient';
 import { useTodo } from '@/hooks/useAgents';
-import { useModels } from '@/hooks/useModels';
 import { useWorkspacesOverview } from '@/hooks/useWorkspaces';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
-import type { ModelConfig } from '@/lib/types';
+import type { Complexity, ModelConfig, RuntimeModelProvider } from '@/lib/types';
 import type { Agent, Message, Todo, Tool } from './data';
+import { COMPLEXITIES, eligibleAgentsForComplexity } from './logic';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function hexToRgba(hex: string, a: number): string {
@@ -29,12 +28,28 @@ function hexToRgba(hex: string, a: number): string {
 
 const AG_TINT = ['#7C8CFF', '#34D399', '#F59E0B', '#A78BFA', '#F472B6', '#38BDF8', '#FB7185', '#2DD4BF'];
 
-export function eligibleAgentModels(models: ModelConfig[]): ModelConfig[] {
-  return models.filter((model) => model.status === 'ready' && (model.provider === 'anthropic' || model.provider === 'openrouter'));
+export function eligibleAgentModels(
+  models: ModelConfig[],
+): Array<ModelConfig & { provider: RuntimeModelProvider }> {
+  return models.filter(
+    (model): model is ModelConfig & { provider: RuntimeModelProvider } =>
+      model.status === 'ready'
+      && (model.provider === 'anthropic' || model.provider === 'openrouter'),
+  );
 }
 
-export function canSubmitTodo(input: { title: string; workspaceId: string; modelId: string; onlineCount: number; pending?: boolean }): boolean {
-  return Boolean(input.title.trim() && input.workspaceId && input.modelId && input.onlineCount > 0 && !input.pending);
+export function canSubmitTodo(input: {
+  title: string;
+  workspaceId: string;
+  complexity: string;
+  pending?: boolean;
+}): boolean {
+  return Boolean(
+    input.title.trim()
+    && input.workspaceId
+    && COMPLEXITIES.some((item) => item.id === input.complexity)
+    && !input.pending,
+  );
 }
 
 export function Av({ name, size = 30 }: { name?: string; size?: number }) {
@@ -89,7 +104,12 @@ export interface TodoActions {
   remove: (id: string) => void;
   rerun: (id: string) => void;
   continue: (id: string, text: string) => void;
-  add: (opts: { title: string; assign: string; model: string; workspaceId: string }) => void;
+  add: (opts: {
+    title: string;
+    assign: string;
+    complexity: Complexity;
+    workspaceId: string;
+  }) => void;
 }
 
 interface MenuItem {
@@ -437,30 +457,29 @@ function Dropdown({ value, options, onPick, width = 220, icon }: { value: string
 // ── add-a-todo modal ──────────────────────────────────────────────────────────
 export function AddTodoModal({
   agents,
-  freeCount,
-  onlineCount,
   pending,
   error,
   onClose,
   onAdd,
 }: {
   agents: Agent[];
-  freeCount: number;
-  onlineCount: number;
   pending?: boolean;
   error?: string | null;
   onClose: () => void;
-  onAdd: (opts: { title: string; assign: string; model: string; workspaceId: string }) => void;
+  onAdd: (opts: {
+    title: string;
+    assign: string;
+    complexity: Complexity;
+    workspaceId: string;
+  }) => void;
 }) {
   const { workspaceId } = useWorkspace();
   const { data: wsOverview } = useWorkspacesOverview();
-  const modelsQuery = useModels();
-  const models = modelsQuery.data ?? [];
   const workspaces = wsOverview?.workspaces ?? [];
   const [text, setText] = useState('');
   const [ws, setWs] = useState(workspaceId ?? '');
   const [assign, setAssign] = useState('any');
-  const [model, setModel] = useState('');
+  const [complexity, setComplexity] = useState<Complexity>('medium');
   useEffect(() => {
     if (ws) return;
     if (workspaceId) setWs(workspaceId);
@@ -477,26 +496,29 @@ export function AddTodoModal({
     : workspaceId
       ? [{ id: workspaceId, label: 'Current workspace', icon: 'layers' as IconName }]
       : [{ id: '', label: 'No workspace', icon: 'alert' as IconName }];
+  const eligibleAgents = eligibleAgentsForComplexity(agents, complexity);
   const assignOpts: DropdownOption[] = [
-    { id: 'any', label: 'Any free agent', icon: 'robot', tone: 'var(--accent)' },
-    ...agents
-      .filter((a) => a.status === 'idle')
-      .map((a) => ({ id: a.id, label: a.name, icon: 'user' as IconName, hint: 'free' })),
+    { id: 'any', label: 'Any eligible agent', icon: 'robot', tone: 'var(--accent)' },
+    ...eligibleAgents.map((agent) => ({
+      id: agent.id,
+      label: agent.name,
+      icon: 'user' as IconName,
+      hint: agent.status,
+    })),
   ];
-  const cloudModels = eligibleAgentModels(models);
   useEffect(() => {
-    if (!model && cloudModels[0]) setModel(cloudModels[0].model_id);
-  }, [cloudModels, model]);
-  const modelOpts: DropdownOption[] = cloudModels.map((m) => ({ id: m.model_id, label: m.name, icon: 'cloud' as IconName, tone: 'var(--accent)', hint: m.provider === 'anthropic' ? 'Anthropic' : 'OpenRouter' }));
-  if (modelsQuery.isPending) modelOpts.push({ id: '', label: 'Loading models…', icon: 'loader' });
-  if (!modelsQuery.isPending && modelOpts.length === 0) modelOpts.push({ id: '', label: 'No ready cloud models', icon: 'alert' });
-  // Busy workers still represent a healthy runtime pool: a durable todo may
-  // wait behind current work. Only block when every registered runtime is
-  // offline, since no process exists to claim the queue.
-  const canSubmit = canSubmitTodo({ title: text, workspaceId: ws, modelId: model, onlineCount, pending });
+    if (
+      assign !== 'any'
+      && !eligibleAgentsForComplexity(agents, complexity)
+        .some((agent) => agent.id === assign)
+    ) {
+      setAssign('any');
+    }
+  }, [agents, assign, complexity]);
+  const canSubmit = canSubmitTodo({ title: text, workspaceId: ws, complexity, pending });
   const submit = () => {
     if (!canSubmit) return;
-    onAdd({ title: text.trim(), assign, model, workspaceId: ws });
+    onAdd({ title: text.trim(), assign, complexity, workspaceId: ws });
   };
   return createPortal(
     <div style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '11vh 20px 20px' }}>
@@ -520,15 +542,20 @@ export function AddTodoModal({
               <Dropdown value={ws} options={workspaceOpts} onPick={setWs} width={220} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <label htmlFor="todo-complexity" style={{ width: 78, fontSize: 12.5, color: 'var(--fg-muted)' }}>Complexity</label>
+              <select
+                id="todo-complexity"
+                value={complexity}
+                onChange={(event) => setComplexity(event.target.value as Complexity)}
+                style={{ width: 220, height: 34, padding: '0 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg)', fontFamily: 'var(--ui-font)', fontSize: 12.5 }}
+              >
+                {COMPLEXITIES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{ width: 78, fontSize: 12.5, color: 'var(--fg-muted)' }}>Assign to</span>
               <Dropdown value={assign} options={assignOpts} onPick={setAssign} width={220} />
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ width: 78, fontSize: 12.5, color: 'var(--fg-muted)' }}>Model</span>
-              <Dropdown value={model} options={modelOpts} onPick={setModel} width={220} />
-            </div>
-            {modelsQuery.isError && <div role="alert" style={{ marginLeft: 90, fontSize: 12.5, color: 'var(--destructive)' }}>Could not load models. <button onClick={() => modelsQuery.refetch()} style={{ ...agBtnGhost(), height: 28 }}>Retry</button></div>}
-            {!modelsQuery.isPending && !modelsQuery.isError && cloudModels.length === 0 && <div style={{ marginLeft: 90, fontSize: 12.5, color: 'var(--warning)' }}>No ready Anthropic or OpenRouter model. <Link to="/settings#models" style={{ color: 'var(--accent)' }}>Configure models</Link></div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{ width: 78, fontSize: 12.5, color: 'var(--fg-muted)' }}>Access</span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--fg)' }}><Icon name="lock" size={13} color="var(--accent)" /> runs with your access</span>
@@ -536,7 +563,10 @@ export function AddTodoModal({
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 13px', borderRadius: 10, background: 'var(--accent-soft)', border: '1px solid var(--accent-line)', marginTop: 16 }}>
             <Icon name="zap" size={15} color="var(--accent)" style={{ marginTop: 1, flexShrink: 0 }} />
-            <div style={{ fontSize: 12, color: 'var(--fg)', lineHeight: 1.5 }}>Todos stay durable in the queue until claimed. There {freeCount === 1 ? 'is' : 'are'} <b>{freeCount} free worker{freeCount === 1 ? '' : 's'}</b> right now{freeCount === 0 && onlineCount > 0 ? '; this todo will wait for the next available worker' : ''}.</div>
+            <div style={{ fontSize: 12, color: 'var(--fg)', lineHeight: 1.5 }}>
+              Todos stay durable until an enabled {complexity} agent can claim them.
+              {eligibleAgents.length === 0 ? ' No matching agent is configured yet, so this todo will wait in the queue.' : ''}
+            </div>
           </div>
           {error && <div role="alert" style={{ marginTop: 10, color: 'var(--destructive)', fontSize: 12.5 }}>{error}</div>}
         </div>

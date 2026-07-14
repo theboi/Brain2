@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { ModelConfig } from '@/lib/types';
+import type { ModelConfig, ModelProvider } from '@/lib/types';
 import { canSubmitTodo, eligibleAgentModels } from './components';
 
-function model(provider: ModelConfig['provider'], status: ModelConfig['status'] = 'ready'): ModelConfig {
+function model(provider: ModelProvider, status: ModelConfig['status'] = 'ready'): ModelConfig {
   return {
     model_id: `${provider}-${status}`,
+    tenant_id: 'tenant',
     name: provider,
     provider,
     model: 'provider/model',
@@ -13,7 +14,11 @@ function model(provider: ModelConfig['provider'], status: ModelConfig['status'] 
     tool_allowlist: [],
     fallback_model: null,
     ollama_base_url: null,
+    max_concurrency: 1,
     status,
+    created_by: null,
+    created_at: '2026-07-14T00:00:00Z',
+    updated_at: '2026-07-14T00:00:00Z',
   };
 }
 
@@ -27,16 +32,18 @@ describe('eligibleAgentModels', () => {
 });
 
 describe('canSubmitTodo', () => {
-  it('allows durable queueing when all online workers are currently busy', () => {
+  it('allows durable queueing without a ready model or online agent', () => {
     expect(canSubmitTodo({
-      title: 'Audit the report', workspaceId: 'ws1', modelId: 'm1',
-      onlineCount: 2,
+      title: 'Audit the report',
+      workspaceId: 'ws1',
+      complexity: 'hard',
     })).toBe(true);
   });
 
-  it('blocks without an online runtime or required live selections', () => {
-    expect(canSubmitTodo({ title: 'Task', workspaceId: 'ws1', modelId: 'm1', onlineCount: 0 })).toBe(false);
-    expect(canSubmitTodo({ title: 'Task', workspaceId: '', modelId: 'm1', onlineCount: 1 })).toBe(false);
-    expect(canSubmitTodo({ title: 'Task', workspaceId: 'ws1', modelId: '', onlineCount: 1 })).toBe(false);
+  it('requires title, workspace, exact complexity, and a settled mutation', () => {
+    expect(canSubmitTodo({ title: '', workspaceId: 'ws1', complexity: 'hard' })).toBe(false);
+    expect(canSubmitTodo({ title: 'Task', workspaceId: '', complexity: 'hard' })).toBe(false);
+    expect(canSubmitTodo({ title: 'Task', workspaceId: 'ws1', complexity: 'extreme' })).toBe(false);
+    expect(canSubmitTodo({ title: 'Task', workspaceId: 'ws1', complexity: 'hard', pending: true })).toBe(false);
   });
 });
