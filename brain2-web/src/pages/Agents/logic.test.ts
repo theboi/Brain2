@@ -9,6 +9,7 @@ function agent(overrides: Partial<Agent>): Agent {
     modelId: 'model',
     modelName: 'Model',
     modelProvider: 'ollama',
+    modelStatus: 'ready',
     complexity: 'medium',
     enabled: true,
     status: 'idle',

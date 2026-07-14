@@ -28,6 +28,7 @@ export function mapAgent(worker: Worker): Agent {
     modelId: worker.model_id ?? null,
     modelName: worker.model_name ?? null,
     modelProvider: responseProvider(worker.model_provider),
+    modelStatus: worker.model_status ?? null,
     complexity: worker.complexity,
     enabled: worker.enabled ?? false,
     status: worker.status,
@@ -37,7 +38,7 @@ export function mapAgent(worker: Worker): Agent {
   };
 }
 
-/** Compatibility export for callers migrating from hostname-worker language. */
+/** Compatibility export for callers migrating to the configured-agent name. */
 export const mapWorker = mapAgent;
 
 export function mapMessage(message: TodoMessage): Message {

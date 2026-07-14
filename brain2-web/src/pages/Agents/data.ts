@@ -1,5 +1,5 @@
 // Brain2 Console — Agents page view-model types.
-import type { Complexity, ModelProvider, TodoRun } from '@/lib/types';
+import type { Complexity, ModelConfig, ModelProvider, TodoRun } from '@/lib/types';
 
 export type TodoStatus = 'running' | 'queued' | 'done' | 'failed';
 export type AgentRunStatus = 'busy' | 'idle' | 'offline';
@@ -10,6 +10,7 @@ export interface Agent {
   modelId: string | null;
   modelName: string | null;
   modelProvider: ModelProvider | null;
+  modelStatus: ModelConfig['status'] | null;
   complexity: Complexity;
   enabled: boolean;
   status: AgentRunStatus;

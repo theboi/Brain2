@@ -231,6 +231,7 @@ export interface Worker {
   model_id: string | null;
   model_name: string | null;
   model_provider: ModelProvider | null;
+  model_status?: ModelConfig['status'] | null;
   complexity: Complexity;
   enabled: boolean;
   status: 'idle' | 'busy' | 'offline';
