@@ -4,6 +4,26 @@ import type { ModelConfig, RuntimeModelProvider } from '@/lib/types';
 
 const KEY = ['models'] as const;
 
+type CreateModelCommon = {
+  name: string;
+  model: string;
+  max_concurrency: number;
+};
+
+export type CreateModelParams = CreateModelCommon & (
+  | { provider: 'ollama'; ollama_base_url: string; api_key?: never }
+  | { provider: Exclude<RuntimeModelProvider, 'ollama'>; api_key: string; ollama_base_url?: never }
+);
+
+export type UpdateModelParams = {
+  model_id: string;
+  name?: string;
+  model?: string;
+  max_concurrency?: number;
+  ollama_base_url?: string;
+  api_key?: string;
+};
+
 export function useModels() {
   return useQuery({
     queryKey: KEY,
@@ -14,16 +34,7 @@ export function useModels() {
 export function useCreateModel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (params: {
-      name: string;
-      provider: RuntimeModelProvider;
-      model: string;
-      param_count?: string;
-      ollama_base_url?: string;
-      api_key?: string;
-      system_prompt?: string;
-      fallback_model?: string;
-    }) => ops<ModelConfig>('models:create', params),
+    mutationFn: (params: CreateModelParams) => ops<ModelConfig>('models:create', params),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -31,14 +42,7 @@ export function useCreateModel() {
 export function useUpdateModel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (params: { model_id: string } & Partial<{
-      name: string;
-      model: string;
-      param_count: string;
-      ollama_base_url: string;
-      system_prompt: string;
-      fallback_model: string;
-    }>) => ops<ModelConfig>('models:update', params),
+    mutationFn: (params: UpdateModelParams) => ops<ModelConfig>('models:update', params),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
