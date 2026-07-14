@@ -188,6 +188,27 @@ def test_preledger_fallback_never_pairs_assigned_agent_with_conversation_model()
     assert visible["model_id"] == second_model["model_id"]
 
 
+def test_partial_historical_run_never_substitutes_mutable_agent_model():
+    s = _store()
+    agent = s.list_agents("t1")[0]
+    todo = _create(s)
+    with s.transaction() as cx:
+        cx.execute(
+            "UPDATE todos SET status='done',assigned_agent_id=? WHERE todo_id=?",
+            (agent["agent_id"], todo["todo_id"]),
+        )
+        cx.execute(
+            "INSERT INTO todo_runs(run_token,tenant_id,todo_id,runtime_agent_id,"
+            "model_id,attribution_complete,status,started_at) "
+            "VALUES ('legacy','t1',?,?,NULL,0,'done','now')",
+            (todo["todo_id"], agent["agent_id"]),
+        )
+    visible = make_todos_get(s)(_ctx("mem1"), {"todo_id": todo["todo_id"]})["todo"]
+    assert visible["agent_id"] == agent["agent_id"]
+    assert visible["model_id"] is None and visible["model_name"] is None
+    assert visible["runs"][0]["attribution_complete"] == 0
+
+
 def test_stop_only_requests_cooperative_cancellation():
     s = _store()
     agent = s.list_agents("t1")[0]

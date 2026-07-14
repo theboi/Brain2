@@ -83,7 +83,8 @@ def create_app(actx: AppContext) -> FastAPI:
             "text": message_row["content"],
         })
 
-    def _auth(authorization: str | None = Header(default=None),
+    def _auth(request: Request,
+              authorization: str | None = Header(default=None),
               token: str | None = Query(default=None),
               idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
               ) -> RequestContext:
@@ -101,6 +102,7 @@ def create_app(actx: AppContext) -> FastAPI:
         user = actx.store.get_user(ctx.tenant_id, ctx.user_id)
         if user is None or user.status == "disabled":
             raise HTTPException(status_code=401, detail="account disabled or not found")
+        request.state.auth_token = raw
         actx.store.update_last_seen(
             ctx.tenant_id, ctx.user_id, datetime.now(timezone.utc).isoformat(),
             min_gap_s=60)
@@ -680,8 +682,16 @@ def create_app(actx: AppContext) -> FastAPI:
             active_conversation_id = None
             message_rowid = 0
             polls_since_event = 0
+            raw_token = request.state.auth_token
             while True:
                 if await request.is_disconnected():
+                    return
+                try:
+                    live_ctx = actx.tokens.validate(raw_token)
+                except Exception:
+                    return
+                if (live_ctx.tenant_id != ctx.tenant_id
+                        or live_ctx.user_id != ctx.user_id):
                     return
                 current = actx.store.get_todo(ctx.tenant_id, todo_id)
                 if current is None:
@@ -689,8 +699,12 @@ def create_app(actx: AppContext) -> FastAPI:
                         yield "event: status\n" + _sse({"status": "gone"})
                     return
                 viewer = actx.store.get_user(ctx.tenant_id, ctx.user_id)
-                if viewer is None or not actx.store.can_see_todo(
-                    ctx.tenant_id, ctx.user_id, viewer.role, current
+                if (
+                    viewer is None
+                    or viewer.status == "disabled"
+                    or not actx.store.can_see_todo(
+                        ctx.tenant_id, ctx.user_id, viewer.role, current
+                    )
                 ):
                     return
                 emitted = False

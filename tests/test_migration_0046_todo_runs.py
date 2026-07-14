@@ -24,7 +24,8 @@ def test_0046_adds_generation_attribution_ledger_without_rewriting_history():
     store._conn.executescript(migration.read_text())
     columns = {row["name"] for row in store._conn.execute("PRAGMA table_info(todo_runs)")}
     assert {"run_token", "todo_id", "tenant_id", "runtime_agent_id", "model_id",
-            "conversation_id", "status", "tokens_total", "error"} <= columns
+            "attribution_complete", "conversation_id", "status", "tokens_total",
+            "error"} <= columns
     assert store._conn.execute(
         "SELECT title FROM todos WHERE todo_id='existing'"
     ).fetchone()["title"] == "work"
@@ -66,7 +67,8 @@ def test_0046_backfills_latest_recoverable_generation_preferring_assigned_agent_
     store._conn.execute(
         "INSERT INTO todos(todo_id,tenant_id,workspace_id,requester_user_id,title,"
         "complexity,status,assigned_agent_id,conversation_id,run_token,created_at,started_at) "
-        "VALUES ('running','t1','ws','u','y','medium','running','a2','c','real-token',?,?)",
+        "VALUES ('running','t1','ws','u','y','medium','running','a2','c',"
+        "'legacy:2:t1:4:done',?,?)",
         (now, now),
     )
     store._conn.commit()
@@ -74,12 +76,21 @@ def test_0046_backfills_latest_recoverable_generation_preferring_assigned_agent_
         (SQLITE_MIGRATIONS_DIR / "0046_todo_runs.sql").read_text()
     )
     rows = store._conn.execute(
-        "SELECT run_token,todo_id,runtime_agent_id,model_id,status,tokens_total "
+        "SELECT run_token,todo_id,runtime_agent_id,model_id,attribution_complete,"
+        "status,tokens_total "
         "FROM todo_runs ORDER BY todo_id"
     ).fetchall()
     assert rows[0]["run_token"].startswith("legacy:2:t1:4:done")
-    assert tuple(rows[0])[1:] == ("done", "a2", "m2", "done", 9)
-    assert tuple(rows[1]) == ("real-token", "running", "a2", "m2", "running", None)
+    assert tuple(rows[0])[1:] == ("done", "a2", None, 0, "done", 9)
+    assert tuple(rows[1]) == (
+        "legacy:2:t1:4:done", "running", "a2", "m2", 1, "running", None
+    )
+    assert rows[0]["run_token"] == rows[1]["run_token"]
+    store.record_todo_run_usage("t1", "done", rows[0]["run_token"], 13)
+    usage = {row["todo_id"]: row["tokens_total"] for row in store._conn.execute(
+        "SELECT todo_id,tokens_total FROM todo_runs"
+    )}
+    assert usage == {"done": 13, "running": None}
 
 
 def test_0046_backfill_falls_back_to_conversation_pair_when_agent_unavailable():
@@ -108,3 +119,40 @@ def test_0046_backfill_falls_back_to_conversation_pair_when_agent_unavailable():
     )
     row = store._conn.execute("SELECT * FROM todo_runs").fetchone()
     assert row["runtime_agent_id"] == "a1" and row["model_id"] == "m1"
+    assert row["attribution_complete"] == 1
+
+
+def test_terminal_backfill_uses_matching_conversation_model_after_agent_rebind():
+    store = LocalStore(":memory:")
+    with TemporaryDirectory() as raw_dir:
+        old_dir = Path(raw_dir)
+        for migration in SQLITE_MIGRATIONS_DIR.glob("*.sql"):
+            if int(migration.name.split("_", 1)[0]) <= 45:
+                shutil.copy(migration, old_dir / migration.name)
+        run_migrations(store._conn, old_dir)
+    now = "2026-07-14T00:00:00+00:00"
+    store._conn.execute(
+        "INSERT INTO models(model_id,tenant_id,name,provider,model,status,created_at,updated_at) "
+        "VALUES ('m2','t1','Current','ollama','m2','ready',?,?)", (now, now),
+    )
+    store._conn.execute(
+        "INSERT INTO agents(agent_id,tenant_id,name,status,created_at,updated_at,model_id) "
+        "VALUES ('a1','t1','Agent','idle',?,?,'m2')", (now, now),
+    )
+    store._conn.execute(
+        "INSERT INTO conversations(conversation_id,tenant_id,agent_id,user_id,title,"
+        "created_at,updated_at,runtime_agent_id,model_id) "
+        "VALUES ('c','t1','m1','u','x',?,?,'a1','m1')", (now, now),
+    )
+    store._conn.execute(
+        "INSERT INTO todos(todo_id,tenant_id,workspace_id,requester_user_id,title,"
+        "complexity,status,assigned_agent_id,conversation_id,created_at,completed_at) "
+        "VALUES ('done','t1','ws','u','x','medium','done','a1','c',?,?)", (now, now),
+    )
+    store._conn.commit()
+    store._conn.executescript(
+        (SQLITE_MIGRATIONS_DIR / "0046_todo_runs.sql").read_text()
+    )
+    row = store._conn.execute("SELECT * FROM todo_runs").fetchone()
+    assert row["runtime_agent_id"] == "a1"
+    assert row["model_id"] == "m1" and row["attribution_complete"] == 1

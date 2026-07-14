@@ -282,7 +282,7 @@ def run_agent_todo(actx, tenant_id: str, todo: dict) -> None:
                             todo["todo_id"])
     finally:
         store.record_todo_run_usage(
-            tenant_id, todo["run_token"],
+            tenant_id, todo["todo_id"], todo["run_token"],
             total_in + total_out if usage_known else None,
         )
 

@@ -1868,8 +1868,8 @@ class LocalStore:
                         "cancelled todo agent release constraint violation"
                     )
 
-    def record_todo_run_usage(self, tenant_id: str, run_token: str,
-                              tokens_total: int | None) -> bool:
+    def record_todo_run_usage(self, tenant_id: str, todo_id: str,
+                              run_token: str, tokens_total: int | None) -> bool:
         """Update only the exact ledger generation, never the shared todo row."""
         if tokens_total is None:
             return False
@@ -1877,8 +1877,8 @@ class LocalStore:
             updated = cx.execute(
                 "UPDATE todo_runs SET tokens_total=CASE "
                 "WHEN tokens_total IS NULL OR tokens_total<? THEN ? ELSE tokens_total END "
-                "WHERE tenant_id=? AND run_token=?",
-                (tokens_total, tokens_total, tenant_id, run_token),
+                "WHERE tenant_id=? AND todo_id=? AND run_token=?",
+                (tokens_total, tokens_total, tenant_id, todo_id, run_token),
             ).rowcount
         return updated == 1
 

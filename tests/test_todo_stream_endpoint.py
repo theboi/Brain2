@@ -2,6 +2,7 @@
 import threading
 import time
 import uuid
+import hashlib
 from fastapi.testclient import TestClient
 
 from brain2.api import create_app
@@ -133,3 +134,51 @@ def test_stream_stops_before_secret_after_access_revocation(tmp_path, monkeypatc
     thread.join(timeout=2)
     assert response.status_code == 200
     assert "TOP SECRET" not in response.text
+
+
+def _assert_session_revocation_hides_secret(tmp_path, monkeypatch, revoke):
+    s, client, tid, _owner_token, viewer_token = _client(tmp_path, monkeypatch)
+    s.add_workspace_member("t1", "ws1", "mem3", "admin")
+    cid = uuid.uuid4().hex
+    now = "2026-07-14T00:00:00+00:00"
+    with s.transaction() as cx:
+        cx.execute(
+            "INSERT INTO conversations(conversation_id,tenant_id,agent_id,user_id,title,"
+            "created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            (cid, "t1", "model", "mem1", "x", now, now),
+        )
+        cx.execute("UPDATE todos SET conversation_id=?,status='running' WHERE todo_id=?",
+                   (cid, tid))
+
+    def revoke_then_write():
+        time.sleep(0.2)
+        revoke(s, viewer_token)
+        time.sleep(0.2)
+        from brain2.chat_ops import insert_assistant_message
+        insert_assistant_message(s, conversation_id=cid, content="SESSION SECRET")
+        with s.transaction() as cx:
+            cx.execute("UPDATE todos SET status='failed' WHERE todo_id=?", (tid,))
+
+    thread = threading.Thread(target=revoke_then_write)
+    thread.start()
+    response = client.get(
+        f"/api/v1/todos/{tid}/stream",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    thread.join(timeout=2)
+    assert response.status_code == 200
+    assert "SESSION SECRET" not in response.text
+
+
+def test_stream_stops_when_user_is_disabled(tmp_path, monkeypatch):
+    def disable(store, _token):
+        with store.transaction() as cx:
+            cx.execute("UPDATE users SET status='disabled' "
+                       "WHERE tenant_id='t1' AND user_id='mem3'")
+    _assert_session_revocation_hides_secret(tmp_path, monkeypatch, disable)
+
+
+def test_stream_stops_when_exact_token_is_revoked(tmp_path, monkeypatch):
+    def revoke(store, token):
+        store.revoke_token(hashlib.sha256(token.encode()).hexdigest())
+    _assert_session_revocation_hides_secret(tmp_path, monkeypatch, revoke)
