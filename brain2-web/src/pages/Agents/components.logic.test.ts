@@ -127,6 +127,21 @@ describe('todo status view', () => {
     expect(html).not.toContain('Waiting for queued');
   });
 
+  it('renders an inaccessible busy todo generically without exposing its id', () => {
+    const agent: Agent = {
+      id: 'a1', name: 'Analyst', modelId: 'm1', modelName: 'Local model',
+      modelProvider: 'ollama', modelStatus: 'ready', complexity: 'hard', enabled: true,
+      status: 'busy', taskId: 'secret-todo-id', lastHeartbeat: null, todoSummary: null,
+    };
+    const html = renderToStaticMarkup(createElement(RosterCard, {
+      a: agent, todo: null, onOpen: () => undefined,
+    }));
+    expect(html).toContain('Working on a todo you cannot access');
+    expect(html).not.toContain('secret-todo-id');
+    expect(html).not.toContain('Waiting for queued');
+    expect(html).not.toContain('<button');
+  });
+
   it('renders failed rows as keyboard buttons with a semantic action menu', () => {
     const todo: Todo = {
       id: 't1', workspace_id: 'ws1', title: 'Failed audit', by: 'u1',

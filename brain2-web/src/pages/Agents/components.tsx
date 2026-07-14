@@ -662,8 +662,10 @@ export function RosterCard({
         </button>
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, minHeight: 60, padding: 10, color: 'var(--fg-muted)', fontSize: 12, border: '1px dashed var(--border)', borderRadius: 9, background: 'var(--bg)', lineHeight: 1.4 }}>
-          <Icon name={!a.enabled || a.modelStatus !== 'ready' ? 'alert' : 'clock'} size={14} />
-          {!a.enabled
+          <Icon name={working ? 'loader' : !a.enabled || a.modelStatus !== 'ready' ? 'alert' : 'clock'} size={14} />
+          {working
+            ? 'Working on a todo you cannot access.'
+            : !a.enabled
             ? 'Unavailable while this runtime is disabled.'
             : a.modelStatus !== 'ready'
               ? a.modelStatus
